@@ -39,6 +39,10 @@ use crate::yrc_to_ttml_data;
 // 导入ASS解析器和各个在线歌词获取模块
 use crate::{ass_parser, kugou_lyrics_fetcher, netease_lyrics_fetcher, qq_lyrics_fetcher};
 
+use crate::amll_lyrics_fetcher::{AmllIndexEntry, AmllSearchField, FetchedAmllTtmlLyrics};
+
+use directories::ProjectDirs;
+
 /// 代表元数据编辑器中的一个可编辑条目。
 #[derive(Clone, Debug)]
 pub struct EditableMetadataEntry {
@@ -75,6 +79,23 @@ pub enum NeteaseDownloadState {
     Downloading,                                                  // 下载中
     Success(crate::netease_lyrics_fetcher::FetchedNeteaseLyrics), // 下载成功
     Error(String),                                                // 下载失败
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AmllIndexDownloadState {
+    Idle,
+    Downloading,
+    Success,
+    Error(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AmllTtmlDownloadState {
+    Idle,
+    SearchingIndex,
+    DownloadingTtml,
+    Success(FetchedAmllTtmlLyrics),
+    Error(String),
 }
 
 /// UniLyricApp 结构体，代表整个应用程序的状态。
@@ -136,6 +157,17 @@ pub struct UniLyricApp {
     pub show_netease_download_window: bool, // 是否显示网易云音乐下载模态窗口
     pub netease_client: Arc<Mutex<Option<netease_lyrics_fetcher::api::NeteaseClient>>>, // 网易云API客户端实例，线程安全
 
+    // amll-ttml-db 相关字段
+    pub amll_db_repo_url_base: String,
+    pub amll_index: Arc<Mutex<Vec<AmllIndexEntry>>>,
+    pub amll_index_download_state: Arc<Mutex<AmllIndexDownloadState>>,
+    pub amll_search_query: String,
+    pub amll_selected_search_field: AmllSearchField,
+    pub amll_search_results: Arc<Mutex<Vec<AmllIndexEntry>>>,
+    pub amll_ttml_download_state: Arc<Mutex<AmllTtmlDownloadState>>,
+    pub show_amll_download_window: bool,
+    amll_index_cache_path: Option<PathBuf>,
+
     // 从文件加载的次要LRC数据
     pub loaded_translation_lrc: Option<Vec<LrcLine>>, // 从文件加载的翻译LRC行
     pub loaded_romanization_lrc: Option<Vec<LrcLine>>, // 从文件加载的罗马音LRC行
@@ -160,6 +192,21 @@ pub struct UniLyricApp {
 
 // UniLyricApp 的实现块
 impl UniLyricApp {
+    fn get_app_data_dir() -> Option<PathBuf> {
+        if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
+            let data_dir = proj_dirs.data_local_dir();
+            if !data_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(data_dir) {
+                    log::error!("[UniLyric] 无法创建应用数据目录 {:?}: {}", data_dir, e);
+                    return None;
+                }
+            }
+            Some(data_dir.to_path_buf())
+        } else {
+            log::error!("[UniLyric] 无法获取应用数据目录。");
+            None
+        }
+    }
     /// UniLyricApp的构造函数，用于创建应用实例。
     ///
     /// # Arguments
@@ -273,6 +320,35 @@ impl UniLyricApp {
             initial_metadata_store.iter_all().count()
         );
 
+        let amll_repo_base = "https://github.moeyy.xyz/https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main".to_string();
+
+        let mut initial_amll_index_state = AmllIndexDownloadState::Idle;
+        let mut initial_amll_index_data: Vec<AmllIndexEntry> = Vec::new();
+        let amll_cache_path: Option<PathBuf> =
+            Self::get_app_data_dir().map(|dir| dir.join("amll_index_cache.jsonl"));
+
+        if let Some(ref cache_p) = amll_cache_path {
+            match crate::amll_lyrics_fetcher::amll_fetcher::load_index_from_cache(cache_p) {
+                Ok(cached_entries) => {
+                    if !cached_entries.is_empty() {
+                        log::info!(
+                            "[UniLyric] 成功从缓存加载 {} 条 AMLL TTML Database 索引。",
+                            cached_entries.len()
+                        );
+                        initial_amll_index_data = cached_entries;
+                        initial_amll_index_state = AmllIndexDownloadState::Success;
+                    } else {
+                        log::info!("[UniLyric] AMLL TTML Database 索引缓存为空或解析失败");
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[UniLyric] 从缓存加载 AMLL TTML Database 索引失败: {}。", e);
+                }
+            }
+        } else {
+            log::warn!("[UniLyric] 无法确定 AMLL TTML Database 索引缓存路径，将仅使用网络下载。");
+        }
+
         // 初始化应用状态结构体 Self (UniLyricApp) 的所有字段。
         let mut app = Self {
             input_text: String::new(),                      // 输入框文本，初始为空
@@ -312,6 +388,18 @@ impl UniLyricApp {
             netease_download_state: Arc::new(Mutex::new(NeteaseDownloadState::Idle)), // 网易云下载状态，初始为空闲
             show_netease_download_window: false, // 网易云下载窗口，初始隐藏
             netease_client: Arc::new(Mutex::new(netease_api_client_instance)), // 使用上面创建的网易云API客户端
+
+            // 初始化 amll-ttml-db 相关字段
+            amll_db_repo_url_base: amll_repo_base,
+            amll_index: Arc::new(Mutex::new(initial_amll_index_data)),
+            amll_index_download_state: Arc::new(Mutex::new(initial_amll_index_state)),
+            amll_search_query: String::new(),
+            amll_selected_search_field: AmllSearchField::default(),
+            amll_search_results: Arc::new(Mutex::new(Vec::new())),
+            amll_ttml_download_state: Arc::new(Mutex::new(AmllTtmlDownloadState::Idle)),
+            show_amll_download_window: false,
+            amll_index_cache_path: amll_cache_path,
+
             loaded_translation_lrc: None,  // 已加载翻译LRC，初始为None
             loaded_romanization_lrc: None, // 已加载罗马音LRC，初始为None
             show_metadata_panel: false,    // 元数据编辑面板，初始隐藏
@@ -527,6 +615,273 @@ impl UniLyricApp {
             "[Unilyric] 已从内部存储重建UI元数据列表。共 {} 个条目。",
             self.editable_metadata.len()
         );
+    }
+
+    pub fn trigger_amll_index_download(&mut self, force_network_refresh: bool) {
+        let mut index_state_lock = self.amll_index_download_state.lock().unwrap();
+        if *index_state_lock == AmllIndexDownloadState::Downloading {
+            return;
+        }
+        *index_state_lock = AmllIndexDownloadState::Downloading;
+        drop(index_state_lock);
+
+        let cache_path_opt_clone = self.amll_index_cache_path.clone();
+        let client_clone = self.http_client.clone();
+        let repo_base_url_clone = self.amll_db_repo_url_base.clone();
+        let index_arc_clone = Arc::clone(&self.amll_index);
+        let index_download_state_arc_clone = Arc::clone(&self.amll_index_download_state);
+
+        std::thread::spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    log::error!("[Unilyric] 创建 Tokio 运行时失败 (amll_index): {}", e);
+                    let mut state_lock = index_download_state_arc_clone.lock().unwrap();
+                    *state_lock =
+                        AmllIndexDownloadState::Error(format!("创建异步运行时失败: {}", e));
+                    return;
+                }
+            };
+
+            let mut loaded_from_cache_successfully = false;
+            if !force_network_refresh {
+                if let Some(ref cache_p) = cache_path_opt_clone {
+                    log::info!(
+                        "[Unilyric] 尝试从缓存加载 AMLL TTML Database 索引: {:?}",
+                        cache_p
+                    );
+                    match crate::amll_lyrics_fetcher::amll_fetcher::load_index_from_cache(cache_p) {
+                        Ok(cached_entries) => {
+                            if !cached_entries.is_empty() {
+                                log::info!(
+                                    "[Unilyric] 成功从缓存加载 {} 条 AMLL TTML Database 索引。",
+                                    cached_entries.len()
+                                );
+                                let mut index_data_lock = index_arc_clone.lock().unwrap();
+                                *index_data_lock = cached_entries;
+                                drop(index_data_lock);
+
+                                let mut state_lock = index_download_state_arc_clone.lock().unwrap();
+                                *state_lock = AmllIndexDownloadState::Success;
+                                loaded_from_cache_successfully = true;
+                            } else {
+                                log::warn!(
+                                    "[Unilyric] AMLL TTML Database 索引缓存为空或解析失败，将尝试网络下载。"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!(
+                                "[Unilyric] 从缓存加载 AMLL TTML Database 索引文件失败: {}。将尝试网络下载。",
+                                e
+                            );
+                        }
+                    }
+                } else {
+                    log::info!("[Unilyric] 无有效 AMLL TTML Database 缓存");
+                }
+            }
+
+            if !loaded_from_cache_successfully {
+                log::info!(
+                    "[Unilyric]  正在下载 AMLL TTML Database 索引文件(强制刷新: {})...",
+                    force_network_refresh
+                );
+                rt.block_on(async {
+                    let result = if let Some(ref cache_p_for_network_save) = cache_path_opt_clone {
+                        crate::amll_lyrics_fetcher::download_and_parse_index(
+                            &client_clone,
+                            &repo_base_url_clone,
+                            cache_p_for_network_save,
+                        )
+                        .await
+                    } else {
+                        let dummy_path_for_signature =
+                            PathBuf::from("./amll_fetcher_temp_dummy_network.jsonl");
+                        crate::amll_lyrics_fetcher::download_and_parse_index(
+                            &client_clone,
+                            &repo_base_url_clone,
+                            &dummy_path_for_signature,
+                        )
+                        .await
+                    };
+
+                    match result {
+                        Ok(parsed_entries) => {
+                            let mut index_data_lock = index_arc_clone.lock().unwrap();
+                            *index_data_lock = parsed_entries;
+                            drop(index_data_lock);
+
+                            let mut state_lock = index_download_state_arc_clone.lock().unwrap();
+                            *state_lock = AmllIndexDownloadState::Success;
+                            log::info!("[Unilyric]  AMLL TTML Database 索引文件下载成功。");
+                        }
+                        Err(e) => {
+                            log::error!("[Unilyric]  AMLL TTML Database 索引文件下载失败: {}", e);
+                            let mut state_lock = index_download_state_arc_clone.lock().unwrap();
+                            *state_lock = AmllIndexDownloadState::Error(e.to_string());
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    pub fn trigger_amll_lyrics_search_and_download(
+        &mut self,
+        selected_entry_to_download: Option<AmllIndexEntry>,
+    ) {
+        let index_state_lock = self.amll_index_download_state.lock().unwrap();
+        if *index_state_lock != AmllIndexDownloadState::Success {
+            log::warn!(
+                "[Unilyric] AMLL TTML Database 索引文件尚未成功加载，无法搜索或下载。当前状态: {:?}",
+                *index_state_lock
+            );
+            if *index_state_lock == AmllIndexDownloadState::Idle
+                || matches!(*index_state_lock, AmllIndexDownloadState::Error(_))
+            {
+                drop(index_state_lock);
+                self.trigger_amll_index_download(false);
+                let mut ttml_state_lock = self.amll_ttml_download_state.lock().unwrap();
+                *ttml_state_lock =
+                    AmllTtmlDownloadState::Error("索引文件正在加载，请稍后重试搜索。".to_string());
+            }
+            return;
+        }
+        drop(index_state_lock);
+
+        if let Some(entry_to_download) = selected_entry_to_download {
+            log::info!(
+                "[Unilyric] 准备下载选定的 AMLL TTML Database 条目: ID '{}', 文件 '{}'",
+                entry_to_download.id,
+                entry_to_download.raw_lyric_file
+            );
+            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
+            *ttml_dl_state_lock = AmllTtmlDownloadState::DownloadingTtml;
+            drop(ttml_dl_state_lock);
+            let client_clone = self.http_client.clone();
+            let repo_base_url_clone = self.amll_db_repo_url_base.clone();
+            let ttml_download_state_arc_clone = Arc::clone(&self.amll_ttml_download_state);
+            std::thread::spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::error!("[Unilyric] 创建 Tokio 运行时失败 (amll_ttml): {}", e);
+                        let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
+                        *state_lock =
+                            AmllTtmlDownloadState::Error(format!("创建异步运行时失败: {}", e));
+                        return;
+                    }
+                };
+                rt.block_on(async {
+                    match crate::amll_lyrics_fetcher::download_ttml_from_entry(
+                        &client_clone,
+                        &repo_base_url_clone,
+                        &entry_to_download,
+                    )
+                    .await
+                    {
+                        Ok(fetched_lyrics) => {
+                            let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
+                            *state_lock = AmllTtmlDownloadState::Success(fetched_lyrics);
+                            log::info!(
+                                "[Unilyric] AMLL TTML 文件下载成功: {}",
+                                entry_to_download.raw_lyric_file
+                            );
+                        }
+                        Err(e) => {
+                            log::error!("[Unilyric] AMLL TTML 文件下载失败: {}", e);
+                            let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
+                            *state_lock = AmllTtmlDownloadState::Error(e.to_string());
+                        }
+                    }
+                });
+            });
+        } else {
+            let query = self.amll_search_query.trim();
+            if query.is_empty() {
+                log::info!("[Unilyric] AMLL TTML Database 搜索查询为空，清空搜索结果。");
+                let mut results_lock = self.amll_search_results.lock().unwrap();
+                results_lock.clear();
+                let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
+                *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
+                return;
+            }
+            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
+            *ttml_dl_state_lock = AmllTtmlDownloadState::SearchingIndex;
+            drop(ttml_dl_state_lock);
+            let index_data_lock = self.amll_index.lock().unwrap();
+            let search_results_vec = crate::amll_lyrics_fetcher::search_lyrics_in_index(
+                query,
+                &self.amll_selected_search_field,
+                &index_data_lock,
+            );
+            drop(index_data_lock);
+            let mut results_display_lock = self.amll_search_results.lock().unwrap();
+            *results_display_lock = search_results_vec;
+            drop(results_display_lock);
+            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
+            *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
+        }
+    }
+
+    pub fn handle_amll_ttml_download_completion(&mut self) {
+        let mut fetched_lyrics_to_process: Option<FetchedAmllTtmlLyrics> = None;
+        let mut error_to_report: Option<String> = None;
+        let mut should_close_window_and_reset_state = false;
+
+        {
+            let mut download_status_locked = self.amll_ttml_download_state.lock().unwrap();
+            match &*download_status_locked {
+                AmllTtmlDownloadState::Success(data) => {
+                    fetched_lyrics_to_process = Some(data.clone());
+                    should_close_window_and_reset_state = true;
+                }
+                AmllTtmlDownloadState::Error(msg) => {
+                    error_to_report = Some(msg.clone());
+                }
+                _ => {}
+            }
+            if should_close_window_and_reset_state {
+                *download_status_locked = AmllTtmlDownloadState::Idle;
+            }
+        }
+
+        if let Some(fetched_data) = fetched_lyrics_to_process {
+            self.clear_all_data();
+            self.metadata_source_is_download = true;
+
+            self.input_text = fetched_data.ttml_content;
+            self.source_format = LyricFormat::Ttml;
+            log::info!(
+                "[Unilyric] 已加载来自 AMLL TTML Database 的 TTML 歌词。歌曲名: {:?}, 艺术家: {:?}",
+                fetched_data.song_name,
+                fetched_data.artists_name
+            );
+
+            self.loaded_translation_lrc = None;
+            self.loaded_romanization_lrc = None;
+            self.pending_translation_lrc_from_download = None;
+            self.pending_romanization_qrc_from_download = None;
+            self.pending_romanization_lrc_from_download = None;
+
+            self.handle_convert();
+        } else if let Some(err_msg) = error_to_report {
+            log::error!("[Unilyric] AMLL TTML Database 下载错误: {}", err_msg);
+        }
+
+        if should_close_window_and_reset_state {
+            self.show_amll_download_window = false;
+            self.amll_search_query.clear();
+            let mut search_results_lock = self.amll_search_results.lock().unwrap();
+            search_results_lock.clear();
+        }
     }
 
     /// 触发QQ音乐歌词的下载流程。
@@ -3390,11 +3745,7 @@ impl eframe::App for UniLyricApp {
         self.handle_qq_download_completion(); // 检查并处理QQ音乐下载完成
         self.handle_kugou_download_completion(); // 检查并处理酷狗音乐下载完成
         self.handle_netease_download_completion(); // 检查并处理网易云音乐下载完成
-
-        // (下面这行似乎是之前尝试自动打开日志面板的逻辑，当前行为是警告级别才自动打开)
-        // if self.new_trigger_log_exists && !self.show_bottom_log_panel {
-        //     //self.show_bottom_log_panel = true;
-        // }
+        self.handle_amll_ttml_download_completion();
 
         // --- 更新UI面板的显示状态 ---
         // 如果当前有标记点数据，则显示标记点面板
@@ -3543,6 +3894,7 @@ impl eframe::App for UniLyricApp {
         self.draw_qqmusic_download_modal_window(ctx);
         self.draw_kugou_download_modal_window(ctx);
         self.draw_netease_download_modal_window(ctx);
+        self.draw_amll_download_modal_window(ctx);
 
         // 如果有文件悬停在窗口上，并且本帧没有文件被放下，则显示拖放覆盖提示
         if files_are_hovered && !is_dropping_file_this_frame {

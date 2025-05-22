@@ -20,6 +20,7 @@
 mod types; // 定义应用程序中使用的各种数据类型。
 #[macro_use] // 这个属性表示 `utils` 模块中定义的宏将被导入到当前作用域，可以直接使用。
 mod utils; // 包含一些工具函数或宏，例如 `log_info!` 可能在这里定义。
+mod amll_lyrics_fetcher;
 mod app; // 包含应用程序核心逻辑和 UI 定义的模块。
 mod app_settings; // 用于管理应用程序设置的模块。
 mod app_ui; // 包含应用程序用户界面 (UI) 相关逻辑的模块。

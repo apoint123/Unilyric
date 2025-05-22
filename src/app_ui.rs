@@ -1,11 +1,13 @@
 // 导入 eframe::egui 模块，这是主要的GUI库
 use eframe::egui;
+use egui::{Button, ComboBox, ScrollArea, Spinner, TextEdit, Window};
 // 导入 log::LevelFilter，用于设置日志级别
+use crate::amll_lyrics_fetcher::AmllSearchField;
 use log::LevelFilter;
 // 从 app模块导入应用核心结构和状态枚举，以及元数据条目结构
 use crate::app::{
-    EditableMetadataEntry, KrcDownloadState, NeteaseDownloadState, QqMusicDownloadState,
-    UniLyricApp,
+    AmllIndexDownloadState, AmllTtmlDownloadState, EditableMetadataEntry, KrcDownloadState,
+    NeteaseDownloadState, QqMusicDownloadState, UniLyricApp,
 };
 // 从 types 模块导入 LrcContentType（用于区分翻译/罗马音LRC）和 LyricFormat（歌词格式枚举）
 use crate::types::{LrcContentType, LyricFormat};
@@ -102,6 +104,16 @@ impl UniLyricApp {
                     {
                         self.netease_query.clear();
                         self.show_netease_download_window = true; // 显示网易云音乐下载窗口
+                    }
+                    if download_menu
+                        .add_enabled(
+                            download_enabled,
+                            Button::new("从 AMLL TTML Database 获取..."),
+                        )
+                        .clicked()
+                    {
+                        self.amll_search_query.clear();
+                        self.show_amll_download_window = true;
                     }
                 });
 
@@ -1296,6 +1308,193 @@ impl UniLyricApp {
                 {
                     *download_status_locked = NeteaseDownloadState::Idle;
                 }
+            }
+        }
+    }
+
+    pub fn draw_amll_download_modal_window(&mut self, ctx: &egui::Context) {
+        if !self.show_amll_download_window {
+            return;
+        }
+
+        let mut is_window_open = self.show_amll_download_window;
+        Window::new("从 AMLL TTML Database 获取歌词")
+            .open(&mut is_window_open)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .resizable(true)
+            .collapsible(false)
+            .min_height(600.0)
+            .min_width(400.0)
+            .show(ctx, |ui| {
+                let index_state = self.amll_index_download_state.lock().unwrap().clone();
+                match index_state {
+                    AmllIndexDownloadState::Idle => {
+                        if ui.button("加载/刷新歌词索引").clicked() {
+                            self.trigger_amll_index_download(false);
+                        }
+                    }
+                    AmllIndexDownloadState::Downloading => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.add(Spinner::new());
+                            h_ui.label("正在下载索引文件...");
+                        });
+                    }
+                    AmllIndexDownloadState::Success => {
+                        let index_len = self.amll_index.lock().unwrap().len();
+                        ui.label(format!("索引已加载 ({} 条记录)。", index_len));
+                        if ui.button("重新加载索引").clicked() {
+                            self.trigger_amll_index_download(true);
+                        }
+                    }
+                    AmllIndexDownloadState::Error(ref err_msg) => {
+                        ui.colored_label(
+                            ui.style().visuals.error_fg_color,
+                            format!("索引加载失败: {}", err_msg),
+                        );
+                        if ui.button("重试").clicked() {
+                            self.trigger_amll_index_download(true);
+                        }
+                    }
+                }
+                ui.add_space(10.0);
+
+                if index_state == AmllIndexDownloadState::Success {
+                    ui.strong("搜索歌词:");
+                    ui.separator();
+                    ui.horizontal(|h_ui| {
+                        h_ui.label("搜索字段:");
+                        ComboBox::from_id_salt("amll_search_field_combo")
+                            .selected_text(self.amll_selected_search_field.display_name())
+                            .show_ui(h_ui, |combo_ui| {
+                                for field_option in AmllSearchField::all_fields() {
+                                    combo_ui.selectable_value(
+                                        &mut self.amll_selected_search_field,
+                                        field_option.clone(),
+                                        field_option.display_name(),
+                                    );
+                                }
+                            });
+                    });
+
+                    ui.horizontal(|h_ui| {
+                        h_ui.label("搜索词:");
+                        let query_input = TextEdit::singleline(&mut self.amll_search_query)
+                            .hint_text("输入搜索内容...")
+                            .desired_width(f32::INFINITY);
+                        let query_response = h_ui.add(query_input);
+
+                        if query_response.lost_focus()
+                            && h_ui.input(|i: &egui::InputState| i.key_pressed(egui::Key::Enter))
+                            || query_response.changed()
+                        {
+                            if !self.amll_search_query.trim().is_empty() {
+                                self.amll_search_results.lock().unwrap().clear();
+                                *self.amll_ttml_download_state.lock().unwrap() =
+                                    AmllTtmlDownloadState::Idle;
+                                self.trigger_amll_lyrics_search_and_download(None);
+                            } else {
+                                self.amll_search_results.lock().unwrap().clear();
+                            }
+                        }
+                    });
+                    if ui.button("搜索").clicked() && !self.amll_search_query.trim().is_empty() {
+                        self.amll_search_results.lock().unwrap().clear();
+                        *self.amll_ttml_download_state.lock().unwrap() =
+                            AmllTtmlDownloadState::Idle;
+                        self.trigger_amll_lyrics_search_and_download(None);
+                    }
+
+                    ui.add_space(10.0);
+
+                    let ttml_dl_state = self.amll_ttml_download_state.lock().unwrap().clone();
+                    match ttml_dl_state {
+                        AmllTtmlDownloadState::SearchingIndex => {
+                            ui.horizontal(|h_ui| {
+                                h_ui.add(Spinner::new());
+                                h_ui.label("正在搜索索引...");
+                            });
+                        }
+                        AmllTtmlDownloadState::DownloadingTtml => {
+                            ui.horizontal(|h_ui| {
+                                h_ui.add(Spinner::new());
+                                h_ui.label("正在下载 TTML 文件...");
+                            });
+                        }
+                        AmllTtmlDownloadState::Error(ref err_msg) => {
+                            ui.colored_label(
+                                ui.style().visuals.error_fg_color,
+                                format!("操作失败: {}", err_msg),
+                            );
+                        }
+                        _ => {}
+                    }
+                    ui.strong("搜索结果:");
+                    let search_results_count = self.amll_search_results.lock().unwrap().len();
+                    if !self.amll_search_query.trim().is_empty()
+                        && ttml_dl_state == AmllTtmlDownloadState::Idle
+                    {
+                        ui.label(format!("找到 {} 条结果。", search_results_count));
+                    }
+                    ui.separator();
+                    ScrollArea::vertical()
+                        .auto_shrink([false, true])
+                        .max_height(200.0)
+                        .show(ui, |scroll_ui| {
+                            let search_results_vec = {
+                                let search_results_lock = self.amll_search_results.lock().unwrap();
+                                search_results_lock.clone()
+                            };
+                            if search_results_vec.is_empty() {
+                                if !self.amll_search_query.trim().is_empty()
+                                    && ttml_dl_state == AmllTtmlDownloadState::Idle
+                                {
+                                } else if self.amll_search_query.trim().is_empty() {
+                                    scroll_ui.label("请输入关键字以搜索");
+                                }
+                            } else {
+                                for (idx, entry) in search_results_vec.iter().enumerate() {
+                                    let mut display_song_name = "未知歌曲".to_string();
+                                    let mut display_artists = "未知艺术家".to_string();
+                                    for (key, values) in &entry.metadata {
+                                        if key == AmllSearchField::MusicName.to_key_string()
+                                            && !values.is_empty()
+                                        {
+                                            display_song_name = values.join("/");
+                                        } else if key == AmllSearchField::Artists.to_key_string()
+                                            && !values.is_empty()
+                                        {
+                                            display_artists = values.join("/");
+                                        }
+                                    }
+                                    let display_text =
+                                        format!("{} - {}", display_song_name, display_artists);
+
+                                    if scroll_ui
+                                        .selectable_label(false, display_text)
+                                        .on_hover_text(entry.raw_lyric_file.to_string())
+                                        .clicked()
+                                    {
+                                        self.trigger_amll_lyrics_search_and_download(Some(
+                                            entry.clone(),
+                                        ));
+                                    }
+                                    if idx < search_results_vec.len() - 1 {
+                                        scroll_ui.separator();
+                                    }
+                                }
+                            }
+                        });
+                } else if index_state != AmllIndexDownloadState::Downloading {
+                    ui.label("请先加载歌词索引。");
+                }
+                ui.add_space(10.0);
+            });
+
+        if !is_window_open {
+            self.show_amll_download_window = false;
+            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
+            if matches!(*ttml_dl_state_lock, AmllTtmlDownloadState::Error(_)) {
+                *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
             }
         }
     }
