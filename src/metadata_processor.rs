@@ -273,37 +273,43 @@ impl MetadataStore {
 
         let mut all_agent_ids_to_process = HashSet::<String>::new();
 
-        // 1. 从 store 中收集 agent ID (通常是 Custom("v1"), Custom("v2") 等)
         for (canonical_key, _values) in store.iter_all() {
             if let CanonicalMetadataKey::Custom(key_str) = canonical_key {
-                if key_str.starts_with('v')
+                if (key_str.starts_with('v')
                     && key_str.len() > 1
-                    && key_str[1..].chars().all(char::is_numeric)
+                    && key_str[1..].chars().all(char::is_numeric))
+                    || ["v1", "v2", "v1000"].contains(&key_str.as_str())
                 {
                     all_agent_ids_to_process.insert(key_str.clone());
                 }
             }
         }
 
-        // 2. 添加从段落中收集到的 agent ID
         for agent_id_from_para in paragraph_agent_ids {
             all_agent_ids_to_process.insert(agent_id_from_para.clone());
         }
 
-        // 为了输出顺序一致，对 agent ID 进行排序
-        let mut sorted_agent_ids: Vec<String> = all_agent_ids_to_process.into_iter().collect();
-        sorted_agent_ids.sort_unstable(); // 或者 sort() 如果需要稳定排序
+        let mut v1_agent_id: Option<String> = None;
+        let mut other_agent_ids: Vec<String> = Vec::new();
 
-        for agent_id_str in &sorted_agent_ids {
-            // 尝试从 store 中获取该 agent_id 的名字
+        for agent_id in all_agent_ids_to_process {
+            if agent_id == "v1" {
+                v1_agent_id = Some(agent_id);
+            } else {
+                other_agent_ids.push(agent_id);
+            }
+        }
+
+        other_agent_ids.sort_unstable();
+
+        for agent_id_str in &other_agent_ids {
             let agent_name_from_store: Option<String> = agent_id_str
-                .parse::<CanonicalMetadataKey>() // 这会尝试解析为 Custom(agent_id_str)
+                .parse::<CanonicalMetadataKey>()
                 .ok()
                 .and_then(|ck| store.get_single_value(&ck).cloned());
 
             if let Some(name) = agent_name_from_store {
                 if !name.trim().is_empty() {
-                    // 如果有名字，则写入完整的 agent 标签
                     let mut agent_tag_xml = BytesStart::new("ttm:agent");
                     agent_tag_xml.push_attribute(("type", "person"));
                     agent_tag_xml.push_attribute(("xml:id", agent_id_str.as_str()));
@@ -317,7 +323,6 @@ impl MetadataStore {
 
                     writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
                 } else {
-                    // 如果 store 中有此 agent_id 但名字为空，则写入无名 agent 标签
                     let mut agent_tag_xml = BytesStart::new("ttm:agent");
                     agent_tag_xml.push_attribute(("type", "person"));
                     agent_tag_xml.push_attribute(("xml:id", agent_id_str.as_str()));
@@ -325,7 +330,6 @@ impl MetadataStore {
                     writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
                 }
             } else {
-                // 如果 store 中没有此 agent_id (意味着它只在段落中出现)，则写入无名 agent 标签
                 let mut agent_tag_xml = BytesStart::new("ttm:agent");
                 agent_tag_xml.push_attribute(("type", "person"));
                 agent_tag_xml.push_attribute(("xml:id", agent_id_str.as_str()));
@@ -334,7 +338,42 @@ impl MetadataStore {
             }
         }
 
-        // 2. 处理 <iTunesMetadata> 中的 <songwriters>
+        if let Some(agent_id_v1_str) = &v1_agent_id {
+            let agent_name_from_store: Option<String> = agent_id_v1_str
+                .parse::<CanonicalMetadataKey>()
+                .ok()
+                .and_then(|ck| store.get_single_value(&ck).cloned());
+
+            if let Some(name) = agent_name_from_store {
+                if !name.trim().is_empty() {
+                    let mut agent_tag_xml = BytesStart::new("ttm:agent");
+                    agent_tag_xml.push_attribute(("type", "person"));
+                    agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
+                    writer.write_event(Event::Start(agent_tag_xml))?;
+
+                    let mut name_tag_xml = BytesStart::new("ttm:name");
+                    name_tag_xml.push_attribute(("type", "full"));
+                    writer.write_event(Event::Start(name_tag_xml))?;
+                    writer.write_event(Event::Text(BytesText::new(name.trim())))?;
+                    writer.write_event(Event::End(BytesEnd::new("ttm:name")))?;
+
+                    writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
+                } else {
+                    let mut agent_tag_xml = BytesStart::new("ttm:agent");
+                    agent_tag_xml.push_attribute(("type", "person"));
+                    agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
+                    writer.write_event(Event::Start(agent_tag_xml))?;
+                    writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
+                }
+            } else {
+                let mut agent_tag_xml = BytesStart::new("ttm:agent");
+                agent_tag_xml.push_attribute(("type", "person"));
+                agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
+                writer.write_event(Event::Start(agent_tag_xml))?;
+                writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
+            }
+        }
+
         if let Some(songwriters_vec) = store.get_multiple_values(&CanonicalMetadataKey::Songwriter)
         {
             let valid_songwriters: Vec<&String> = songwriters_vec
@@ -357,7 +396,6 @@ impl MetadataStore {
             }
         }
 
-        // 3. 处理预定义的 <amll:meta> 标签
         let amll_keys_map: Vec<(&str, CanonicalMetadataKey)> = vec![
             ("album", CanonicalMetadataKey::Album),
             ("appleMusicId", CanonicalMetadataKey::AppleMusicId),
@@ -388,7 +426,6 @@ impl MetadataStore {
         for (output_key_name, canonical_key_in_map) in amll_keys_map.iter() {
             if let Some(values_vec) = store.get_multiple_values(canonical_key_in_map) {
                 for value in values_vec {
-                    // 为每个值创建一个新的 amll:meta 标签
                     let trimmed_value = value.trim();
                     if !trimmed_value.is_empty() {
                         let mut amll_meta_tag_xml = BytesStart::new("amll:meta");
@@ -402,7 +439,14 @@ impl MetadataStore {
             }
         }
 
-        // 处理所有其他的 Custom 类型的元数据 ---
+        let mut processed_agent_ids_for_amll_dedup = HashSet::new();
+        if let Some(v1_id) = &v1_agent_id {
+            processed_agent_ids_for_amll_dedup.insert(v1_id.clone());
+        }
+        for other_id in &other_agent_ids {
+            processed_agent_ids_for_amll_dedup.insert(other_id.clone());
+        }
+
         for (canonical_key_from_store, values_vec) in store.iter_all() {
             if !handled_canonical_keys_for_amll.contains(canonical_key_from_store) {
                 match canonical_key_from_store {
@@ -410,12 +454,8 @@ impl MetadataStore {
                         continue;
                     }
                     CanonicalMetadataKey::Custom(custom_key_str) => {
-                        if ["v1", "v2", "v1000"].contains(&custom_key_str.as_str()) {
-                            // 避免重复处理已作为 agent 的 custom key
-                            if sorted_agent_ids.contains(custom_key_str) {
-                                // 如果这个 custom key 已经被上面的 agent 逻辑处理了
-                                continue;
-                            }
+                        if processed_agent_ids_for_amll_dedup.contains(custom_key_str) {
+                            continue;
                         }
 
                         let is_predefined_output_key_name = amll_keys_map
@@ -457,11 +497,12 @@ impl MetadataStore {
         let mut comment_output = String::new(); // 初始化输出字符串
         // 定义哪些规范化键应该映射到 ASS Comment 中的特定键名
         let comment_keys_map = [
+            (CanonicalMetadataKey::Title, "title"),
             (CanonicalMetadataKey::Artist, "artist"),
             (CanonicalMetadataKey::Album, "album"),
             (CanonicalMetadataKey::Songwriter, "songwriter"),
             (CanonicalMetadataKey::AppleMusicId, "appleMusicId"),
-            (CanonicalMetadataKey::Author, "ttmlAuthorGithubLogin"), // 可以按需添加更多已知键的映射
+            (CanonicalMetadataKey::Author, "ttmlAuthorGithubLogin"),
         ];
 
         let mut handled_keys_for_comments = std::collections::HashSet::new(); // 跟踪已处理的键，避免重复
@@ -491,13 +532,6 @@ impl MetadataStore {
 
         // 2. 处理其余的 Custom 键 (或其他未在上面映射的已知键)
         for (key_type_from_store, values) in self.iter_all() {
-            // 跳过已处理的键，以及通常在 [Script Info] 中处理的 Title 和 Author
-            if handled_keys_for_comments.contains(key_type_from_store)
-                || matches!(key_type_from_store, CanonicalMetadataKey::Title)
-            {
-                continue;
-            }
-
             // 对于 Custom 类型，使用其内部字符串作为ASS注释的键名
             // 其他未明确映射的 CanonicalMetadataKey 类型，如果需要输出，需要确定其在ASS Comment中的键名
             let ass_comment_key_name = match key_type_from_store {

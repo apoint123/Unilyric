@@ -1,453 +1,86 @@
-// 导入项目内模块和外部库
-use crate::app_settings::AppSettings; // 应用设置模块
-use eframe::egui::{self, Pos2}; // egui UI库
-use egui::Color32; // egui 颜色类型
-use log::{error, info}; // 日志库
-use reqwest::Client; // HTTP客户端，用于网络请求
-use std::collections::{HashMap, HashSet}; // 标准库集合类型
-use std::fmt::Write as FmtWrite; // 格式化写入 trait
-use std::path::PathBuf; // 路径处理
-use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex}; // 原子引用计数和互斥锁，用于多线程共享数据 // 多生产者单消费者通道，用于接收日志
-
-// 导入项目中定义的各种类型，如歌词格式、错误类型、元数据结构等
-use crate::types::{
-    AssMetadata, ConvertError, LrcContentType, LrcLine, LyricFormat, LysSyllable, MarkerInfo,
-    ParsedSourceData, ProcessedAssData, TtmlParagraph, TtmlSyllable,
-};
-
-// 导入元数据处理器和规范化的元数据键类型
-use crate::metadata_processor::MetadataStore;
-use crate::types::CanonicalMetadataKey;
-
-// 导入各个歌词格式的解析器和转换器模块
+use crate::amll_connector::amll_connector_manager::{self, run_progress_timer_task};
+use crate::amll_connector::{ConnectorCommand, WebsocketStatus};
+use crate::amll_lyrics_fetcher::{AmllIndexEntry, FetchedAmllTtmlLyrics};
+use crate::app_definition::UniLyricApp;
+use crate::app_fetch_core;
+use crate::app_update;
+use crate::ass_parser;
 use crate::json_parser;
 use crate::krc_parser;
-use crate::logger::LogEntry; // 日志条目结构
+use crate::kugou_lyrics_fetcher;
 use crate::lrc_parser;
+use crate::lyric_processor;
 use crate::lyricify_lines_parser;
 use crate::lyricify_lines_to_ttml_data;
+use crate::lyrics_merger;
 use crate::lys_parser;
 use crate::lys_to_ttml_data;
+use crate::metadata_processor::MetadataStore;
+use crate::netease_lyrics_fetcher;
+use crate::qq_lyrics_fetcher;
 use crate::qrc_parser;
 use crate::qrc_to_ttml_data;
 use crate::spl_parser;
 use crate::ttml_generator;
 use crate::ttml_parser;
+use crate::types::{
+    AmllIndexDownloadState, AmllTtmlDownloadState, AssMetadata, AutoSearchSource, AutoSearchStatus,
+    CanonicalMetadataKey, ConvertError, DisplayLrcLine, EditableMetadataEntry, KrcDownloadState,
+    LocalLyricCacheEntry, LrcContentType, LrcLine, LyricFormat, LysSyllable, NeteaseDownloadState,
+    ParsedSourceData, PlatformFetchedData, ProcessedAssData, ProcessedLyricsSourceData,
+    QqMusicDownloadState, TtmlParagraph, TtmlSyllable,
+};
+use crate::websocket_server::{PlaybackInfoPayload, ServerCommand, TimeUpdatePayload};
 use crate::yrc_parser;
 use crate::yrc_to_ttml_data;
-// 导入ASS解析器和各个在线歌词获取模块
-use crate::{ass_parser, kugou_lyrics_fetcher, netease_lyrics_fetcher, qq_lyrics_fetcher};
+use eframe::egui::{self};
+use egui_toast::{Toast, ToastKind, ToastOptions};
+use log::{info, warn};
+use rand::Rng;
+use std::collections::HashMap;
+use std::fmt::Write as FmtWrite;
+use std::fs::OpenOptions;
+use std::io::{BufWriter, Write};
+use std::sync::Arc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use ws_protocol::Body as ProtocolBody;
 
-use crate::amll_lyrics_fetcher::{AmllIndexEntry, AmllSearchField, FetchedAmllTtmlLyrics};
-
-use directories::ProjectDirs;
-
-/// 代表元数据编辑器中的一个可编辑条目。
+/// TTML 数据库上传用户操作的枚举
 #[derive(Clone, Debug)]
-pub struct EditableMetadataEntry {
-    pub key: String,        // 元数据键名 (显示用)
-    pub value: String,      // 元数据值
-    pub is_pinned: bool,    // 此条目是否被用户标记为“固定”
-    pub is_from_file: bool, // 此条目是否来自当前加载的文件 (或为固定项的初始状态)
-    pub id: egui::Id,       // egui 用于追踪UI元素的唯一ID
-}
-
-/// 表示QQ音乐下载状态的枚举。
-#[derive(Debug, Clone)]
-pub enum QqMusicDownloadState {
-    Idle,                                                                // 空闲状态
-    Downloading,                                                         // 下载中
-    Success(crate::qq_lyrics_fetcher::qqlyricsfetcher::FetchedQqLyrics), // 下载成功，包含获取到的歌词数据
-    Error(String),                                                       // 下载失败，包含错误信息
-}
-
-/// 表示酷狗音乐KRC歌词下载状态的枚举。
-#[derive(Debug, Clone)]
-pub enum KrcDownloadState {
-    Idle,                                                   // 空闲状态
-    Downloading,                                            // 下载中
-    Success(crate::kugou_lyrics_fetcher::FetchedKrcLyrics), // 下载成功
-    Error(String),                                          // 下载失败
-}
-
-/// 表示网易云音乐歌词下载状态的枚举。
-#[derive(Debug, Clone)]
-pub enum NeteaseDownloadState {
-    Idle,                                                         // 空闲状态
-    InitializingClient,                                           // 正在初始化API客户端
-    Downloading,                                                  // 下载中
-    Success(crate::netease_lyrics_fetcher::FetchedNeteaseLyrics), // 下载成功
-    Error(String),                                                // 下载失败
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AmllIndexDownloadState {
-    Idle,
-    Downloading,
-    Success,
+pub enum TtmlDbUploadUserAction {
+    /// dpaste 已创建，URL已复制到剪贴板，这是打开Issue页面的URL
+    PasteReadyAndCopied {
+        paste_url: String,                // dpaste 的 URL
+        github_issue_url_to_open: String, // GitHub Issue 页面的 URL
+    },
+    /// 过程中的提示信息
+    InProgressUpdate(String),
+    /// 准备阶段错误
+    PreparationError(String),
+    /// 错误信息
     Error(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum AmllTtmlDownloadState {
-    Idle,
-    SearchingIndex,
-    DownloadingTtml,
-    Success(FetchedAmllTtmlLyrics),
-    Error(String),
-}
-
-/// UniLyricApp 结构体，代表整个应用程序的状态。
-pub struct UniLyricApp {
-    // UI相关的文本输入输出区域
-    pub input_text: String,                      // 左侧输入框的文本内容
-    pub output_text: String,                     // 中间输出框的文本内容
-    pub display_translation_lrc_output: String,  // 右侧翻译LRC预览面板的文本内容
-    pub display_romanization_lrc_output: String, // 右侧罗马音LRC预览面板的文本内容
-
-    // 格式选择与文件路径
-    pub source_format: LyricFormat,             // 当前选择的源歌词格式
-    pub target_format: LyricFormat,             // 当前选择的目标歌词格式
-    pub available_formats: Vec<LyricFormat>,    // 可用的歌词格式列表
-    pub last_opened_file_path: Option<PathBuf>, // 上次打开文件的路径
-    pub last_saved_file_path: Option<PathBuf>,  // 上次保存文件的路径
-
-    // 状态标志
-    pub conversion_in_progress: bool, // 标记转换过程是否正在进行
-    pub source_is_line_timed: bool,   // 标记源文件是否为逐行歌词 (如LRC, LYL)
-    pub detected_formatted_ttml_source: bool, // 标记源TTML是否是格式化的
-    pub show_bottom_log_panel: bool,  // 是否显示底部日志面板
-    pub new_trigger_log_exists: bool, // 是否有新的触发性日志 (如错误、警告) 尚未被用户通过打开日志面板查看
-    pub is_any_file_hovering_window: bool, // 标记是否有文件正悬停在窗口上 (用于拖放提示)
-    pub show_markers_panel: bool,     // 是否显示标记面板
-    pub show_romanization_lrc_panel: bool, // 是否显示罗马音LRC预览面板
-    pub show_translation_lrc_panel: bool, // 是否显示翻译LRC预览面板
-    pub wrap_text: bool,              // 文本框是否自动换行
-    pub show_metadata_panel: bool,    // 是否显示元数据编辑窗口
-    pub show_settings_window: bool,   // 是否显示设置窗口
-    pub metadata_source_is_download: bool, // 标记当前元数据是否主要来源于网络下载 (影响元数据合并策略)
-
-    // 核心数据存储
-    pub parsed_ttml_paragraphs: Option<Vec<TtmlParagraph>>, // 解析输入后得到的TTML段落数据 (中间格式)
-    pub metadata_store: Arc<Mutex<MetadataStore>>,          // 存储所有元数据的地方，线程安全
-    pub editable_metadata: Vec<EditableMetadataEntry>,      // UI上可编辑的元数据列表
-    pub persistent_canonical_keys: HashSet<CanonicalMetadataKey>, // 用户希望固定的元数据类型的规范化键集合
-    pub current_markers: Vec<MarkerInfo>,                         // 当前解析出的标记列表
-    pub current_raw_ttml_from_input: Option<String>, // 如果源是TTML或JSON，这里存储原始的TTML字符串内容
-
-    // 拖放相关
-    pub last_known_pointer_pos_while_dragging: Option<Pos2>, // 文件拖放时最后已知的鼠标指针位置
-
-    // 网络下载相关 (QQ音乐)
-    pub qqmusic_query: String, // QQ音乐搜索查询词
-    pub download_state: Arc<Mutex<QqMusicDownloadState>>, // QQ音乐下载状态，线程安全
-    pub http_client: Client,   // 全局HTTP客户端实例，用于所有网络请求
-    pub show_qqmusic_download_window: bool, // 是否显示QQ音乐下载模态窗口
-
-    // 网络下载相关 (酷狗音乐)
-    pub kugou_query: String, // 酷狗音乐搜索查询词
-    pub kugou_download_state: Arc<Mutex<KrcDownloadState>>, // 酷狗音乐下载状态，线程安全
-    pub show_kugou_download_window: bool, // 是否显示酷狗音乐下载模态窗口
-    pub pending_krc_translation_lines: Option<Vec<String>>, // 从KRC文件内嵌翻译解析出的待合并翻译行
-
-    // 网络下载相关 (网易云音乐)
-    pub netease_query: String, // 网易云音乐搜索查询词
-    pub netease_download_state: Arc<Mutex<NeteaseDownloadState>>, // 网易云音乐下载状态，线程安全
-    pub show_netease_download_window: bool, // 是否显示网易云音乐下载模态窗口
-    pub netease_client: Arc<Mutex<Option<netease_lyrics_fetcher::api::NeteaseClient>>>, // 网易云API客户端实例，线程安全
-
-    // amll-ttml-db 相关字段
-    pub amll_db_repo_url_base: String,
-    pub amll_index: Arc<Mutex<Vec<AmllIndexEntry>>>,
-    pub amll_index_download_state: Arc<Mutex<AmllIndexDownloadState>>,
-    pub amll_search_query: String,
-    pub amll_selected_search_field: AmllSearchField,
-    pub amll_search_results: Arc<Mutex<Vec<AmllIndexEntry>>>,
-    pub amll_ttml_download_state: Arc<Mutex<AmllTtmlDownloadState>>,
-    pub show_amll_download_window: bool,
-    amll_index_cache_path: Option<PathBuf>,
-
-    // 从文件加载的次要LRC数据
-    pub loaded_translation_lrc: Option<Vec<LrcLine>>, // 从文件加载的翻译LRC行
-    pub loaded_romanization_lrc: Option<Vec<LrcLine>>, // 从文件加载的罗马音LRC行
-
-    // 应用设置
-    pub app_settings: Arc<Mutex<AppSettings>>, // 应用设置，线程安全
-    pub temp_edit_settings: AppSettings,       // 在设置窗口中临时编辑的设置副本
-
-    // 日志系统
-    pub log_display_buffer: Vec<LogEntry>, // 存储在UI上显示的日志条目
-    pub ui_log_receiver: Receiver<LogEntry>, // 从日志后端接收日志条目的通道
-
-    // 从网络下载的待处理次要歌词内容
-    pub session_platform_metadata: HashMap<String, String>, // 从下载平台获取的当次会话元数据 (如歌曲ID, 平台特定信息)
-    pub pending_translation_lrc_from_download: Option<String>, // 从下载获取的待合并翻译LRC文本
-    pub pending_romanization_qrc_from_download: Option<String>, // 从下载获取的待合并罗马音QRC文本
-    pub pending_romanization_lrc_from_download: Option<String>, // 从下载获取的待合并罗马音LRC文本
-
-    // 特殊情况：网易云直接下载的LRC主歌词（当没有YRC时）
-    pub direct_netease_main_lrc_content: Option<String>,
 }
 
 // UniLyricApp 的实现块
 impl UniLyricApp {
-    fn get_app_data_dir() -> Option<PathBuf> {
-        if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
-            let data_dir = proj_dirs.data_local_dir();
-            if !data_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(data_dir) {
-                    log::error!("[UniLyric] 无法创建应用数据目录 {:?}: {}", data_dir, e);
-                    return None;
-                }
-            }
-            Some(data_dir.to_path_buf())
-        } else {
-            log::error!("[UniLyric] 无法获取应用数据目录。");
-            None
-        }
-    }
-    /// UniLyricApp的构造函数，用于创建应用实例。
-    ///
-    /// # Arguments
-    /// * `cc` - `&eframe::CreationContext`，eframe创建上下文，用于访问egui上下文等。
-    /// * `settings` - `AppSettings`，从配置文件加载的应用设置。
-    /// * `ui_log_receiver` - `Receiver<LogEntry>`，用于从日志后端接收日志条目并在UI上显示。
-    ///
-    /// # Returns
-    /// `Self` - UniLyricApp 应用实例。
-    pub fn new(
-        cc: &eframe::CreationContext, // eframe 创建上下文，可以访问 egui::Context 等
-        settings: AppSettings,        // 从配置文件加载的应用设置
-        ui_log_receiver: Receiver<LogEntry>, // 用于从日志后端接收日志条目的通道
-    ) -> Self {
-        /// 内部辅助函数：设置自定义字体。
-        /// 这是因为egui内置的字体无法显示中文
-        fn setup_custom_fonts(ctx: &egui::Context) {
-            let mut fonts = egui::FontDefinitions::default(); // 获取默认字体定义
-            // 插入自定义字体数据 "SarasaUiSC"
-            fonts.font_data.insert(
-                "SarasaUiSC".to_owned(), // 字体名称
-                egui::FontData::from_static(include_bytes!(
-                    // 从静态字节数组加载字体文件
-                    "../assets/fonts/SarasaUiSC-Regular.ttf" // 字体文件路径 (相对于项目根目录)
-                ))
-                .into(), // 转换为 egui::FontData
-            );
-            // 将 "SarasaUiSC" 添加到 proportional (比例) 字体家族的首选列表
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "SarasaUiSC".to_owned());
-            // 将 "SarasaUiSC" 添加到 monospace (等宽) 字体家族的列表
-            fonts
-                .families
-                .entry(egui::FontFamily::Monospace)
-                .or_default()
-                .push("SarasaUiSC".to_owned());
-            ctx.set_fonts(fonts); // 应用新的字体定义到egui上下文
-        }
-
-        setup_custom_fonts(&cc.egui_ctx); // 调用字体设置函数
-
-        // 初始化异步HTTP客户端，设置超时时间为30秒。
-        let async_http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("构建HTTP客户端失败"); // 如果构建失败则panic
-
-        // 初始化网易云音乐API客户端实例。
-        let netease_api_client_instance = match netease_lyrics_fetcher::api::NeteaseClient::new() {
-            Ok(client) => Some(client), // 初始化成功
-            Err(e) => {
-                log::error!("[Unilyric] 初始化网易云API客户端失败: {}", e);
-                None // 初始化失败
-            }
-        };
-
-        // 初始化 persistent_canonical_keys 集合和 MetadataStore。
-        // persistent_canonical_keys 存储用户希望固定的元数据类型的规范化键。
-        // MetadataStore 存储当前会话的元数据，会先被设置中的固定元数据填充。
-        let mut initial_persistent_canonical_keys = HashSet::new();
-        let mut initial_metadata_store = MetadataStore::new();
-
-        // 从 app_settings.pinned_metadata (类型 HashMap<String, Vec<String>>) 初始化。
-        // pinned_metadata 存储的是上次保存时UI上被固定的条目的显示键和对应的值列表。
-        for (display_key, values_vec) in &settings.pinned_metadata {
-            // 尝试将INI中存储的显示键解析为规范键 (CanonicalMetadataKey)
-            match display_key.trim().parse::<CanonicalMetadataKey>() {
-                Ok(canonical_key) => {
-                    // 如果解析成功，将这个规范化的键添加到 persistent_canonical_keys 集合中，
-                    // 这表示用户 *意图* 固定这种类型的元数据。
-                    initial_persistent_canonical_keys.insert(canonical_key.clone());
-                    // 将从设置中加载的固定元数据值添加到初始的 MetadataStore。
-                    for v_str in values_vec {
-                        // values_vec 是 &Vec<String>
-                        if let Err(e) = initial_metadata_store.add(display_key, v_str.clone()) {
-                            log::error!(
-                                "[Unilyric] 从设置加载固定元数据 '{}' (值: '{}') 到Store失败: {}",
-                                display_key,
-                                v_str,
-                                e
-                            );
-                        }
-                    }
-                }
-                Err(_) => {
-                    // 如果无法解析为标准键，则作为自定义(Custom)键处理。
-                    let custom_key = CanonicalMetadataKey::Custom(display_key.trim().to_string());
-                    initial_persistent_canonical_keys.insert(custom_key.clone());
-                    for v_str in values_vec {
-                        if let Err(e) = initial_metadata_store.add(display_key, v_str.clone()) {
-                            log::error!(
-                                "[Unilyric] 从设置加载固定自定义元数据 '{}' (值: '{}') 到Store失败: {}",
-                                display_key,
-                                v_str,
-                                e
-                            );
-                        }
-                    }
-                }
-            }
-        }
-        log::info!(
-            "[Unilyric] 从设置加载了 {} 个固定元数据键的类型。",
-            initial_persistent_canonical_keys.len()
-        );
-        log::info!(
-            "[Unilyric] 已填充 {} 条来自设置的固定元数据到初始存储。",
-            initial_metadata_store.iter_all().count()
-        );
-
-        let amll_repo_base = "https://github.moeyy.xyz/https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main".to_string();
-
-        let mut initial_amll_index_state = AmllIndexDownloadState::Idle;
-        let mut initial_amll_index_data: Vec<AmllIndexEntry> = Vec::new();
-        let amll_cache_path: Option<PathBuf> =
-            Self::get_app_data_dir().map(|dir| dir.join("amll_index_cache.jsonl"));
-
-        if let Some(ref cache_p) = amll_cache_path {
-            match crate::amll_lyrics_fetcher::amll_fetcher::load_index_from_cache(cache_p) {
-                Ok(cached_entries) => {
-                    if !cached_entries.is_empty() {
-                        log::info!(
-                            "[UniLyric] 成功从缓存加载 {} 条 AMLL TTML Database 索引。",
-                            cached_entries.len()
-                        );
-                        initial_amll_index_data = cached_entries;
-                        initial_amll_index_state = AmllIndexDownloadState::Success;
-                    } else {
-                        log::info!("[UniLyric] AMLL TTML Database 索引缓存为空或解析失败");
-                    }
-                }
-                Err(e) => {
-                    log::warn!("[UniLyric] 从缓存加载 AMLL TTML Database 索引失败: {}。", e);
-                }
-            }
-        } else {
-            log::warn!("[UniLyric] 无法确定 AMLL TTML Database 索引缓存路径，将仅使用网络下载。");
-        }
-
-        // 初始化应用状态结构体 Self (UniLyricApp) 的所有字段。
-        let mut app = Self {
-            input_text: String::new(),                      // 输入框文本，初始为空
-            output_text: String::new(),                     // 输出框文本，初始为空
-            display_translation_lrc_output: String::new(),  // 翻译LRC预览，初始为空
-            display_romanization_lrc_output: String::new(), // 罗马音LRC预览，初始为空
-            source_format: LyricFormat::Ass,                // 默认源格式为ASS
-            target_format: LyricFormat::Ttml,               // 默认目标格式为TTML
-            available_formats: LyricFormat::all(),          // 获取所有支持的歌词格式列表
-            last_opened_file_path: None,                    // 初始化时无已打开文件
-            last_saved_file_path: None,                     // 初始化时无已保存文件
-            conversion_in_progress: false,                  // 初始化时无转换任务
-            parsed_ttml_paragraphs: None,                   // 初始化时无已解析的TTML段落
-            metadata_store: Arc::new(Mutex::new(initial_metadata_store)), // 使用上面初始化的元数据存储
-            editable_metadata: Vec::new(), // 可编辑元数据列表，初始为空 (稍后从store重建)
-            persistent_canonical_keys: initial_persistent_canonical_keys, // 使用上面初始化的固定键集合
-            current_markers: Vec::new(),                                  // 标记列表，初始为空
-            source_is_line_timed: false, // 源是否逐行歌词，初始为false
-            current_raw_ttml_from_input: None, // 原始TTML输入，初始为None
-            show_bottom_log_panel: false, // 底部日志面板，初始隐藏
-            new_trigger_log_exists: false, // 无新触发性日志
-            is_any_file_hovering_window: false, // 无文件悬停
-            last_known_pointer_pos_while_dragging: None, // 无拖放指针位置
-            show_markers_panel: false,   // 标记点面板，初始隐藏
-            show_romanization_lrc_panel: false, // 罗马音LRC面板，初始隐藏
-            show_translation_lrc_panel: false, // 翻译LRC面板，初始隐藏
-            wrap_text: true,             // 文本框默认自动换行
-            qqmusic_query: String::new(), // QQ音乐查询词，初始为空
-            download_state: Arc::new(Mutex::new(QqMusicDownloadState::Idle)), // QQ音乐下载状态，初始为空闲
-            http_client: async_http_client, // 使用上面创建的HTTP客户端
-            show_qqmusic_download_window: false, // QQ音乐下载窗口，初始隐藏
-            kugou_query: String::new(),     // 酷狗查询词，初始为空
-            kugou_download_state: Arc::new(Mutex::new(KrcDownloadState::Idle)), // 酷狗下载状态，初始为空闲
-            show_kugou_download_window: false, // 酷狗下载窗口，初始隐藏
-            pending_krc_translation_lines: None, // KRC内嵌翻译，初始为None
-            netease_query: String::new(),      // 网易云查询词，初始为空
-            netease_download_state: Arc::new(Mutex::new(NeteaseDownloadState::Idle)), // 网易云下载状态，初始为空闲
-            show_netease_download_window: false, // 网易云下载窗口，初始隐藏
-            netease_client: Arc::new(Mutex::new(netease_api_client_instance)), // 使用上面创建的网易云API客户端
-
-            // 初始化 amll-ttml-db 相关字段
-            amll_db_repo_url_base: amll_repo_base,
-            amll_index: Arc::new(Mutex::new(initial_amll_index_data)),
-            amll_index_download_state: Arc::new(Mutex::new(initial_amll_index_state)),
-            amll_search_query: String::new(),
-            amll_selected_search_field: AmllSearchField::default(),
-            amll_search_results: Arc::new(Mutex::new(Vec::new())),
-            amll_ttml_download_state: Arc::new(Mutex::new(AmllTtmlDownloadState::Idle)),
-            show_amll_download_window: false,
-            amll_index_cache_path: amll_cache_path,
-
-            loaded_translation_lrc: None,  // 已加载翻译LRC，初始为None
-            loaded_romanization_lrc: None, // 已加载罗马音LRC，初始为None
-            show_metadata_panel: false,    // 元数据编辑面板，初始隐藏
-            detected_formatted_ttml_source: false, // 是否检测到格式化TTML，初始为false
-            app_settings: Arc::new(Mutex::new(settings.clone())), // 应用设置的Arc<Mutex>副本
-            show_settings_window: false,   // 设置窗口，初始隐藏
-            temp_edit_settings: settings,  // 用于设置窗口编辑的临时设置副本
-            log_display_buffer: Vec::with_capacity(200), // 日志显示缓冲区，预分配容量
-            session_platform_metadata: HashMap::new(), // 会话平台元数据，初始为空
-            metadata_source_is_download: false, // 元数据是否来自下载，初始为false
-            ui_log_receiver,               // 从参数传入的日志接收器
-            pending_romanization_qrc_from_download: None, // 待处理罗马音QRC，初始为None
-            pending_translation_lrc_from_download: None, // 待处理翻译LRC，初始为None
-            pending_romanization_lrc_from_download: None, // 待处理罗马音LRC，初始为None
-            direct_netease_main_lrc_content: None, // 网易云直接主LRC内容，初始为None
-        };
-
-        // 在所有字段初始化之后，根据初始的 MetadataStore (已包含固定项) 重建UI的可编辑元数据列表。
-        app.rebuild_editable_metadata_from_store();
-
-        app // 返回初始化完成的 UniLyricApp 实例
-    }
-
     /// 将UI元数据编辑器中的当前状态同步回内部的 `MetadataStore`，
     /// 更新 `persistent_canonical_keys` 集合，并将固定的元数据保存到应用设置中，
     /// 最后触发目标格式歌词的重新生成。
-    ///
-    /// 这个函数通常在元数据编辑器中的内容发生更改并需要应用时调用，
-    /// 例如用户点击“应用”按钮或关闭元数据编辑窗口时。
     pub fn sync_store_from_editable_list_and_trigger_conversion(&mut self) {
-        // 限制 MutexGuard 的生命周期
+        // 使用代码块限制锁的范围
         {
-            // 获取 MetadataStore 的锁，以便进行修改
+            // 获取元数据存储的可写锁
             let mut store = self.metadata_store.lock().unwrap();
-            store.clear(); // 清空当前的 MetadataStore，准备从UI状态完全重建
+            store.clear(); // 清空当前的元数据存储
 
-            // --- 同步UI固定状态到内部状态并保存到设置 ---
-            self.persistent_canonical_keys.clear(); // 清空当前的固定键集合，将根据UI重新填充
-            // `current_pinned_for_settings` 用于收集当前在UI上被标记为“固定”的元数据，
-            // 其键是规范化的显示键 (canonical_key.to_display_key())，值是原始用户输入的值列表。
-            let mut current_pinned_for_settings: HashMap<String, Vec<String>> = HashMap::new();
+            self.persistent_canonical_keys.clear(); // 清空持久化（固定）的规范键集合
+            let mut current_pinned_for_settings: HashMap<String, Vec<String>> = HashMap::new(); // 用于保存到设置的固定元数据
 
-            // 遍历UI元数据编辑器中的每一个条目 (self.editable_metadata)
+            // 遍历UI上的可编辑元数据列表
             for entry_ui in &self.editable_metadata {
-                // 只有当键名非空时才处理
                 if !entry_ui.key.trim().is_empty() {
-                    // 1. 将UI条目添加到 MetadataStore (无论它是否被固定)
-                    //    MetadataStore 内部会处理键的规范化和多值存储。
+                    // 确保键不为空
+                    // 尝试将UI条目添加到内部存储
                     if let Err(e) = store.add(&entry_ui.key, entry_ui.value.clone()) {
                         log::warn!(
                             "[Unilyric UI同步] 添加元数据 '{}' 到Store失败: {}",
@@ -456,54 +89,47 @@ impl UniLyricApp {
                         );
                     }
 
-                    // 2. 如果此UI条目被用户标记为“固定”(is_pinned)
+                    // 如果此条目被标记为固定
                     if entry_ui.is_pinned {
                         let value_to_pin = entry_ui.value.clone(); // 获取要固定的值
 
-                        // 尝试将UI上显示的键名解析为其规范化的 CanonicalMetadataKey
+                        // 尝试将UI上的键解析为规范元数据键
                         match entry_ui.key.trim().parse::<CanonicalMetadataKey>() {
                             Ok(canonical_key) => {
-                                // 解析成功 (是标准元数据类型)
-                                // 获取该规范键对应的、用于存储到设置文件中的唯一显示键。
-                                // 例如，即使用户输入 "Title" 或 "TITLE"，这里都应得到如 "Title"。
-                                let key_for_settings = canonical_key.to_display_key();
+                                // 如果是规范键
+                                let key_for_settings = canonical_key.to_display_key(); // 获取用于设置的显示键
 
-                                // 将此固定项添加到 current_pinned_for_settings 中，
-                                // 使用规范化的显示键作为 map 的键。
+                                // 将固定项添加到待保存的哈希图中
                                 current_pinned_for_settings
                                     .entry(key_for_settings)
-                                    .or_default() // 如果键不存在则插入默认值 (空Vec)
-                                    .push(value_to_pin); // 添加值
+                                    .or_default()
+                                    .push(value_to_pin);
 
-                                // 将此规范键添加到 self.persistent_canonical_keys 集合中，
-                                // 表示这种类型的元数据是用户希望固定的。
+                                // 将规范键添加到持久化键集合中
                                 self.persistent_canonical_keys.insert(canonical_key);
                             }
                             Err(_) => {
-                                // 解析失败 (是自定义元数据类型)
-                                // 对于自定义键，直接使用用户在UI上输入的键名（去除首尾空格）。
+                                // 如果是自定义键
                                 let custom_key_for_settings = entry_ui.key.trim().to_string();
                                 current_pinned_for_settings
                                     .entry(custom_key_for_settings.clone())
                                     .or_default()
                                     .push(value_to_pin);
 
-                                // 将自定义键的规范形式 (CanonicalMetadataKey::Custom) 添加到固定键集合。
+                                // 将自定义键（包装在CanonicalMetadataKey::Custom中）添加到持久化键集合
                                 self.persistent_canonical_keys
                                     .insert(CanonicalMetadataKey::Custom(custom_key_for_settings));
                             }
                         }
-                    } // 结束处理固定条目
-                } // 结束处理非空键名条目
-            } // 结束遍历 editable_metadata
+                    }
+                }
+            }
 
-            // --- 更新 AppSettings 并保存到INI文件 ---
+            // 保存固定元数据到应用设置
             {
-                // AppSettings 锁作用域开始
                 let mut app_settings_locked = self.app_settings.lock().unwrap();
-                // 将从UI收集到的、当前所有被固定的元数据更新到 app_settings 中。
-                app_settings_locked.pinned_metadata = current_pinned_for_settings;
-                // 保存更新后的设置到配置文件 (如 INI 文件)。
+                app_settings_locked.pinned_metadata = current_pinned_for_settings; // 更新设置中的固定元数据
+                // 尝试保存设置文件
                 if let Err(e) = app_settings_locked.save() {
                     log::error!("[Unilyric UI同步] 保存固定元数据到设置文件失败: {}", e);
                 } else {
@@ -512,8 +138,8 @@ impl UniLyricApp {
                         app_settings_locked.pinned_metadata.len()
                     );
                 }
-            } // AppSettings 锁释放
-        } // MetadataStore 锁作用域结束（store 在这里被丢弃，锁自动释放）
+            }
+        } //元数据存储的锁在此释放
 
         log::info!(
             "[Unilyric UI同步] MetadataStore已从UI编辑器同步。固定键类型数量: {}. 总元数据条目数量: {}",
@@ -525,13 +151,10 @@ impl UniLyricApp {
             self.persistent_canonical_keys
         );
 
-        // --- 触发歌词转换 ---
-        // 检查 MetadataStore 是否为空（即使没有歌词段落，仅有元数据也可能需要生成输出，例如LRC头部）
+        // 如果解析后的TTML段落存在，或者元数据存储不为空，则触发目标格式的生成
         let store_is_empty = self.metadata_store.lock().unwrap().is_empty();
-        // 如果存在已解析的歌词段落 (self.parsed_ttml_paragraphs)，或者元数据存储不为空，
-        // 则调用 generate_target_format_output() 来重新生成目标格式的歌词输出。
         if self.parsed_ttml_paragraphs.is_some() || !store_is_empty {
-            self.generate_target_format_output(); // 生成目标格式的输出文本
+            self.generate_target_format_output();
         }
     }
 
@@ -617,381 +240,558 @@ impl UniLyricApp {
         );
     }
 
-    pub fn trigger_amll_index_download(&mut self, force_network_refresh: bool) {
-        let mut index_state_lock = self.amll_index_download_state.lock().unwrap();
-        if *index_state_lock == AmllIndexDownloadState::Downloading {
+    /// 将当前歌词保存到本地缓存。
+    pub fn save_current_lyrics_to_local_cache(&mut self) {
+        // 检查输出文本是否为空
+        if self.output_text.is_empty() {
+            log::warn!("[本地缓存] 输出文本为空，无法保存到本地缓存。");
+            self.toasts.add(Toast {
+                text: "缓存失败：无歌词内容".into(),
+                kind: ToastKind::Error,
+                options: ToastOptions::default()
+                    .duration_in_seconds(3.0)
+                    .show_progress(true),
+                style: Default::default(),
+            });
             return;
         }
-        *index_state_lock = AmllIndexDownloadState::Downloading;
-        drop(index_state_lock);
 
-        let cache_path_opt_clone = self.amll_index_cache_path.clone();
-        let client_clone = self.http_client.clone();
-        let repo_base_url_clone = self.amll_db_repo_url_base.clone();
-        let index_arc_clone = Arc::clone(&self.amll_index);
-        let index_download_state_arc_clone = Arc::clone(&self.amll_index_download_state);
-
-        std::thread::spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(r) => r,
-                Err(e) => {
-                    log::error!("[Unilyric] 创建 Tokio 运行时失败 (amll_index): {}", e);
-                    let mut state_lock = index_download_state_arc_clone.lock().unwrap();
-                    *state_lock =
-                        AmllIndexDownloadState::Error(format!("创建异步运行时失败: {}", e));
-                    return;
-                }
-            };
-
-            let mut loaded_from_cache_successfully = false;
-            if !force_network_refresh {
-                if let Some(ref cache_p) = cache_path_opt_clone {
-                    log::info!(
-                        "[Unilyric] 尝试从缓存加载 AMLL TTML Database 索引: {:?}",
-                        cache_p
-                    );
-                    match crate::amll_lyrics_fetcher::amll_fetcher::load_index_from_cache(cache_p) {
-                        Ok(cached_entries) => {
-                            if !cached_entries.is_empty() {
-                                log::info!(
-                                    "[Unilyric] 成功从缓存加载 {} 条 AMLL TTML Database 索引。",
-                                    cached_entries.len()
-                                );
-                                let mut index_data_lock = index_arc_clone.lock().unwrap();
-                                *index_data_lock = cached_entries;
-                                drop(index_data_lock);
-
-                                let mut state_lock = index_download_state_arc_clone.lock().unwrap();
-                                *state_lock = AmllIndexDownloadState::Success;
-                                loaded_from_cache_successfully = true;
-                            } else {
-                                log::warn!(
-                                    "[Unilyric] AMLL TTML Database 索引缓存为空或解析失败，将尝试网络下载。"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "[Unilyric] 从缓存加载 AMLL TTML Database 索引文件失败: {}。将尝试网络下载。",
-                                e
-                            );
-                        }
-                    }
-                } else {
-                    log::info!("[Unilyric] 无有效 AMLL TTML Database 缓存");
-                }
-            }
-
-            if !loaded_from_cache_successfully {
-                log::info!(
-                    "[Unilyric]  正在下载 AMLL TTML Database 索引文件(强制刷新: {})...",
-                    force_network_refresh
-                );
-                rt.block_on(async {
-                    let result = if let Some(ref cache_p_for_network_save) = cache_path_opt_clone {
-                        crate::amll_lyrics_fetcher::download_and_parse_index(
-                            &client_clone,
-                            &repo_base_url_clone,
-                            cache_p_for_network_save,
-                        )
-                        .await
-                    } else {
-                        let dummy_path_for_signature =
-                            PathBuf::from("./amll_fetcher_temp_dummy_network.jsonl");
-                        crate::amll_lyrics_fetcher::download_and_parse_index(
-                            &client_clone,
-                            &repo_base_url_clone,
-                            &dummy_path_for_signature,
-                        )
-                        .await
-                    };
-
-                    match result {
-                        Ok(parsed_entries) => {
-                            let mut index_data_lock = index_arc_clone.lock().unwrap();
-                            *index_data_lock = parsed_entries;
-                            drop(index_data_lock);
-
-                            let mut state_lock = index_download_state_arc_clone.lock().unwrap();
-                            *state_lock = AmllIndexDownloadState::Success;
-                            log::info!("[Unilyric]  AMLL TTML Database 索引文件下载成功。");
-                        }
-                        Err(e) => {
-                            log::error!("[Unilyric]  AMLL TTML Database 索引文件下载失败: {}", e);
-                            let mut state_lock = index_download_state_arc_clone.lock().unwrap();
-                            *state_lock = AmllIndexDownloadState::Error(e.to_string());
-                        }
-                    }
+        // 尝试获取当前媒体信息的锁
+        let current_media_info_guard = match self.current_media_info.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                log::error!("[本地缓存] 无法获取当前媒体信息锁，无法保存。");
+                self.toasts.add(Toast {
+                    text: "缓存失败：无法获取播放信息".into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(3.0)
+                        .show_progress(true),
+                    style: Default::default(),
                 });
+                return;
             }
+        };
+
+        // 从媒体信息中提取标题和艺术家
+        let (smtc_title_opt, smtc_artists_str_opt) = match &*current_media_info_guard {
+            Some(info) => (info.title.clone(), info.artist.clone()),
+            None => {
+                log::error!("[本地缓存] 无当前 SMTC 信息，无法确定歌曲以保存缓存。");
+                self.toasts.add(Toast {
+                    text: "缓存失败：无SMTC信息".into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(3.0)
+                        .show_progress(true),
+                    style: Default::default(),
+                });
+                return;
+            }
+        };
+        drop(current_media_info_guard); // 释放锁
+
+        // 校验歌曲标题
+        let title_to_save = match smtc_title_opt {
+            Some(t) if !t.is_empty() && t != "无歌曲" && t != "无活动会话" => t,
+            _ => {
+                log::error!("[本地缓存] 无有效的 SMTC 歌曲标题，无法保存缓存。");
+                self.toasts.add(Toast {
+                    text: "缓存失败：歌曲标题无效".into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(3.0)
+                        .show_progress(true),
+                    style: Default::default(),
+                });
+                return;
+            }
+        };
+
+        // 处理艺术家列表
+        let artists_to_save: Vec<String> = smtc_artists_str_opt
+            .map(|s| {
+                s.split(['/', '、', ',', ';']) // 按多种分隔符分割
+                    .map(|name| name.trim().to_string()) // 去除首尾空格
+                    .filter(|name| !name.is_empty()) // 过滤空艺术家名
+                    .collect()
+            })
+            .unwrap_or_else(Vec::new); // 如果没有艺术家信息，则为空Vec
+
+        // 生成随机ID和时间戳，用于文件名
+        let mut rng = rand::rng(); // 使用线程本地随机数生成器
+        let random_id: u32 = rng.random_range(0..u32::MAX); // 生成 u32 范围内的随机数
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        // 创建安全的文件名组件 (只保留字母数字和空格，并将空格替换为下划线)
+        let safe_title = title_to_save
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ')
+            .collect::<String>()
+            .replace(' ', "_");
+        let safe_artist = artists_to_save.first().map_or_else(
+            || "未知艺术家".to_string(), // 如果没有艺术家，默认为 "未知艺术家"
+            |a| {
+                a.chars()
+                    .filter(|c| c.is_alphanumeric() || *c == ' ')
+                    .collect::<String>()
+                    .replace(' ', "_")
+            },
+        );
+        // 组装最终文件名
+        let filename = format!(
+            "{}_{}_{}_{:x}.ttml", // 时间戳_安全标题_安全艺术家_随机ID(十六进制).ttml
+            timestamp,
+            safe_title.chars().take(20).collect::<String>(), // 限制标题长度
+            safe_artist.chars().take(15).collect::<String>(), // 限制艺术家长度
+            random_id
+        );
+
+        // 获取本地缓存目录路径
+        let Some(cache_dir) = self.local_lyrics_cache_dir_path.as_ref() else {
+            log::error!("[本地缓存] 本地缓存目录路径未设置，无法保存文件。");
+            self.toasts.add(Toast {
+                text: "缓存失败：内部错误 (目录路径)".into(),
+                kind: ToastKind::Error,
+                options: ToastOptions::default()
+                    .duration_in_seconds(3.0)
+                    .show_progress(true),
+                style: Default::default(),
+            });
+            return;
+        };
+        let file_path = cache_dir.join(&filename); // 完整文件路径
+
+        // 写入歌词到文件
+        match std::fs::write(&file_path, &self.output_text) {
+            Ok(_) => log::info!("[本地缓存] TTML 歌词已保存到: {:?}", file_path),
+            Err(e) => {
+                log::error!("[本地缓存] 保存 TTML 文件到 {:?} 失败: {}", file_path, e);
+                self.toasts.add(Toast {
+                    text: "缓存失败：写入文件错误".into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(3.0)
+                        .show_progress(true),
+                    style: Default::default(),
+                });
+                return;
+            }
+        }
+
+        // 创建新的缓存索引条目
+        let new_entry = LocalLyricCacheEntry::new(
+            title_to_save.clone(),
+            artists_to_save.clone(),
+            filename.clone(),
+            self.last_auto_fetch_source_format, // 记录原始获取格式
+        );
+
+        // 更新内存中的缓存索引
+        let mut index_guard = self.local_lyrics_cache_index.lock().unwrap();
+        if let Some(existing_idx) = index_guard.iter().position(|entry| {
+            entry.smtc_title == title_to_save && entry.smtc_artists == artists_to_save // 检查是否已存在相同歌曲的缓存
+        }) {
+            log::info!(
+                "[本地缓存] 找到现有缓存条目，将替换为新的歌词: {}",
+                title_to_save
+            );
+            // 删除旧的缓存文件
+            if let Some(old_filename) = index_guard
+                .get(existing_idx)
+                .map(|e| e.ttml_filename.clone())
+            {
+                let old_file_path = cache_dir.join(old_filename);
+                if let Err(e) = std::fs::remove_file(&old_file_path) {
+                    log::warn!("[本地缓存] 删除旧缓存文件 {:?} 失败: {}", old_file_path, e);
+                }
+            }
+            index_guard[existing_idx] = new_entry.clone(); // 替换现有条目
+        } else {
+            index_guard.push(new_entry.clone()); // 添加新条目
+        }
+        drop(index_guard); // 释放索引锁
+
+        // 将新条目追加到索引文件 (如果路径存在)
+        if let Some(index_file_path) = &self.local_lyrics_cache_index_path {
+            match OpenOptions::new()
+                .append(true) // 以追加模式打开
+                .create(true) // 如果文件不存在则创建
+                .open(index_file_path)
+            {
+                Ok(file) => {
+                    let mut writer = BufWriter::new(file); // 使用带缓冲的写入器
+                    if let Ok(json_line) = serde_json::to_string(&new_entry) {
+                        // 序列化为 JSON 字符串
+                        if writeln!(writer, "{}", json_line).is_err() {
+                            // 写入并换行
+                            log::error!("[本地缓存] 写入索引条目到 {:?} 失败。", index_file_path);
+                        }
+                    }
+                }
+                Err(e) => log::error!(
+                    "[本地缓存] 打开或创建本地索引文件 {:?} 失败: {}",
+                    index_file_path,
+                    e
+                ),
+            }
+        }
+
+        // 显示成功提示
+        self.toasts.add(Toast {
+            text: format!("歌词已保存: {}", title_to_save).into(),
+            kind: ToastKind::Success,
+            options: ToastOptions::default()
+                .duration_in_seconds(3.0)
+                .show_progress(true)
+                .show_icon(true),
+            style: Default::default(),
         });
     }
 
+    /// 检查 AMLL 索引是否有更新。
+    pub fn check_for_amll_index_update(&mut self) {
+        let mut current_state_guard = self.amll_index_download_state.lock().unwrap();
+        // 如果当前正在检查更新或下载中，则跳过
+        if *current_state_guard == AmllIndexDownloadState::CheckingForUpdate
+            || matches!(*current_state_guard, AmllIndexDownloadState::Downloading(_))
+        {
+            log::debug!("[UniLyricApp 检查更新] 已在检查更新或下载中，跳过。");
+            return;
+        }
+        // 设置状态为正在检查
+        *current_state_guard = AmllIndexDownloadState::CheckingForUpdate;
+        drop(current_state_guard); // 在调用外部函数前释放锁
+
+        // 触发 AMLL 索引更新检查
+        amll_connector_manager::trigger_amll_index_update_check(
+            self.http_client.clone(),
+            Arc::clone(&self.amll_index_download_state),
+            self.amll_index_cache_path.clone(),
+            Arc::clone(&self.tokio_runtime),
+        );
+    }
+
+    /// 触发 AMLL 索引的下载。
+    /// `force_network_refresh`: 是否强制从网络刷新，即使本地已有或状态为成功。
+    pub fn trigger_amll_index_download(&mut self, force_network_refresh: bool) {
+        let mut current_state_guard = self.amll_index_download_state.lock().unwrap();
+
+        let mut initial_head_candidate_for_async: Option<String> = None; // 用于传递给异步任务的初始 HEAD 候选
+        let mut should_proceed_with_download = force_network_refresh; // 是否应该继续下载流程
+
+        if !force_network_refresh {
+            // 如果不是强制刷新，根据当前状态判断是否需要下载
+            match &*current_state_guard {
+                AmllIndexDownloadState::UpdateAvailable(head) => {
+                    // 如果有可用更新
+                    initial_head_candidate_for_async = Some(head.clone());
+                    should_proceed_with_download = true;
+                    log::debug!(
+                        "[UniLyricApp 触发下载] 检测到更新 (HEAD: {}), 准备下载。",
+                        head.chars().take(7).collect::<String>() // 只记录HEAD的前7个字符
+                    );
+                }
+                AmllIndexDownloadState::Idle | AmllIndexDownloadState::Error(_) => {
+                    // 如果当前是空闲或错误状态，也应该尝试下载
+                    should_proceed_with_download = true;
+                    log::debug!(
+                        "[UniLyricApp 触发下载] 从 {:?} 状态触发下载 (非强制)。",
+                        *current_state_guard
+                    );
+                }
+                AmllIndexDownloadState::Success(loaded_head) => {
+                    // 如果已成功加载，并且不是强制刷新
+                    if let Some(ref cache_p) = self.amll_index_cache_path {
+                        if !cache_p.exists() {
+                            // 虽然状态是成功，但缓存文件不存在，这很奇怪，尝试重新下载
+                            log::warn!(
+                                "[UniLyricApp 触发下载] 状态为 Success({}) 但缓存文件不存在，将尝试下载。",
+                                loaded_head.chars().take(7).collect::<String>()
+                            );
+                            should_proceed_with_download = true;
+                            initial_head_candidate_for_async = Some(loaded_head.clone()); // 尝试下载这个已知的HEAD
+                        } else {
+                            // 状态成功且缓存存在，非强制刷新则不下载
+                            log::debug!(
+                                "[UniLyricApp 触发下载] 状态为 Success({}) 且非强制刷新，不执行下载。",
+                                loaded_head.chars().take(7).collect::<String>()
+                            );
+                            // should_proceed_with_download 保持 false
+                        }
+                    } else {
+                        // 没有缓存路径信息，但状态是 Success，这也阻止非强制下载
+                        log::warn!("[UniLyricApp 触发下载] 状态为 Success 但无缓存路径，不下载。");
+                    }
+                }
+                AmllIndexDownloadState::CheckingForUpdate
+                | AmllIndexDownloadState::Downloading(_) => {
+                    // 如果正在检查更新或下载中，则跳过
+                    log::debug!("[UniLyricApp 触发下载] 已在检查更新或下载中，跳过。");
+                    return;
+                }
+            }
+        } else {
+            // force_network_refresh 为 true
+            log::trace!("[UniLyricApp 触发下载] 强制刷新，将下载最新版本。");
+            // initial_head_candidate_for_async 保持 None，让异步任务获取最新 HEAD
+        }
+
+        // 如果最终判断不需要下载，则直接返回
+        if !should_proceed_with_download {
+            return;
+        }
+
+        // 更新状态为 Downloading
+        // 异步任务内部会再次确认/获取最终的 HEAD 并可能再次更新 Downloading 状态
+        *current_state_guard =
+            AmllIndexDownloadState::Downloading(initial_head_candidate_for_async.clone());
+        drop(current_state_guard); // 释放锁
+
+        // 调用管理器中的函数执行异步下载
+        amll_connector_manager::trigger_amll_index_download_async(
+            self.http_client.clone(),
+            self.amll_db_repo_url_base.clone(),
+            Arc::clone(&self.amll_index),
+            Arc::clone(&self.amll_index_download_state),
+            self.amll_index_cache_path.clone(),
+            Arc::clone(&self.tokio_runtime),
+            force_network_refresh,
+            initial_head_candidate_for_async, // 传递初始HEAD候选
+        );
+    }
+
+    /// 触发 AMLL 歌词的搜索和下载。
+    /// `selected_entry_to_download`: 如果是 Some，则直接下载此条目；如果是 None，则根据 `amll_search_query` 进行搜索。
     pub fn trigger_amll_lyrics_search_and_download(
         &mut self,
         selected_entry_to_download: Option<AmllIndexEntry>,
     ) {
+        // 1. 检查 AMLL 索引是否已成功加载
         let index_state_lock = self.amll_index_download_state.lock().unwrap();
-        if *index_state_lock != AmllIndexDownloadState::Success {
-            log::warn!(
-                "[Unilyric] AMLL TTML Database 索引文件尚未成功加载，无法搜索或下载。当前状态: {:?}",
+        if !matches!(*index_state_lock, AmllIndexDownloadState::Success(_)) {
+            warn!(
+                "[UniLyricApp] AMLL TTML Database 索引文件尚未成功加载，无法搜索或下载。当前状态: {:?}",
                 *index_state_lock
             );
-            if *index_state_lock == AmllIndexDownloadState::Idle
-                || matches!(*index_state_lock, AmllIndexDownloadState::Error(_))
-            {
-                drop(index_state_lock);
-                self.trigger_amll_index_download(false);
+            // 如果索引未加载/错误，并且是 Idle 或 Error 状态，则尝试检查更新
+            if matches!(
+                *index_state_lock,
+                AmllIndexDownloadState::Idle | AmllIndexDownloadState::Error(_)
+            ) {
+                drop(index_state_lock); // 释放锁后才能调用 self 的其他方法
+                self.check_for_amll_index_update(); // 先检查更新
+
+                // 更新 TTML 下载状态为错误，提示用户
                 let mut ttml_state_lock = self.amll_ttml_download_state.lock().unwrap();
-                *ttml_state_lock =
-                    AmllTtmlDownloadState::Error("索引文件正在加载，请稍后重试搜索。".to_string());
+                *ttml_state_lock = AmllTtmlDownloadState::Error(
+                    "索引文件正在加载/检查更新，请稍后重试搜索。".to_string(),
+                );
+            } else {
+                // 如果是 CheckingForUpdate 或 Downloading 状态，则不额外操作
+                drop(index_state_lock);
             }
             return;
         }
-        drop(index_state_lock);
+        drop(index_state_lock); // 释放索引状态锁
 
-        if let Some(entry_to_download) = selected_entry_to_download {
-            log::info!(
-                "[Unilyric] 准备下载选定的 AMLL TTML Database 条目: ID '{}', 文件 '{}'",
-                entry_to_download.id,
-                entry_to_download.raw_lyric_file
-            );
-            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::DownloadingTtml;
-            drop(ttml_dl_state_lock);
-            let client_clone = self.http_client.clone();
-            let repo_base_url_clone = self.amll_db_repo_url_base.clone();
-            let ttml_download_state_arc_clone = Arc::clone(&self.amll_ttml_download_state);
-            std::thread::spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(r) => r,
-                    Err(e) => {
-                        log::error!("[Unilyric] 创建 Tokio 运行时失败 (amll_ttml): {}", e);
-                        let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
-                        *state_lock =
-                            AmllTtmlDownloadState::Error(format!("创建异步运行时失败: {}", e));
-                        return;
-                    }
-                };
-                rt.block_on(async {
-                    match crate::amll_lyrics_fetcher::download_ttml_from_entry(
-                        &client_clone,
-                        &repo_base_url_clone,
-                        &entry_to_download,
-                    )
-                    .await
-                    {
-                        Ok(fetched_lyrics) => {
-                            let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
-                            *state_lock = AmllTtmlDownloadState::Success(fetched_lyrics);
-                            log::info!(
-                                "[Unilyric] AMLL TTML 文件下载成功: {}",
-                                entry_to_download.raw_lyric_file
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("[Unilyric] AMLL TTML 文件下载失败: {}", e);
-                            let mut state_lock = ttml_download_state_arc_clone.lock().unwrap();
-                            *state_lock = AmllTtmlDownloadState::Error(e.to_string());
-                        }
-                    }
-                });
-            });
+        // 2. 准备参数
+        // 如果是搜索操作 (selected_entry_to_download 为 None)
+        let query_for_search = if selected_entry_to_download.is_none() {
+            Some(self.amll_search_query.clone()) // 使用UI输入的搜索查询
         } else {
-            let query = self.amll_search_query.trim();
-            if query.is_empty() {
-                log::info!("[Unilyric] AMLL TTML Database 搜索查询为空，清空搜索结果。");
-                let mut results_lock = self.amll_search_results.lock().unwrap();
-                results_lock.clear();
-                let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
-                *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
-                return;
-            }
-            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::SearchingIndex;
-            drop(ttml_dl_state_lock);
-            let index_data_lock = self.amll_index.lock().unwrap();
-            let search_results_vec = crate::amll_lyrics_fetcher::search_lyrics_in_index(
-                query,
-                &self.amll_selected_search_field,
-                &index_data_lock,
-            );
-            drop(index_data_lock);
-            let mut results_display_lock = self.amll_search_results.lock().unwrap();
-            *results_display_lock = search_results_vec;
-            drop(results_display_lock);
-            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
-        }
+            None // 下载特定条目时不需要查询字符串
+        };
+        let field_for_search = if selected_entry_to_download.is_none() {
+            Some(self.amll_selected_search_field.clone()) // 使用UI选择的搜索字段
+        } else {
+            None // 下载特定条目时不需要搜索字段
+        };
+        let index_data_for_search = if selected_entry_to_download.is_none() {
+            Some(Arc::clone(&self.amll_index)) // 传递索引数据用于搜索
+        } else {
+            None // 下载特定条目时不需要完整索引数据 (条目本身已包含路径)
+        };
+        let search_results_for_search = if selected_entry_to_download.is_none() {
+            Some(Arc::clone(&self.amll_search_results)) // 传递搜索结果的Arc用于更新
+        } else {
+            None // 下载特定条目时不直接更新搜索结果列表
+        };
+
+        // 调用异步处理函数，该函数内部会区分是搜索还是下载特定条目
+        amll_connector_manager::handle_amll_lyrics_search_or_download_async(
+            self.http_client.clone(),
+            self.amll_db_repo_url_base.clone(),
+            Arc::clone(&self.amll_ttml_download_state), // 用于更新TTML下载状态
+            Arc::clone(&self.tokio_runtime),
+            selected_entry_to_download, // 要下载的特定条目 (Option)
+            query_for_search,           // 搜索查询 (Option)
+            field_for_search,           // 搜索字段 (Option)
+            index_data_for_search,      // 索引数据 (Option)
+            search_results_for_search,  // 搜索结果容器 (Option)
+        );
     }
 
+    /// 处理 AMLL TTML 歌词下载完成的逻辑。
     pub fn handle_amll_ttml_download_completion(&mut self) {
-        let mut fetched_lyrics_to_process: Option<FetchedAmllTtmlLyrics> = None;
-        let mut error_to_report: Option<String> = None;
-        let mut should_close_window_and_reset_state = false;
+        let mut fetched_lyrics_to_process: Option<FetchedAmllTtmlLyrics> = None; // 存储成功获取的歌词数据
+        let mut error_to_report: Option<String> = None; // 存储错误信息
+        let mut should_close_window_and_reset_state = false; // 是否应关闭下载窗口并重置状态
 
+        // 检查下载状态
         {
             let mut download_status_locked = self.amll_ttml_download_state.lock().unwrap();
             match &*download_status_locked {
                 AmllTtmlDownloadState::Success(data) => {
+                    // 下载成功
                     fetched_lyrics_to_process = Some(data.clone());
                     should_close_window_and_reset_state = true;
                 }
                 AmllTtmlDownloadState::Error(msg) => {
+                    // 下载失败
                     error_to_report = Some(msg.clone());
                 }
-                _ => {}
+                _ => {} // Idle, Searching, Downloading 状态，不在此处处理
             }
+            // 如果确定要关闭窗口并重置（通常是成功后）
             if should_close_window_and_reset_state {
-                *download_status_locked = AmllTtmlDownloadState::Idle;
+                *download_status_locked = AmllTtmlDownloadState::Idle; // 重置下载状态为空闲
             }
-        }
+        } // 下载状态锁释放
 
+        // 处理获取到的歌词数据
         if let Some(fetched_data) = fetched_lyrics_to_process {
-            self.clear_all_data();
-            self.metadata_source_is_download = true;
-
-            self.input_text = fetched_data.ttml_content;
-            self.source_format = LyricFormat::Ttml;
-            log::info!(
-                "[Unilyric] 已加载来自 AMLL TTML Database 的 TTML 歌词。歌曲名: {:?}, 艺术家: {:?}",
-                fetched_data.song_name,
-                fetched_data.artists_name
-            );
-
+            // 清理可能存在的旧的次要歌词数据
             self.loaded_translation_lrc = None;
             self.loaded_romanization_lrc = None;
             self.pending_translation_lrc_from_download = None;
             self.pending_romanization_qrc_from_download = None;
             self.pending_romanization_lrc_from_download = None;
 
-            self.handle_convert();
+            // 调用核心处理函数处理平台获取的数据
+            app_fetch_core::process_platform_lyrics_data(
+                self,
+                PlatformFetchedData::Amll(fetched_data), // 包装为 PlatformFetchedData 枚举
+            );
         } else if let Some(err_msg) = error_to_report {
+            // 如果有错误信息，记录日志
             log::error!("[Unilyric] AMLL TTML Database 下载错误: {}", err_msg);
+            // 可以在这里添加UI提示，例如通过 self.toasts
         }
 
+        // 如果需要关闭窗口并重置相关UI状态
         if should_close_window_and_reset_state {
-            self.show_amll_download_window = false;
-            self.amll_search_query.clear();
+            self.show_amll_download_window = false; // 关闭 AMLL 下载窗口
+            self.amll_search_query.clear(); // 清空搜索查询
             let mut search_results_lock = self.amll_search_results.lock().unwrap();
-            search_results_lock.clear();
+            search_results_lock.clear(); // 清空搜索结果列表
         }
     }
 
     /// 触发QQ音乐歌词的下载流程。
-    ///
-    /// 此函数在用户输入查询词并点击“下载”按钮时被调用。
-    /// 它会启动一个新的线程来执行异步的网络请求和歌词解析，以避免阻塞UI。
     pub fn trigger_qqmusic_download(&mut self) {
-        // 获取用户输入的查询词，并去除首尾空白。
-        let query = self.qqmusic_query.trim().to_string();
-        // 如果查询词为空，则记录错误并提前返回。
+        let query = self.qqmusic_query.trim().to_string(); // 获取并清理查询字符串
         if query.is_empty() {
             log::error!("[Unilyric] QQ音乐下载：请输入有效的搜索内容。");
             // 如果当前状态是下载中，也将其重置为空闲，以避免UI卡在下载状态。
-            let mut download_status_locked = self.download_state.lock().unwrap();
+            let mut download_status_locked = self.qq_download_state.lock().unwrap();
             if matches!(*download_status_locked, QqMusicDownloadState::Downloading) {
                 *download_status_locked = QqMusicDownloadState::Idle;
             }
             return;
         }
 
-        // 更新下载状态为 "Downloading"。
-        // 使用代码块限制 MutexGuard 的生命周期。
+        // 设置下载状态为“下载中”
         {
-            let mut download_status_locked = self.download_state.lock().unwrap();
+            let mut download_status_locked = self.qq_download_state.lock().unwrap();
             *download_status_locked = QqMusicDownloadState::Downloading;
         }
 
-        // 克隆需要在新线程中使用的共享状态和HTTP客户端。
-        // Arc (原子引用计数) 使得这些资源可以被安全地跨线程共享。
-        let state_clone = Arc::clone(&self.download_state); // 下载状态的Arc副本
-        let client_clone = self.http_client.clone(); // HTTP客户端的副本
+        // 克隆需要在新线程中使用的数据
+        let state_clone = Arc::clone(&self.qq_download_state);
+        let client_clone = self.http_client.clone(); // HTTP客户端通常是 Arc<Client>
 
-        // 启动一个新的系统线程来执行耗时的网络操作，避免阻塞UI线程。
+        // 创建新线程执行异步下载任务
         std::thread::spawn(move || {
-            // 在新线程中创建一个Tokio运行时，用于执行异步代码。
-            // `Builder::new_current_thread()` 创建一个单线程运行时。
-            // `enable_all()` 启用所有Tokio特性（如IO, time）。
+            // 为新线程创建 Tokio 运行时
             let rt = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
+                .enable_all() // 启用所有 Tokio 功能
                 .build()
             {
-                Ok(r) => r, // 运行时创建成功
+                Ok(r) => r,
                 Err(e) => {
-                    // 运行时创建失败
                     log::error!("[Unilyric] QQ音乐下载：创建Tokio运行时失败: {}", e);
-                    // 更新下载状态为错误状态。
                     let mut status_lock = state_clone.lock().unwrap();
                     *status_lock =
                         QqMusicDownloadState::Error(format!("创建异步运行时失败: {}", e));
-                    return; // 线程结束
+                    return;
                 }
             };
 
-            // 使用 `rt.block_on` 在当前线程（即新创建的这个std::thread）上阻塞式地运行异步代码块。
+            // 在 Tokio 运行时中执行异步代码块
             rt.block_on(async {
                 log::info!("[Unilyric] QQ音乐下载：正在获取: '{}'", query);
-                // 调用实际的歌词下载和解析函数。
-                // `download_lyrics_by_query_first_match` 是一个异步函数。
+                // 调用 QQ 音乐歌词获取器的下载函数
                 match qq_lyrics_fetcher::qqlyricsfetcher::download_lyrics_by_query_first_match(
-                    &client_clone, // 传入HTTP客户端引用
-                    &query,        // 传入查询词引用
+                    &client_clone, // 传递 HTTP 客户端引用
+                    &query,
                 )
                 .await // 等待异步操作完成
                 {
-                    Ok(data) => { // 下载和解析成功
+                    Ok(data) => {
+                        // 下载成功
                         info!(
                             "[Unilyric] 下载成功： {} - {}",
-                            data.song_name.as_deref().unwrap_or("未知歌名"), 
-                            data.artists_name.join("/") // 将歌手名列表用 "/" 连接
+                            data.song_name.as_deref().unwrap_or("未知歌名"),
+                            data.artists_name.join("/")
                         );
-                        // 更新下载状态为成功，并附带获取到的歌词数据。
                         let mut status_lock = state_clone.lock().unwrap();
-                        *status_lock = QqMusicDownloadState::Success(data);
+                        *status_lock = QqMusicDownloadState::Success(data); // 更新状态为成功并附带数据
                     }
-                    Err(e) => { // 下载或解析过程中发生错误
+                    Err(e) => {
+                        // 下载失败
                         log::error!("[Unilyric] QQ音乐歌词下载失败: {}", e);
-                        // 更新下载状态为错误，并附带错误信息。
                         let mut status_lock = state_clone.lock().unwrap();
-                        *status_lock = QqMusicDownloadState::Error(e.to_string());
+                        *status_lock = QqMusicDownloadState::Error(e.to_string()); // 更新状态为错误并附带错误信息
                     }
                 }
-            }); // Tokio运行时 block_on 结束
-        }); // 新线程结束
+            });
+        });
     }
 
     /// 触发网易云音乐歌词的下载流程。
     pub fn trigger_netease_download(&mut self) {
-        let query = self.netease_query.trim().to_string();
+        let query = self.netease_query.trim().to_string(); // 获取并清理查询内容
         if query.is_empty() {
             log::error!("[Unilyric] 网易云音乐下载：查询内容为空，无法开始下载。");
             let mut ds_lock = self.netease_download_state.lock().unwrap();
-            *ds_lock = NeteaseDownloadState::Idle; // 重置状态
+            *ds_lock = NeteaseDownloadState::Idle; // 重置状态为空闲
             return;
         }
 
+        // 克隆需要在新线程中使用的数据
         let download_state_clone = Arc::clone(&self.netease_download_state);
-        let client_mutex_arc_clone = Arc::clone(&self.netease_client);
+        let client_mutex_arc_clone = Arc::clone(&self.netease_client); // 网易云客户端是 Arc<Mutex<Option<NeteaseClient>>>
 
-        // 更新下载状态：如果客户端未初始化，则为InitializingClient，否则为Downloading
+        // 根据客户端是否已初始化，设置初始下载状态
         {
             let mut ds_lock = download_state_clone.lock().unwrap();
-            let client_guard = client_mutex_arc_clone.lock().unwrap();
+            let client_guard = client_mutex_arc_clone.lock().unwrap(); // 获取客户端的锁
             if client_guard.is_none() {
-                *ds_lock = NeteaseDownloadState::InitializingClient;
+                // 如果客户端未初始化
+                *ds_lock = NeteaseDownloadState::InitializingClient; // 设置状态为正在初始化客户端
             } else {
-                *ds_lock = NeteaseDownloadState::Downloading;
+                // 如果客户端已初始化
+                *ds_lock = NeteaseDownloadState::Downloading; // 设置状态为下载中
             }
-        }
+        } // 客户端锁和下载状态锁在此释放
 
+        // 创建新线程执行异步下载任务
         std::thread::spawn(move || {
+            // 为新线程创建 Tokio 运行时
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -1006,17 +806,20 @@ impl UniLyricApp {
                 }
             };
 
+            // 在 Tokio 运行时中执行异步代码块
             rt.block_on(async move {
                 let maybe_client_instance: Option<netease_lyrics_fetcher::api::NeteaseClient>;
                 // 确保客户端已初始化
                 {
-                    let mut client_option_guard = client_mutex_arc_clone.lock().unwrap();
+                    let mut client_option_guard = client_mutex_arc_clone.lock().unwrap(); // 获取客户端选项的锁
                     if client_option_guard.is_none() {
+                        // 如果客户端实例不存在，则创建新的实例
                         match netease_lyrics_fetcher::api::NeteaseClient::new() {
                             Ok(new_client) => {
-                                *client_option_guard = Some(new_client);
+                                *client_option_guard = Some(new_client); // 存储新创建的客户端实例
                             }
                             Err(e) => {
+                                // 客户端初始化失败
                                 let mut status_lock = download_state_clone.lock().unwrap();
                                 *status_lock =
                                     NeteaseDownloadState::Error(format!("客户端初始化失败: {}", e));
@@ -1024,42 +827,47 @@ impl UniLyricApp {
                             }
                         }
                     }
-                    // 克隆客户端实例以在异步块中使用
+                    // 克隆客户端实例以在异步块中使用 (Option<NeteaseClient> 本身是 Clone 的)
                     maybe_client_instance = (*client_option_guard).clone();
-                }
+                } // 客户端选项锁在此释放
 
                 if let Some(netease_api_client) = maybe_client_instance {
+                    // 如果客户端实例成功获取或创建
                     // 再次检查并设置下载状态为Downloading (如果之前是InitializingClient)
                     {
                         let mut ds_lock = download_state_clone.lock().unwrap();
                         if matches!(*ds_lock, NeteaseDownloadState::InitializingClient) {
-                            *ds_lock = NeteaseDownloadState::Downloading;
+                            *ds_lock = NeteaseDownloadState::Downloading; // 更新状态为下载中
                         }
-                    }
+                    } // 下载状态锁在此释放
 
+                    // 调用网易云歌词获取器的搜索和下载函数
                     match netease_lyrics_fetcher::search_and_fetch_first_netease_lyrics(
-                        &netease_api_client,
+                        &netease_api_client, // 传递客户端引用
                         &query,
                     )
-                    .await
+                    .await // 等待异步操作完成
                     {
                         Ok(data) => {
+                            // 下载成功
                             log::info!(
                                 "[Unilyric] 网易云音乐下载成功：已获取 {} - {}",
                                 data.song_name.as_deref().unwrap_or("未知歌名"),
                                 data.artists_name.join("/")
                             );
                             let mut status_lock = download_state_clone.lock().unwrap();
-                            *status_lock = NeteaseDownloadState::Success(data);
+                            *status_lock = NeteaseDownloadState::Success(data); // 更新状态为成功并附带数据
                         }
                         Err(e) => {
+                            // 下载失败
                             log::error!("[Unilyric] 网易云歌词下载失败: {}", e);
                             let mut status_lock = download_state_clone.lock().unwrap();
-                            *status_lock = NeteaseDownloadState::Error(e.to_string());
+                            *status_lock = NeteaseDownloadState::Error(e.to_string()); // 更新状态为错误并附带错误信息
                         }
                     }
                 } else {
-                    log::error!("[Unilyric] 出现了一个意外的错误");
+                    // 理论上不应该发生，因为上面已经确保客户端被创建
+                    log::error!("[Unilyric] 网易云下载：获取客户端实例时发生意外错误。");
                     let mut status_lock = download_state_clone.lock().unwrap();
                     *status_lock = NeteaseDownloadState::Error("客户端创建失败".to_string());
                 }
@@ -1067,514 +875,153 @@ impl UniLyricApp {
         });
     }
 
-    /// 辅助方法：将LRC格式的次要歌词内容逐行合并到主歌词段落中。
-    /// 适用于主歌词是YRC（或其他逐行格式，如LRC），而次要歌词是LRC的情况。
-    /// 这种合并方式不依赖时间戳匹配，而是简单地将LRC的第N行赋给主歌词的第N个段落。
-    ///
-    /// # Arguments
-    /// * `primary_paragraphs` - 可变的主歌词段落列表 (`Vec<TtmlParagraph>`)。
-    /// * `lrc_content_str` - 包含次要歌词的完整LRC文本字符串。
-    ///   对于来自QQ音乐的翻译，此字符串应已通过 `preprocess_qq_translation_lrc_content` 处理。
-    /// * `content_type` - 指示LRC内容是翻译还是罗马音。
-    /// * `language_code` - 可选的语言代码 (主要用于翻译)。
-    ///
-    /// # Returns
-    /// `Result<(), ConvertError>` - 如果解析LRC内容时发生错误，则返回Err。
-    fn merge_lrc_content_line_by_line_with_primary_paragraphs(
-        primary_paragraphs: &mut [TtmlParagraph],
-        lrc_content_str: &str,
-        content_type: LrcContentType,
-        language_code: Option<String>,
-    ) -> Result<(), ConvertError> {
-        if lrc_content_str.is_empty() || primary_paragraphs.is_empty() {
-            return Ok(());
-        }
-
-        // 解析LRC字符串为LrcLine列表
-        let (lrc_lines, _parsed_lrc_meta) = // _parsed_lrc_meta 在此函数中暂不使用
-            match lrc_parser::parse_lrc_text_to_lines(lrc_content_str) {
-                Ok(result) => result,
-                Err(e) => {
-                    log::error!("[Unilyric] 逐行合并时解析LRC内容失败: {}", e);
-                    return Err(e); // 将解析错误向上传播
-                }
-            };
-
-        if lrc_lines.is_empty() {
-            return Ok(());
-        }
-
-        // 逐行合并：将LRC的第N行文本赋给主歌词的第N个段落
-        for (para_idx, primary_para) in primary_paragraphs.iter_mut().enumerate() {
-            if let Some(lrc_line) = lrc_lines.get(para_idx) {
-                // 获取LRC行的文本。如果来自QQ音乐的翻译且原为"//"，
-                // preprocess_qq_translation_lrc_content 已将其文本变为空字符串。
-                // lrc_parser 解析后，LrcLine.text 会是这个空字符串。
-                let text_to_set = lrc_line.text.clone(); // 直接使用LrcLine的文本
-
-                match content_type {
-                    LrcContentType::Romanization => {
-                        primary_para.romanization = Some(text_to_set);
-                    }
-                    LrcContentType::Translation => {
-                        primary_para.translation = Some((text_to_set, language_code.clone()));
-                    }
-                }
-            } else {
-                // 如果LRC的行数少于主歌词段落数，则后续主段落没有对应的次要歌词
-                log::warn!(
-                    "[Unilyric] 逐行合并：LRC行数 ({}) 少于主歌词段落数 ({})，段落 #{} 及之后无匹配。",
-                    lrc_lines.len(),
-                    primary_paragraphs.len(),
-                    para_idx
-                );
-                break; // 停止合并，因为LRC行已用尽
-            }
-        }
-        Ok(())
-    }
-
-    /// 合并从网络下载获取的次要歌词（如翻译LRC、罗马音QRC/LRC）到主歌词段落中。
-    /// 此函数处理不同主歌词格式（如YRC vs 非YRC）与不同次要歌词格式的合并策略。
-    fn merge_downloaded_secondary_lyrics(&mut self) {
-        // 检查主歌词段落是否存在且非空
-        let primary_paragraphs_are_empty_or_none = self
-            .parsed_ttml_paragraphs
-            .as_ref()
-            .is_none_or(|p| p.is_empty());
-        // 检查主歌词格式是否为YRC或LRC (当网易云只有LRC时)
-        // 注意：如果网易云下载的是LRC作为主歌词，source_format 会被设为 LyricFormat::Lrc
-        let main_lyrics_format_is_line_oriented =
-            matches!(self.source_format, LyricFormat::Yrc | LyricFormat::Lrc);
-
-        // --- 处理翻译 ---
-        if let Some(trans_lrc_content_str) = self.pending_translation_lrc_from_download.take() {
-            if primary_paragraphs_are_empty_or_none {
-                // 主段落为空，尝试独立加载LRC翻译
-                match crate::lrc_parser::parse_lrc_text_to_lines(&trans_lrc_content_str) {
-                    Ok((lines, _meta)) => {
-                        if !lines.is_empty() {
-                            self.loaded_translation_lrc = Some(lines);
-                        }
-                        log::info!(
-                            "[Unilyric] 主段落为空，独立加载了翻译LRC ({}行)。",
-                            self.loaded_translation_lrc.as_ref().map_or(0, |v| v.len())
-                        );
-                    }
-                    Err(e) => log::error!("[Unilyric] 主段落为空时，解析独立翻译LRC失败: {}", e),
-                }
-            } else if let Some(ref mut primary_paragraphs) = self.parsed_ttml_paragraphs {
-                // 确定用于合并的语言代码
-                let lang_code_for_merge: Option<String> = self
-                    .session_platform_metadata
-                    .get("language") // 首先尝试会话元数据
-                    .cloned()
-                    .or_else(|| {
-                        // 然后尝试全局元数据存储
-                        self.metadata_store
-                            .lock()
-                            .unwrap()
-                            .get_single_value(&CanonicalMetadataKey::Language)
-                            .cloned()
-                    });
-
-                if main_lyrics_format_is_line_oriented {
-                    // 主歌词是YRC或LRC，辅助歌词是LRC字符串 -> 使用逐行LRC合并逻辑
-                    log::info!("[Unilyric] 正在逐行合并LRC格式的翻译...");
-                    if let Err(e) = Self::merge_lrc_content_line_by_line_with_primary_paragraphs(
-                        primary_paragraphs,
-                        &trans_lrc_content_str,
-                        LrcContentType::Translation,
-                        lang_code_for_merge,
-                    ) {
-                        error!("[Unilyric] 逐行合并LRC翻译到主歌词失败: {}", e);
-                    }
-                } else {
-                    // 主歌词不是YRC/LRC -> 使用基于时间戳的LRC合并逻辑
-                    log::info!("[Unilyric] 主歌词非逐行格式，正在按时间戳合并下载的LRC翻译...");
-                    if let Err(e) = Self::merge_lrc_lines_into_paragraphs_internal(
-                        primary_paragraphs,
-                        &trans_lrc_content_str,
-                        LrcContentType::Translation,
-                        lang_code_for_merge,
-                    ) {
-                        error!("[Unilyric] 按时间戳合并下载的LRC翻译失败: {}", e);
-                    }
-                }
-            }
-        }
-
-        // --- 处理罗马音 ---
-        // 首先处理来自QQ音乐的QRC格式罗马音 (如果存在)
-        if let Some(roma_qrc_content_str) = self.pending_romanization_qrc_from_download.take() {
-            if primary_paragraphs_are_empty_or_none {
-            } else if let Some(ref mut primary_paragraphs) = self.parsed_ttml_paragraphs {
-                log::info!("[Unilyric] 正在按时间戳合并下载的QRC罗马音...");
-                if let Err(e) = Self::merge_secondary_qrc_into_paragraphs_internal(
-                    primary_paragraphs,
-                    &roma_qrc_content_str,
-                    LrcContentType::Romanization,
-                ) {
-                    error!("[Unilyric] 合并下载的QRC罗马音失败: {}", e);
-                }
-            }
-        }
-        // 然后处理来自网易云等平台的LRC格式罗马音 (如果存在且未被QRC罗马音覆盖)
-        else if let Some(roma_lrc_content_str) =
-            self.pending_romanization_lrc_from_download.take()
-        {
-            if primary_paragraphs_are_empty_or_none {
-                match crate::lrc_parser::parse_lrc_text_to_lines(&roma_lrc_content_str) {
-                    Ok((lines, _meta)) => {
-                        if !lines.is_empty() {
-                            self.loaded_romanization_lrc = Some(lines);
-                        }
-                        log::info!(
-                            "[Unilyric] 主段落为空，独立加载了罗马音LRC ({}行)。",
-                            self.loaded_romanization_lrc.as_ref().map_or(0, |v| v.len())
-                        );
-                    }
-                    Err(e) => log::error!("[Unilyric] 主段落为空时，解析独立罗马音LRC失败: {}", e),
-                }
-            } else if let Some(ref mut primary_paragraphs) = self.parsed_ttml_paragraphs {
-                if main_lyrics_format_is_line_oriented {
-                    // 主歌词是YRC或LRC，辅助歌词是LRC字符串 -> 使用逐行LRC合并逻辑
-                    log::info!("[Unilyric] 正在逐行合并LRC格式的罗马音...");
-                    if let Err(e) = Self::merge_lrc_content_line_by_line_with_primary_paragraphs(
-                        primary_paragraphs,
-                        &roma_lrc_content_str,
-                        LrcContentType::Romanization,
-                        None, // 罗马音通常无特定语言代码
-                    ) {
-                        error!("[Unilyric] 逐行合并LRC罗马音到主歌词失败: {}", e);
-                    }
-                } else {
-                    // 主歌词不是YRC/LRC -> 使用基于时间戳的LRC合并逻辑
-                    log::info!("[Unilyric] 主歌词非逐行格式，正在按时间戳合并下载的LRC罗马音...");
-                    if let Err(e) = Self::merge_lrc_lines_into_paragraphs_internal(
-                        primary_paragraphs,
-                        &roma_lrc_content_str,
-                        LrcContentType::Romanization,
-                        None,
-                    ) {
-                        error!("[Unilyric] 按时间戳合并下载的LRC罗马音失败: {}", e);
-                    }
-                }
-            }
-        }
-
-        // KRC内嵌翻译的处理逻辑
-        if let Some(trans_lines) = self.pending_krc_translation_lines.take() {
-            if let Some(ref mut paragraphs) = self.parsed_ttml_paragraphs {
-                if !paragraphs.is_empty() && !trans_lines.is_empty() {
-                    log::info!(
-                        "[Unilyric] 正在应用KRC内嵌翻译 (共 {} 行翻译到 {} 个段落)",
-                        trans_lines.len(),
-                        paragraphs.len()
-                    );
-                    for (i, para_line) in paragraphs.iter_mut().enumerate() {
-                        if let Some(trans_text) = trans_lines.get(i) {
-                            let text_to_use = if trans_text == " " {
-                                ""
-                            } else {
-                                trans_text.as_str()
-                            };
-                            // 只有当段落尚无翻译，或翻译为空时，才使用KRC内嵌翻译填充
-                            if para_line.translation.is_none()
-                                || para_line
-                                    .translation
-                                    .as_ref()
-                                    .is_some_and(|(t, _)| t.is_empty())
-                            {
-                                para_line.translation = Some((text_to_use.to_string(), None)); // KRC内嵌翻译通常无明确语言代码
-                            }
-                        }
-                    }
-                }
-            } else {
-                log::warn!(
-                    "[Unilyric] KRC内嵌翻译存在，但无主歌词段落可合并。暂存的翻译将被丢弃。"
-                );
-            }
-        }
-    }
-
     /// 处理QQ音乐歌词下载完成后的逻辑。
     /// 包括清理旧数据、设置新歌词内容、处理元数据、暂存次要歌词，并触发转换。
-    fn handle_qq_download_completion(&mut self) {
+    pub fn handle_qq_download_completion(&mut self) {
         let mut fetched_lyrics_to_process: Option<
-            crate::qq_lyrics_fetcher::qqlyricsfetcher::FetchedQqLyrics,
+            crate::qq_lyrics_fetcher::qqlyricsfetcher::FetchedQqLyrics, // QQ音乐获取的数据类型
         > = None;
-        let mut error_to_report: Option<String> = None;
-        let mut should_close_window = false; // 标志，用于决定是否关闭下载窗口
+        let mut error_to_report: Option<String> = None; // 存储错误信息
+        let mut should_close_window = false; // 是否应关闭下载窗口
 
-        // 检查下载状态，获取数据或错误信息
+        // 关键：检查下载状态，获取数据或错误信息
         {
             // 锁的作用域开始
-            let mut download_status_locked = self.download_state.lock().unwrap();
+            let mut download_status_locked = self.qq_download_state.lock().unwrap(); // 获取QQ下载状态的锁
+
             match &*download_status_locked {
                 QqMusicDownloadState::Success(data) => {
-                    fetched_lyrics_to_process = Some(data.clone());
-                    should_close_window = true; // 下载成功，准备关闭窗口
+                    // 下载成功
+                    fetched_lyrics_to_process = Some(data.clone()); // 克隆获取到的数据
+                    should_close_window = true; // 成功后通常关闭窗口
+                    *download_status_locked = QqMusicDownloadState::Idle; // 处理后重置状态为空闲
                 }
                 QqMusicDownloadState::Error(msg) => {
-                    error_to_report = Some(msg.clone());
-                    should_close_window = true; // 下载错误，准备关闭窗口
+                    // 下载失败
+                    error_to_report = Some(msg.clone()); // 克隆错误信息
+                    should_close_window = true; // 失败后也可能关闭窗口（取决于UI设计）
+                    *download_status_locked = QqMusicDownloadState::Idle; // 处理后重置状态为空闲
                 }
-                _ => {} // Downloading 或 Idle 状态，不处理
+                QqMusicDownloadState::Downloading => {} // 仍在下载中，不处理
+                QqMusicDownloadState::Idle => {}        // 空闲状态，不处理
             }
-            // 只有在处理完 Success 或 Error 后才重置状态为 Idle
-            if should_close_window {
-                *download_status_locked = QqMusicDownloadState::Idle;
-            }
-        } // 锁的作用域结束
+        } // QQ下载状态锁在此释放
 
+        // 现在根据提取的结果进行处理
         if let Some(fetched_data) = fetched_lyrics_to_process {
-            self.clear_all_data(); // 清理之前的所有数据
-            self.metadata_source_is_download = true; // 标记元数据来源于网络下载
-
-            // 填充会话相关的平台元数据
-            self.session_platform_metadata.clear();
-            if let Some(s_name) = fetched_data.song_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("musicName".to_string(), s_name.clone());
-            }
-            if let Some(a_name) = fetched_data.album_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("album".to_string(), a_name.clone());
-            }
-            if let Some(s_id) = fetched_data.song_id.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("qqMusicId".to_string(), s_id.clone());
-            }
-            // 设置主歌词内容
-            match &fetched_data.main_lyrics_qrc {
-                Some(qrc_content) if !qrc_content.trim().is_empty() => {
-                    self.input_text = qrc_content.clone();
-                    self.source_format = LyricFormat::Qrc; // 源格式设为QRC
-                    log::info!("[Unilyric] QQ音乐：已加载QRC歌词。");
-                }
-                _ => {
-                    log::error!("[Unilyric] QQ音乐：未找到有效的QRC歌词。");
-                    self.input_text.clear(); // 清空输入框
-                }
-            }
-            // 预处理并暂存翻译LRC (移除 "//" 行)
-            let processed_translation_lrc = fetched_data
-                .translation_lrc
-                .filter(|s| !s.trim().is_empty()) // 确保翻译LRC非空
-                .map(Self::preprocess_qq_translation_lrc_content); // 调用预处理函数
-
-            self.pending_translation_lrc_from_download = processed_translation_lrc;
-            // 暂存罗马音QRC
-            self.pending_romanization_qrc_from_download = fetched_data
-                .romanization_qrc
-                .filter(|s| !s.trim().is_empty());
-
-            // 清除之前通过文件加载的次要LRC，因为现在要用下载的
-            self.loaded_translation_lrc = None;
-            self.loaded_romanization_lrc = None;
-
-            self.handle_convert(); // 触发歌词转换和后续处理流程
+            // 如果成功获取到数据
+            app_fetch_core::process_platform_lyrics_data(
+                self,
+                PlatformFetchedData::Qq(fetched_data), // 将QQ获取的数据包装并传递给核心处理函数
+            );
         } else if let Some(err_msg) = error_to_report {
-            log::error!("[Unilyric] QQ音乐下载失败: {}", err_msg);
+            // 如果有错误信息
+            log::error!(
+                "[UniLyricApp] QQ音乐下载失败 (在 handle_completion 中报告): {}",
+                err_msg
+            );
+            // 可以在此添加UI提示，例如 self.toasts.add(...)
         }
 
-        // 在所有处理完成后，根据标志关闭窗口
+        // 如果需要关闭下载窗口
         if should_close_window {
-            self.show_qqmusic_download_window = false; // 关闭下载窗口
+            self.show_qqmusic_download_window = false; // 控制QQ音乐下载窗口的显示状态
         }
     }
 
     /// 处理酷狗音乐KRC歌词下载完成后的逻辑。
-    fn handle_kugou_download_completion(&mut self) {
+    pub fn handle_kugou_download_completion(&mut self) {
         let mut fetched_krc_to_process: Option<crate::kugou_lyrics_fetcher::FetchedKrcLyrics> =
-            None;
-        let mut error_to_report: Option<String> = None;
+            None; // 存储成功获取的KRC歌词数据
+        let mut error_to_report: Option<String> = None; // 存储错误信息
         let mut should_close_window = false; // 标志，用于决定是否关闭下载窗口
 
         // 检查下载状态
         {
-            let mut download_status_locked = self.kugou_download_state.lock().unwrap();
+            let mut download_status_locked = self.kugou_download_state.lock().unwrap(); // 获取酷狗下载状态的锁
             match &*download_status_locked {
                 KrcDownloadState::Success(data) => {
-                    fetched_krc_to_process = Some(data.clone());
-                    should_close_window = true;
+                    // 下载成功
+                    fetched_krc_to_process = Some(data.clone()); // 克隆获取到的数据
+                    should_close_window = true; // 成功后通常关闭窗口
                 }
                 KrcDownloadState::Error(msg) => {
-                    error_to_report = Some(msg.clone());
-                    should_close_window = true;
+                    // 下载失败
+                    error_to_report = Some(msg.clone()); // 克隆错误信息
+                    should_close_window = true; // 失败后也可能关闭窗口
                 }
-                _ => {} // Downloading 或 Idle
+                _ => {} // Downloading 或 Idle 状态，不在此处处理
             }
+            // 如果确定要关闭窗口（成功或失败后）
             if should_close_window {
-                *download_status_locked = KrcDownloadState::Idle; // 重置状态
+                *download_status_locked = KrcDownloadState::Idle; // 重置状态为空闲
             }
-        }
+        } // 酷狗下载状态锁在此释放
 
+        // 处理获取到的歌词数据
         if let Some(fetched_data) = fetched_krc_to_process {
-            self.clear_all_data(); // 清理旧数据
-            self.metadata_source_is_download = true; // 标记元数据来源
-
-            // 填充会话平台元数据
-            self.session_platform_metadata.clear();
-            if let Some(s_name) = fetched_data.song_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("musicName".to_string(), s_name.clone());
-            }
-            if let Some(a_name) = fetched_data.album_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("album".to_string(), a_name.clone());
-            }
-            // 将KRC内嵌元数据也放入session_platform_metadata，让 update_app_state_from_parsed_data 统一处理优先级
-            for meta_item in &fetched_data.krc_embedded_metadata {
-                self.session_platform_metadata
-                    .insert(meta_item.key.clone(), meta_item.value.clone());
-            }
-
-            self.input_text = fetched_data.krc_content; // 加载KRC内容到输入框
-            self.source_format = LyricFormat::Krc; // 源格式设为KRC
-            log::info!("[Unilyric] 酷狗音乐：已加载KRC歌词");
-
-            // 暂存KRC内嵌的翻译行 (如果有)
-            if let Some(translation_lines) = fetched_data.translation_lines {
-                if !translation_lines.is_empty() {
-                    self.pending_krc_translation_lines = Some(translation_lines);
-                }
-            }
-            self.handle_convert(); // 触发转换流程
+            app_fetch_core::process_platform_lyrics_data(
+                self,
+                PlatformFetchedData::Kugou(fetched_data), // 将酷狗获取的数据包装并传递给核心处理函数
+            );
         } else if let Some(err_msg) = error_to_report {
+            // 如果有错误信息
             log::error!("[Unilyric] 酷狗歌词下载失败: {}", err_msg);
+            // 可以在此添加UI提示
         }
 
+        // 如果需要关闭下载窗口
         if should_close_window {
-            self.show_kugou_download_window = false; // 关闭下载窗口
+            self.show_kugou_download_window = false; // 控制酷狗下载窗口的显示状态
         }
     }
 
     /// 处理网易云音乐歌词下载完成后的逻辑。
-    fn handle_netease_download_completion(&mut self) {
+    pub fn handle_netease_download_completion(&mut self) {
         let mut fetched_data_to_process: Option<
-            crate::netease_lyrics_fetcher::FetchedNeteaseLyrics,
+            crate::netease_lyrics_fetcher::FetchedNeteaseLyrics, // 网易云获取的数据类型
         > = None;
-        let mut error_to_report: Option<String> = None;
+        let mut error_to_report: Option<String> = None; // 存储错误信息
         let mut should_close_window = false; // 标志，用于决定是否关闭下载窗口
 
         // 检查下载状态
         {
-            let mut download_status_locked = self.netease_download_state.lock().unwrap();
+            let mut download_status_locked = self.netease_download_state.lock().unwrap(); // 获取网易云下载状态的锁
             match &*download_status_locked {
                 NeteaseDownloadState::Success(data) => {
-                    fetched_data_to_process = Some(data.clone());
-                    should_close_window = true;
+                    // 下载成功
+                    fetched_data_to_process = Some(data.clone()); // 克隆获取到的数据
+                    should_close_window = true; // 成功后通常关闭窗口
                 }
                 NeteaseDownloadState::Error(msg) => {
-                    error_to_report = Some(msg.clone());
-                    should_close_window = true;
+                    // 下载失败
+                    error_to_report = Some(msg.clone()); // 克隆错误信息
+                    should_close_window = true; // 失败后也可能关闭窗口
                 }
-                _ => {} // InitializingClient, Downloading 或 Idle
+                _ => {} // InitializingClient, Downloading 或 Idle 状态，不在此处处理
             }
+            // 如果确定要关闭窗口（成功或失败后）
             if should_close_window {
-                *download_status_locked = NeteaseDownloadState::Idle; // 重置状态
+                *download_status_locked = NeteaseDownloadState::Idle; // 重置状态为空闲
             }
-        }
+        } // 网易云下载状态锁在此释放
 
+        // 处理获取到的歌词数据
         if let Some(fetched_data) = fetched_data_to_process {
-            self.clear_all_data(); // 清理旧数据
-            self.metadata_source_is_download = true; // 标记元数据来源
-            self.session_platform_metadata.clear(); // 清理会话元数据
-
-            // 填充会话平台元数据 (歌曲名、歌手、专辑、歌曲ID)
-            if let Some(s_name) = fetched_data.song_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("musicName".to_string(), s_name.clone());
-            }
-            if let Some(a_name) = fetched_data.album_name.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("album".to_string(), a_name.clone());
-            }
-            if let Some(s_id) = fetched_data.song_id.as_ref().filter(|s| !s.is_empty()) {
-                self.session_platform_metadata
-                    .insert("ncmMusicId".to_string(), s_id.clone());
-            }
-
-            let mut main_lyric_content_set = false; // 标记主歌词是否已设置
-
-            // 优先处理主歌词的 YRC/KLyric 内容 (来自 fetched_data.karaoke_lrc)
-            if let Some(karaoke_text) = fetched_data
-                .karaoke_lrc
-                .as_ref()
-                .filter(|s| !s.trim().is_empty())
-            {
-                self.input_text = karaoke_text.clone();
-                self.source_format = LyricFormat::Yrc; // 源格式设为YRC
-                main_lyric_content_set = true;
-            }
-
-            // 如果主歌词不是YRC，则尝试使用LRC
-            if !main_lyric_content_set {
-                if let Some(lrc_text) = fetched_data
-                    .main_lrc
-                    .as_ref()
-                    .filter(|s| !s.trim().is_empty())
-                {
-                    self.input_text = lrc_text.clone();
-                    self.source_format = LyricFormat::Lrc; // 源格式设为LRC
-                    main_lyric_content_set = true;
-                    // 如果这是主歌词，也存入 direct_netease_main_lrc_content 以便LQE使用
-                    self.direct_netease_main_lrc_content = Some(lrc_text.clone());
-                }
-            }
-
-            if !main_lyric_content_set {
-                log::error!(
-                    "[Unilyric] 网易云音乐歌词下载成功，但未找到有效的逐字 (YRC) 或逐行 (LRC) 主歌词内容。"
-                );
-                self.input_text.clear(); // 清空输入框
-            }
-
-            // 暂存翻译LRC
-            self.pending_translation_lrc_from_download = fetched_data
-                .translation_lrc
-                .filter(|s| !s.trim().is_empty());
-            if self.pending_translation_lrc_from_download.is_some() {
-                log::info!("[Unilyric] 网易云音乐：已暂存翻译 (LRC格式)。");
-            }
-
-            // 暂存罗马音LRC
-            self.pending_romanization_lrc_from_download = fetched_data
-                .romanization_lrc
-                .filter(|s| !s.trim().is_empty());
-            if self.pending_romanization_lrc_from_download.is_some() {
-                log::info!("[Unilyric] 网易云音乐：已暂存罗马音 (LRC格式)。");
-            }
-
-            // 清除之前通过“文件”菜单加载的LRC，因为现在要用下载的
-            self.loaded_translation_lrc = None;
-            self.loaded_romanization_lrc = None;
-
-            // 目标格式自动切换逻辑: 如果源是LRC (例如网易云只提供了LRC主歌词)，
-            if self.source_format == LyricFormat::Lrc
-                && !matches!(
-                    self.target_format,
-                    LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc
-                )
-            {
-                log::info!(
-                    "[Unilyric] 网易云下载：源为主LRC，目标格式从 {:?} 自动切换为LQE。",
-                    self.target_format
-                );
-                self.target_format = LyricFormat::Lqe;
-            }
-
-            self.handle_convert(); // 触发转换和合并流程
+            app_fetch_core::process_platform_lyrics_data(
+                self,
+                PlatformFetchedData::Netease(fetched_data), // 将网易云获取的数据包装并传递给核心处理函数
+            );
         } else if let Some(err_msg) = error_to_report {
+            // 如果有错误信息
             log::error!("[Unilyric] 网易云音乐歌词下载失败: {}", err_msg);
+            // 可以在此添加UI提示
         }
 
+        // 如果需要关闭下载窗口
         if should_close_window {
-            self.show_netease_download_window = false; // 关闭下载窗口
-            log::debug!("[Unilyric] 网易云下载窗口已关闭 (因下载完成或错误)。");
+            self.show_netease_download_window = false; // 控制网易云下载窗口的显示状态
+            log::info!("[Unilyric] 网易云下载窗口已关闭 (因下载完成或错误)。");
         }
     }
 
@@ -1582,73 +1029,89 @@ impl UniLyricApp {
     /// 通常在加载新输入前或清除所有数据时调用。
     pub fn clear_derived_data(&mut self) {
         log::info!("[Unilyric] 正在清理输出文本、已解析段落、标记等...");
-        self.output_text.clear(); // 清空主输出框
-        self.display_translation_lrc_output.clear(); // 清空翻译LRC预览
-        self.display_romanization_lrc_output.clear(); // 清空罗马音LRC预览
-        self.parsed_ttml_paragraphs = None; // 清除已解析的TTML段落
-        self.current_markers.clear(); // 清除当前标记
-        self.source_is_line_timed = false; // 重置是否逐行歌词的标志
-        self.current_raw_ttml_from_input = None; // 清除原始TTML输入缓存
+        self.output_text.clear(); // 清空主输出框的文本
+        self.display_translation_lrc_output.clear(); // 清空翻译LRC预览面板的文本
+        self.display_romanization_lrc_output.clear(); // 清空罗马音LRC预览面板的文本
+        self.parsed_ttml_paragraphs = None; // 清除已解析的TTML段落数据
+        self.current_markers.clear(); // 清除当前歌词中的标记（如乐器段落）
+        self.source_is_line_timed = false; // 重置源歌词是否为逐行定时的标志
+        self.current_raw_ttml_from_input = None; // 清除从输入缓存的原始TTML文本
+
         // 注意： self.metadata_store 和 self.editable_metadata 不在此处清理，
-        // 它们有独立的管理逻辑，尤其是在 clear_all_data 中。
+        // 它们有独立的管理逻辑，尤其是在 clear_all_data 中会处理。
+
+        // 如果 WebSocket 服务器已启用，发送一个空的歌词更新
+        if self.websocket_server_enabled {
+            self.send_lyrics_update_to_websocket(); // output_text 此时为空
+        }
     }
 
     /// 清理应用中的所有数据，包括输入、输出、已解析内容、元数据（除用户固定的）、待处理下载等。
     /// 目的是将应用恢复到一个相对干净的状态，准备加载新内容。
     pub fn clear_all_data(&mut self) {
-        log::info!("[Unilyric] 正在清理所有数据");
-        self.input_text.clear(); // 清空输入框文本
-        self.clear_derived_data(); // 调用派生数据清理
+        log::info!("[UniLyricApp] 正在清理所有数据...");
 
-        // 清理待处理的KRC内嵌翻译和从文件加载的LRC
-        self.pending_krc_translation_lines = None;
+        // 1. 清空主输入框文本
+        self.input_text.clear();
+
+        // 2. 清理所有派生数据 (输出文本, 已解析的TTML段落, 标记等)
+        self.clear_derived_data(); // 此函数会清理 output_text, parsed_ttml_paragraphs, current_markers 等
+
+        // 3. 清空手动加载/编辑的翻译LRC及其UI显示字符串
         self.loaded_translation_lrc = None;
+        self.display_translation_lrc_output.clear();
+
+        // 4. 清空手动加载/编辑的罗马音LRC及其UI显示字符串
         self.loaded_romanization_lrc = None;
+        self.display_romanization_lrc_output.clear();
 
-        // 清理从网络下载待合并的次要歌词内容
-        self.pending_translation_lrc_from_download = None;
-        self.pending_romanization_qrc_from_download = None;
-        self.pending_romanization_lrc_from_download = None;
-        self.direct_netease_main_lrc_content = None; // 清理网易云直接LRC内容
+        // 5. 清空所有待处理的、可能来自上一次下载会话的歌词片段和平台元数据
+        self.pending_translation_lrc_from_download = None; // 待处理的下载翻译LRC
+        self.pending_romanization_qrc_from_download = None; // 待处理的下载罗马音QRC
+        self.pending_romanization_lrc_from_download = None; // 待处理的下载罗马音LRC
+        self.pending_krc_translation_lines = None; // KRC内嵌翻译行
+        self.session_platform_metadata.clear(); // 从下载平台获取的元数据
+        self.direct_netease_main_lrc_content = None; // 网易云直接获取的主LRC内容（特殊情况）
 
-        // 清理会话平台元数据和下载来源标记
-        self.session_platform_metadata.clear();
-        self.metadata_source_is_download = false;
+        // 6. 重置元数据来源标记 (通常在加载新数据时会重新设置)
+        self.metadata_source_is_download = false; // 标记元数据是否来自下载
 
-        // --- 元数据存储和UI编辑列表的特殊处理 ---
+        // 7. 元数据存储处理：
+        // 清空当前的元数据存储，然后从应用设置中重新加载用户标记为“固定”的元数据。
+        // 这样做是为了保留用户希望持久化的元数据项，即使清除了当前文件的所有内容。
         {
-            // MetadataStore 作用域开始
-            let mut store = self.metadata_store.lock().unwrap();
-            store.clear(); // 1. 完全清空内部的 MetadataStore
+            let mut store = self.metadata_store.lock().unwrap(); // 获取元数据存储的锁
+            store.clear(); // 完全清空内部的 MetadataStore
 
-            // 2. 从应用设置 (app_settings.pinned_metadata) 中重新加载用户标记为“固定”的元数据到 store。
-            //    这些是用户上次通过UI操作并保存到INI文件的固定项。
-            //    这一步确保即使用户清除了当前加载文件的元数据，他们希望持久化的固定项仍然保留在store中。
-            let app_settings_locked = self.app_settings.lock().unwrap();
+            // 从 app_settings.pinned_metadata 重新加载用户固定的元数据
+            let app_settings_locked = self.app_settings.lock().unwrap(); // 获取应用设置的锁
             for (display_key_from_settings, values_vec_from_settings) in
                 &app_settings_locked.pinned_metadata
+            // 遍历设置中固定的元数据
             {
-                // 关键检查：确保这个从设置中读取的固定项的键，确实也存在于 `self.persistent_canonical_keys` 中。
-                // `self.persistent_canonical_keys` 反映了当前UI上用户实际希望固定的键类型。
-                // 这可以防止旧的、在设置中但用户已在UI取消固定的项被错误地重新加载。
+                // 检查这个从设置中读取的固定项的键，是否确实也存在于 self.persistent_canonical_keys 中
+                // (即用户当前仍然希望固定这种类型的元数据)
                 let canonical_key_to_check = match display_key_from_settings
                     .trim()
-                    .parse::<CanonicalMetadataKey>()
+                    .parse::<CanonicalMetadataKey>() // 尝试将显示键解析为规范键
                 {
-                    Ok(ck) => ck,
+                    Ok(ck) => ck, // 解析成功
                     Err(_) => {
+                        // 解析失败，视为自定义键
                         CanonicalMetadataKey::Custom(display_key_from_settings.trim().to_string())
                     }
                 };
 
+                // 如果该类型的元数据当前仍被用户标记为固定
                 if self
                     .persistent_canonical_keys
                     .contains(&canonical_key_to_check)
                 {
+                    // 将固定值添加回元数据存储
                     for v_str in values_vec_from_settings {
                         if let Err(e) = store.add(display_key_from_settings, v_str.clone()) {
                             log::warn!(
-                                "[Unilyric 清理所有数据] 从设置重载固定元数据 '{}' (值: '{}') 到Store失败: {}",
+                                "[UniLyricApp clear_all_data] 从设置重载固定元数据 '{}' (值: '{}') 到Store失败: {}",
                                 display_key_from_settings,
                                 v_str,
                                 e
@@ -1657,99 +1120,26 @@ impl UniLyricApp {
                     }
                 }
             }
-        } // MetadataStore 锁释放
+        } // MetadataStore 和 AppSettings 的锁在此释放
 
-        // 3. 更新UI的可编辑元数据列表 (self.editable_metadata):
-        //    - 只保留那些在UI上被标记为 is_pinned 的条目。
-        //    - 将这些保留条目的 is_from_file 标记为 false，因为它们现在不代表文件内容，而是用户持久化的选择。
-        //    - 清空 self.persistent_canonical_keys，然后根据清理后 editable_metadata 中剩余的固定项重新构建它。
-        //      (或者，更简单的方式是，在上面从设置加载到store后，直接调用 rebuild_editable_metadata_from_store，
-        //       它会基于store和现有的 persistent_canonical_keys 重建UI列表。当前代码是先操作UI列表再同步store/keys)
-
-        // 当前代码逻辑：保留UI上的固定项，然后用它们重建 persistent_canonical_keys，并确保它们在 store 中。
-        self.editable_metadata.retain(|entry| entry.is_pinned); // 只保留UI上已固定的
-        for entry in self.editable_metadata.iter_mut() {
-            entry.is_from_file = false; // 这些不再代表文件内容
-            // 确保这些UI上的固定项也存在于（空的）store中，但这似乎与上面从设置加载到store的逻辑有些重叠或冲突。
-            // 推荐做法：在上面用设置填充store后，调用 rebuild_editable_metadata_from_store() 来统一UI和store。
-            // 为了保持原逻辑，这里暂时保留：
-            if let Err(e) = self
-                .metadata_store
-                .lock()
-                .unwrap()
-                .add(&entry.key, entry.value.clone())
-            {
-                log::warn!(
-                    "[Unilyric] 将UI固定元数据 '{}' 添加回 store 失败: {}",
-                    entry.key,
-                    e
-                );
-            }
-        }
-        // 重建 persistent_canonical_keys 集合，使其与清理后UI上仍然存在的固定项一致。
-        self.persistent_canonical_keys.clear();
-        for entry in &self.editable_metadata {
-            // 此时 editable_metadata 只包含 is_pinned=true 的项
-            if let Ok(canonical_key) = entry.key.trim().parse::<CanonicalMetadataKey>() {
-                self.persistent_canonical_keys.insert(canonical_key);
-            } else {
-                // 自定义键
-                self.persistent_canonical_keys
-                    .insert(CanonicalMetadataKey::Custom(entry.key.trim().to_string()));
-            }
-        }
-
-        // 最后，基于可能已更新的 store 和 persistent_canonical_keys，重建UI元数据列表以确保一致性。
+        // 8. 根据更新后的（仅包含固定项的）MetadataStore 重建UI的可编辑元数据列表
         self.rebuild_editable_metadata_from_store();
+
         log::info!(
-            "[Unilyric] 已清除输入、输出和大部分已加载数据。元数据已重置（仅保留用户固定的项）。"
+            "[UniLyricApp clear_all_data] 所有当前歌词数据已清理完毕。固定的元数据已重新加载。"
         );
-    }
-
-    /// 预处理LRC内容字符串，主要用于处理QQ音乐下载的翻译LRC。
-    /// 将文本内容为 "//" 的LRC行转换为空文本行（只保留时间戳部分）。
-    ///
-    /// # Arguments
-    /// * `lrc_content` - 原始的LRC多行文本字符串。
-    ///
-    /// # Returns
-    /// `String` - 处理后的LRC多行文本字符串。
-    fn preprocess_qq_translation_lrc_content(lrc_content: String) -> String {
-        lrc_content
-            .lines() // 将输入字符串按行分割成迭代器
-            .map(|line_str| {
-                // 对每一行进行处理
-                // 尝试找到最后一个 ']' 字符，这通常是LRC时间戳的结束位置
-                if let Some(text_start_idx) = line_str.rfind(']') {
-                    let timestamp_part = &line_str[..=text_start_idx]; // 提取时间戳部分 (包括 ']')
-                    let text_part = line_str[text_start_idx + 1..].trim(); // 提取文本部分并去除首尾空格
-
-                    if text_part == "//" {
-                        // 如果文本部分正好是 "//"，则只返回时间戳部分（即文本变为空）
-                        timestamp_part.to_string()
-                    } else {
-                        // 否则，返回原始行字符串
-                        line_str.to_string()
-                    }
-                } else {
-                    // 如果行不包含 ']'，说明它可能不是标准的LRC行
-                    String::new()
-                }
-            })
-            .collect::<Vec<String>>() // 将处理过的所有行收集到一个Vec<String>
-            .join("\n") // 再用换行符将它们连接回一个多行字符串
     }
 
     /// 解析输入框中的文本到内部的中间数据结构 (`ParsedSourceData`)。
     /// 这个中间数据结构通常包含TTML格式的段落列表和各种元数据。
     ///
-    /// # Returns
+    /// # 返回
     /// `Result<ParsedSourceData, ConvertError>` - 成功则返回解析后的数据，失败则返回转换错误。
     fn parse_input_to_intermediate_data(&self) -> Result<ParsedSourceData, ConvertError> {
         // 如果输入文本去除首尾空格后为空，则直接返回默认的（空的）ParsedSourceData
         if self.input_text.trim().is_empty() {
             log::warn!("[Unilyric 解析输入] 输入文本为空，返回默认的空 ParsedSourceData。");
-            return Ok(Default::default());
+            return Ok(Default::default()); // 返回一个空的 ParsedSourceData
         }
 
         // 根据当前选择的源格式 (self.source_format) 调用相应的解析逻辑
@@ -1760,30 +1150,31 @@ impl UniLyricApp {
                 let ass_data: ProcessedAssData =
                     ass_parser::load_and_process_ass_from_string(&self.input_text)?;
                 // 将处理后的ASS数据生成为中间TTML字符串
+                // true 表示生成用于内部处理的TTML，可能包含特殊标记
                 let internal_ttml_str =
-                    ttml_generator::generate_intermediate_ttml_from_ass(&ass_data, true)?; // true 表示生成用于内部处理的TTML
+                    ttml_generator::generate_intermediate_ttml_from_ass(&ass_data, true)?;
                 // 解析这个内部TTML字符串
                 let (
-                    paragraphs,
-                    _ttml_derived_meta,
-                    is_line_timed_val,
-                    detected_formatted_ttml,
-                    _detected_ass_ttml_trans_lang,
+                    paragraphs,                    // TTML段落
+                    _ttml_derived_meta,            // 从TTML派生的元数据 (此处未使用)
+                    is_line_timed_val,             // 是否为逐行定时
+                    detected_formatted_ttml,       // 是否检测到格式化的TTML (如Apple Music风格)
+                    _detected_ass_ttml_trans_lang, // 从ASS转换的TTML中检测到的翻译语言 (此处未使用)
                 ) = ttml_parser::parse_ttml_from_string(&internal_ttml_str)?;
                 // 构建 ParsedSourceData
                 Ok(ParsedSourceData {
                     paragraphs,
-                    language_code: ass_data.language_code.clone(),
-                    songwriters: ass_data.songwriters.clone(),
-                    agent_names: ass_data.agent_names.clone(),
-                    apple_music_id: ass_data.apple_music_id.clone(),
-                    general_metadata: ass_data.metadata.clone(),
-                    markers: ass_data.markers.clone(),
-                    is_line_timed_source: is_line_timed_val,
-                    raw_ttml_from_input: Some(internal_ttml_str),
-                    detected_formatted_input: Some(detected_formatted_ttml),
-                    _source_translation_language: ass_data.detected_translation_language.clone(),
-                    ..Default::default()
+                    language_code: ass_data.language_code.clone(), // ASS文件头中的语言代码
+                    songwriters: ass_data.songwriters.clone(),     // ASS文件头中的词曲作者
+                    agent_names: ass_data.agent_names.clone(),     // ASS文件头中的角色名
+                    apple_music_id: ass_data.apple_music_id.clone(), // ASS文件头中的Apple Music ID
+                    general_metadata: ass_data.metadata.clone(),   // 其他通用元数据
+                    markers: ass_data.markers.clone(),             // ASS中的标记（如乐器段）
+                    is_line_timed_source: is_line_timed_val,       // 标记源是否为逐行定时
+                    raw_ttml_from_input: Some(internal_ttml_str),  // 存储转换后的内部TTML
+                    detected_formatted_input: Some(detected_formatted_ttml), // 标记是否检测到格式化输入
+                    _source_translation_language: ass_data.detected_translation_language.clone(), // ASS中检测到的翻译语言
+                    ..Default::default() // 其他字段使用默认值
                 })
             }
             LyricFormat::Ttml => {
@@ -1791,17 +1182,17 @@ impl UniLyricApp {
                 // 直接从输入文本解析TTML
                 let (
                     paragraphs,
-                    meta,
+                    meta, // 从TTML中直接解析出的元数据
                     is_line_timed_val,
                     detected_formatted,
-                    detected_ttml_trans_lang,
+                    detected_ttml_trans_lang, // TTML中检测到的翻译语言
                 ) = ttml_parser::parse_ttml_from_string(&self.input_text)?;
                 let mut psd = ParsedSourceData {
                     paragraphs,
                     is_line_timed_source: is_line_timed_val,
                     raw_ttml_from_input: Some(self.input_text.clone()), // 缓存原始TTML输入
                     detected_formatted_input: Some(detected_formatted),
-                    general_metadata: meta, // 从TTML解析出的元数据
+                    general_metadata: meta, // 应用从TTML解析出的元数据
                     _source_translation_language: detected_ttml_trans_lang, // 使用从 TTML 解析器直接获取的值
                     ..Default::default()
                 };
@@ -1825,16 +1216,17 @@ impl UniLyricApp {
                         Err(_) => {
                             // 自定义键或无法解析的键，保留在通用元数据中
                             remaining_general_meta.push(m.clone());
-                            log::info!(
-                                "[Unilyric] 元数据键 '{}' 无法解析为标准键，将保留在通用元数据中。",
+                            log::trace!(
+                                // 使用 trace 级别，因为这通常是预期的行为
+                                "[Unilyric 解析输入] 元数据键 '{}' 无法解析为标准键，将保留在通用元数据中。",
                                 m.key
                             );
                         }
                     }
                 }
                 psd.general_metadata = remaining_general_meta; // 更新通用元数据列表
-                psd.songwriters.sort_unstable();
-                psd.songwriters.dedup(); // 对词曲作者去重排序
+                psd.songwriters.sort_unstable(); // 对词曲作者列表排序
+                psd.songwriters.dedup(); // 去除重复的词曲作者
                 Ok(psd)
             }
             LyricFormat::Json => {
@@ -1856,12 +1248,12 @@ impl UniLyricApp {
                 })
             }
             LyricFormat::Krc => {
-                // 处理KRC格式
+                // 处理KRC格式 (酷狗)
                 // 从字符串加载KRC数据
                 let (krc_lines, mut krc_meta_from_parser) =
                     krc_parser::load_krc_from_string(&self.input_text)?;
-                // KRC内嵌翻译特殊处理：从元数据中移除，其值通常是Base64编码，不直接用于显示
-                let mut _krc_internal_translation_base64: Option<String> = None; // 未使用
+                let mut _krc_internal_translation_base64: Option<String> = None; // 用于存储KRC内嵌翻译的Base64 (暂未使用)
+                // 移除特殊的内部翻译元数据项，并将其值存储起来
                 krc_meta_from_parser.retain(|item| {
                     if item.key == "KrcInternalTranslation" {
                         // 自定义的键名，用于标记内部翻译数据
@@ -1872,12 +1264,13 @@ impl UniLyricApp {
                     }
                 });
                 // 将KRC行和处理后的元数据转换为TTML段落和元数据
+                // KRC和QRC的逐字歌词结构相似，可以共用转换逻辑
                 let (paragraphs, meta_from_converter) =
-                    qrc_to_ttml_data::convert_qrc_to_ttml_data(&krc_lines, krc_meta_from_parser)?; // KRC和QRC共用转换逻辑
+                    qrc_to_ttml_data::convert_qrc_to_ttml_data(&krc_lines, krc_meta_from_parser)?;
                 let mut psd = ParsedSourceData {
                     paragraphs,
                     general_metadata: meta_from_converter,
-                    is_line_timed_source: false, // KRC是逐字歌词
+                    is_line_timed_source: false, // KRC是逐字歌词，不是逐行
                     ..Default::default()
                 };
                 // 从转换后的元数据中提取特定类型
@@ -1886,7 +1279,7 @@ impl UniLyricApp {
                     match item.key.parse::<CanonicalMetadataKey>() {
                         Ok(CanonicalMetadataKey::Language) => psd.language_code = Some(item.value),
                         Ok(CanonicalMetadataKey::Songwriter) => psd.songwriters.push(item.value),
-                        _ => final_general_meta.push(item), // 其他或无法解析的保留
+                        _ => final_general_meta.push(item), // 其他或无法解析的保留在通用元数据
                     }
                 }
                 psd.general_metadata = final_general_meta;
@@ -1895,7 +1288,7 @@ impl UniLyricApp {
                 Ok(psd)
             }
             LyricFormat::Qrc => {
-                // 处理QRC格式
+                // 处理QRC格式 (QQ音乐)
                 // 从字符串加载QRC数据
                 let (qrc_lines, qrc_meta_from_parser) =
                     qrc_parser::load_qrc_from_string(&self.input_text)?;
@@ -1925,14 +1318,14 @@ impl UniLyricApp {
                 Ok(psd)
             }
             LyricFormat::Lys | LyricFormat::Spl | LyricFormat::Yrc => {
-                // 处理 LYS, SPL, YRC
+                // 处理 LYS (Sonymusic LYRICA), SPL (Smalyrics), YRC (网易云逐字)
                 // SPL 格式的特殊处理逻辑
                 if self.source_format == LyricFormat::Spl {
-                    let (spl_blocks_from_parser, _spl_meta) = // SPL无元数据
+                    let (spl_blocks_from_parser, _spl_meta) = // SPL通常无元数据
                         spl_parser::load_spl_from_string(&self.input_text)?;
 
                     if spl_blocks_from_parser.is_empty() {
-                        log::info!("[UniLyric] SPL解析器未返回任何歌词数据。");
+                        log::info!("[UniLyric 解析输入] SPL解析器未返回任何歌词数据。");
                         return Ok(Default::default()); // 返回空数据
                     }
 
@@ -1940,7 +1333,7 @@ impl UniLyricApp {
 
                     // 遍历SPL解析出的每个歌词块
                     for (block_idx, spl_block) in spl_blocks_from_parser.iter().enumerate() {
-                        // 获取当前块的主歌词起始时间
+                        // 获取当前块的主歌词起始时间 (通常是第一个时间戳)
                         let primary_start_time_for_block =
                             spl_block.start_times_ms.first().cloned().unwrap_or(0);
                         // 计算块的实际结束时间 (优先使用显式结束时间，否则尝试用下一块开始时间或默认时长)
@@ -1971,8 +1364,8 @@ impl UniLyricApp {
                                 Ok(syls) => syls,
                                 Err(e) => {
                                     log::error!(
-                                        "[UniLyric] 解析块 #{} ('{}') 的主文本音节失败: {}",
-                                        block_idx,
+                                        "[UniLyric 解析输入] 解析块 #{} ('{}') 的主文本音节失败: {}",
+                                        block_idx + 1, // 日志中块索引从1开始
                                         spl_block.main_text_with_inline_ts,
                                         e
                                     );
@@ -1983,8 +1376,8 @@ impl UniLyricApp {
                         let processed_main_syllables: Vec<TtmlSyllable> =
                             crate::utils::process_parsed_syllables_to_ttml(
                                 &main_syllables_lys,
-                                "SPL",
-                            ); // "SPL" 作为来源标记
+                                "SPL", // "SPL" 作为来源标记
+                            );
                         // 获取块中的翻译文本 (可能多行，用 / 连接)
                         let translation_string_from_block: Option<String> =
                             if !spl_block.all_translation_lines.is_empty() {
@@ -2027,12 +1420,13 @@ impl UniLyricApp {
                                     p_end_ms: final_p_end_ms_for_para,
                                     main_syllables: processed_main_syllables.clone(), // 克隆音节列表
                                     translation: translation_tuple.clone(), // 克隆翻译元组
-                                    agent: "v1".to_string(),                // SPL不支持演唱者
+                                    agent: "v1".to_string(), // SPL不支持演唱者信息，默认为v1
                                     ..Default::default()
                                 });
                             } else {
-                                log::debug!(
-                                    "[UniLyric] 跳过创建空的TTML段落，块起始时间: {:?}，主文本: '{}'",
+                                log::trace!(
+                                    // 使用 trace 级别记录跳过空段落
+                                    "[UniLyric 解析输入] 跳过创建空的TTML段落，块起始时间: {:?}，主文本: '{}'",
                                     spl_block.start_times_ms,
                                     spl_block.main_text_with_inline_ts
                                 );
@@ -2043,7 +1437,7 @@ impl UniLyricApp {
                     // SPL 后处理：合并在相同起始时间生成的多个TTML段落的翻译
                     let mut final_ttml_paragraphs: Vec<TtmlParagraph> = Vec::new();
                     if !initial_ttml_paragraphs.is_empty() {
-                        let mut temp_iter = initial_ttml_paragraphs.into_iter().peekable();
+                        let mut temp_iter = initial_ttml_paragraphs.into_iter().peekable(); // 使用可偷窥的迭代器
                         while let Some(mut current_para) = temp_iter.next() {
                             let mut collected_additional_translations_for_current_para: Vec<
                                 String,
@@ -2078,8 +1472,8 @@ impl UniLyricApp {
                                         }
                                     }
                                 } else {
-                                    break;
-                                } // 起始时间不同，停止合并
+                                    break; // 起始时间不同，停止合并
+                                }
                             }
                             // 将收集到的额外翻译合并到当前段落的翻译中
                             if !collected_additional_translations_for_current_para.is_empty() {
@@ -2105,10 +1499,11 @@ impl UniLyricApp {
                         "[Unilyric 解析输入 SPL] SPL转换完成，生成 {} 个TTML段落。",
                         final_ttml_paragraphs.len()
                     );
-                    // 判断SPL是否为逐行格式 (如果每个段落最多只有一个音节)
-                    let is_spl_line_timed = final_ttml_paragraphs
-                        .iter()
-                        .all(|p| p.main_syllables.len() <= 1);
+                    // 判断SPL是否为逐行格式 (如果每个段落最多只有一个音节，或者没有音节但有翻译)
+                    let is_spl_line_timed = final_ttml_paragraphs.iter().all(|p| {
+                        p.main_syllables.len() <= 1
+                            || (p.main_syllables.is_empty() && p.translation.is_some())
+                    });
                     return Ok(ParsedSourceData {
                         paragraphs: final_ttml_paragraphs,
                         general_metadata: Vec::new(), // SPL不支持元数据
@@ -2124,18 +1519,18 @@ impl UniLyricApp {
                             // 处理LYS格式
                             let (lys_lines, lys_meta) =
                                 lys_parser::load_lys_from_string(&self.input_text)?;
-                            let (ps, _meta_from_lys_converter) =
+                            let (ps, _meta_from_lys_converter) = // LYS转换器返回的元数据通常为空或已包含在lys_meta中
                                 lys_to_ttml_data::convert_lys_to_ttml_data(&lys_lines)?;
                             (ps, lys_meta, false) // LYS是逐字格式
                         }
                         LyricFormat::Yrc => {
-                            // 处理YRC格式 (网易云)
+                            // 处理YRC格式 (网易云逐字)
                             let (yrc_lines, yrc_meta) =
                                 yrc_parser::load_yrc_from_string(&self.input_text)?;
-                            let (ps, _meta_from_yrc_converter) =
+                            let (ps, _meta_from_yrc_converter) = // YRC转换器元数据处理
                                 yrc_to_ttml_data::convert_yrc_to_ttml_data(
                                     &yrc_lines,
-                                    yrc_meta.clone(),
+                                    yrc_meta.clone(), // YRC元数据需要传递给转换器
                                 )?;
                             (ps, yrc_meta, false) // YRC是逐字格式
                         }
@@ -2176,20 +1571,20 @@ impl UniLyricApp {
                 })
             }
             LyricFormat::Lqe => {
-                // 处理LQE格式
+                // 处理LQE格式 (Lyrics Station / Lyrics Quick Editor)
                 // 从字符串加载LQE数据
                 let lqe_parsed_data = crate::lqe_parser::load_lqe_from_string(&self.input_text)?;
                 // 将LQE解析数据转换为内部的 ParsedSourceData 结构
                 let mut intermediate_result =
                     crate::lqe_to_ttml_data::convert_lqe_to_intermediate_data(&lqe_parsed_data)?;
-                // 从通用元数据中提取特定类型
+                // 从通用元数据中提取特定类型 (例如词曲作者)
                 let mut final_general_meta_lqe: Vec<AssMetadata> = Vec::new();
                 for meta_item in intermediate_result.general_metadata.iter().cloned() {
                     match meta_item.key.parse::<CanonicalMetadataKey>() {
                         Ok(CanonicalMetadataKey::Songwriter) => {
                             intermediate_result.songwriters.push(meta_item.value)
                         }
-                        _ => final_general_meta_lqe.push(meta_item),
+                        _ => final_general_meta_lqe.push(meta_item), // 其他保留
                     }
                 }
                 intermediate_result.general_metadata = final_general_meta_lqe;
@@ -2199,68 +1594,84 @@ impl UniLyricApp {
             }
             LyricFormat::Lrc => {
                 // 处理LRC格式
-                log::info!(
-                    "[Unilyric 解析输入] LRC作为主输入源，将尝试解析为行并计算精确结束时间。"
-                );
-                let (lrc_lines, lrc_meta) = lrc_parser::parse_lrc_text_to_lines(&self.input_text)?;
+                // 解析LRC文本，获取显示行、双语翻译（如果存在）和元数据
+                let (display_lrc_lines, bilingual_translations, lrc_meta) =
+                    lrc_parser::parse_lrc_text_to_lines(&self.input_text)?;
 
-                let mut paragraphs: Vec<TtmlParagraph> = Vec::with_capacity(lrc_lines.len());
+                // 过滤出有效的 LrcLine (已解析的行) 用于创建 TtmlParagraph
+                let mut valid_lrc_lines: Vec<LrcLine> = display_lrc_lines
+                    .into_iter() // display_lrc_lines 现在只包含主歌词行或原始行
+                    .filter_map(|display_line| match display_line {
+                        DisplayLrcLine::Parsed(lrc_line) => Some(lrc_line), // 保留已解析的行
+                        DisplayLrcLine::Raw { .. } => None, // 丢弃原始未解析的行 (通常是元数据或格式错误的行)
+                    })
+                    .collect();
 
-                // 遍历LRC行，为每行创建TTML段落
-                for (i, current_lrc_line) in lrc_lines.iter().enumerate() {
+                valid_lrc_lines.sort_by_key(|line| line.timestamp_ms); // 按时间戳排序
+
+                let mut paragraphs: Vec<TtmlParagraph> = Vec::with_capacity(valid_lrc_lines.len());
+
+                // 遍历有效的LRC行，创建TTML段落
+                for (i, current_lrc_line) in valid_lrc_lines.iter().enumerate() {
                     let p_start_ms = current_lrc_line.timestamp_ms; // 段落开始时间
-                    // 段落结束时间
-
-                    let p_end_ms: u64 = if i + 1 < lrc_lines.len() {
-                        // 如果有下一行
-                        // 当前行的结束时间是下一行的开始时间
-                        let next_line_start_ms = lrc_lines[i + 1].timestamp_ms;
-                        // 确保结束时间不早于开始时间
+                    // 计算段落结束时间：下一行开始时间，或当前行开始+默认时长
+                    let p_end_ms: u64 = if i + 1 < valid_lrc_lines.len() {
+                        let next_line_start_ms = valid_lrc_lines[i + 1].timestamp_ms;
                         if next_line_start_ms > p_start_ms {
-                            next_line_start_ms
+                            next_line_start_ms // 正常情况，使用下一行开始时间
                         } else {
-                            // 如果下一行时间戳异常（例如等于或早于当前行），则给一个小的默认时长
-                            p_start_ms.saturating_add(1000) // 例如1000毫秒
+                            // 时间戳相同或乱序，给一个默认时长
+                            p_start_ms.saturating_add(5000) // 默认5秒
                         }
                     } else {
-                        // 如果是最后一行
-                        // 结束时间是开始时间加上一个默认时长 (例如1分钟)
-                        p_start_ms.saturating_add(60000)
+                        // 最后一行，给一个较长的默认时长 (或根据歌曲总时长调整)
+                        p_start_ms.saturating_add(60000) // 默认60秒，可调整
                     };
 
-                    // 创建TTML段落，LRC的一行对应一个TTML段落，该段落只包含一个音节，音节内容是整行文本
+                    // 创建TTML段落，LRC的每行文本作为一个单独的音节
                     paragraphs.push(TtmlParagraph {
                         p_start_ms,
                         p_end_ms,
                         main_syllables: vec![TtmlSyllable {
                             text: current_lrc_line.text.clone(),
-                            start_ms: p_start_ms,
-                            end_ms: p_end_ms, // 音节的结束时间也使用计算出的行结束时间
-                            ends_with_space: false, // LRC行通常不包含需要特殊处理的尾随空格
+                            start_ms: p_start_ms,   // 音节开始时间同段落开始时间
+                            end_ms: p_end_ms,       // 音节结束时间同段落结束时间
+                            ends_with_space: false, // LRC行通常不包含尾随空格信息
                         }],
-                        agent: "v1".to_string(), // 默认 agent
+                        agent: "v1".to_string(), // LRC无演唱者信息，默认为v1
                         ..Default::default()
                     });
                 }
 
                 let mut psd = ParsedSourceData {
                     paragraphs,
-                    general_metadata: lrc_meta,   // 从LRC解析的元数据
-                    is_line_timed_source: true,   // LRC 是逐行格式
-                    lqe_main_lyrics_as_lrc: true, // 标记主歌词是LRC (因为源就是LRC)，用于LQE生成
+                    general_metadata: lrc_meta, // 应用从LRC解析的元数据
+                    is_line_timed_source: true, // LRC 是逐行时间
+                    // 存储从双语LRC中提取的翻译行
+                    bilingual_extracted_translations: if bilingual_translations.is_empty() {
+                        None
+                    } else {
+                        Some(bilingual_translations)
+                    },
                     ..Default::default()
                 };
-
-                // 从 general_metadata 填充 psd 特定字段
+                // 从通用元数据中提取特定类型 (如语言，作者等)
                 let mut final_general_meta = Vec::new();
                 for item in psd.general_metadata.iter().cloned() {
-                    match item.key.parse::<CanonicalMetadataKey>() {
-                        Ok(CanonicalMetadataKey::Language) => psd.language_code = Some(item.value),
-                        // 特殊处理LRC中的 "[by:]" 标签，它通常指LRC制作者，对应 Author
-                        Ok(CanonicalMetadataKey::Author) if item.key.eq_ignore_ascii_case("by") => {
+                    match item.key.parse::<crate::types::CanonicalMetadataKey>() {
+                        Ok(crate::types::CanonicalMetadataKey::Language) => {
+                            psd.language_code = Some(item.value)
+                        }
+                        // 特殊处理LRC中的 [by:作者] 标签，确保它被识别为作者
+                        Ok(crate::types::CanonicalMetadataKey::Author)
+                            if item.key.eq_ignore_ascii_case("by") =>
+                        {
+                            // 如果键是 "by"，即使已解析为 Author，也保留它，
+                            // 或者根据需要将其值赋给 psd.songwriters (如果LRC的by通常指词曲作者)
+                            // 当前逻辑是保留在通用元数据中，由后续的元数据处理逻辑统一处理
                             final_general_meta.push(item);
                         }
-                        _ => final_general_meta.push(item), // 其他或无法解析的保留
+                        _ => final_general_meta.push(item), // 其他保留
                     }
                 }
                 psd.general_metadata = final_general_meta;
@@ -2273,23 +1684,76 @@ impl UniLyricApp {
     /// 包括主歌词段落、标记、元数据存储等。
     /// 此方法在加载新文件或从网络下载歌词后被调用。
     /// 它处理新元数据与用户已固定的元数据之间的合并逻辑。
-    fn update_app_state_from_parsed_data(&mut self, data: ParsedSourceData) {
-        log::debug!(
-            "[Unilyric] 开始更新应用状态。当前已解析 {} 个段落。",
+    pub fn update_app_state_from_parsed_data(&mut self, data: ParsedSourceData) {
+        log::info!(
+            "[Unilyric 更新应用状态] 开始更新。已解析 {} 个段落。",
             data.paragraphs.len()
         );
 
-        // 1. 更新主歌词段落和相关标记信息
-        self.parsed_ttml_paragraphs = Some(data.paragraphs.clone()); // 更新TTML段落
-        self.current_markers = data.markers.clone(); // 更新标记
-        self.source_is_line_timed = data.is_line_timed_source; // 更新源是否逐行
-        self.current_raw_ttml_from_input = data.raw_ttml_from_input.clone(); // 更新原始TTML缓存
-        self.detected_formatted_ttml_source = data.detected_formatted_input.unwrap_or(false); // 更新是否检测到格式化TTML
+        // --- 歌词内容清理步骤 ---
+        // 检查是否需要对当前来源的歌词进行清理 (例如移除广告、描述性文本)
+        let should_strip_for_current_source =
+            if let Some(ref fetch_source) = self.last_auto_fetch_source_for_stripping_check {
+                // 只对特定在线来源进行清理
+                matches!(
+                    fetch_source,
+                    AutoSearchSource::QqMusic | AutoSearchSource::Kugou | AutoSearchSource::Netease
+                )
+            } else {
+                false // 如果没有记录来源，则不清理
+            };
+
+        let mut paragraphs_after_processing = data.paragraphs; // 初始化为解析后的段落
+
+        // 如果需要清理且段落不为空
+        if should_strip_for_current_source && !paragraphs_after_processing.is_empty() {
+            let settings_guard = self.app_settings.lock().unwrap(); // 获取应用设置的锁
+            // 总开关，控制所有类型的自动清理
+            if settings_guard.enable_online_lyric_stripping {
+                log::info!(
+                    "[UniLyricApp 更新应用状态] 对来源 {:?} 的TTML段落执行自动清理。原始段落数: {}",
+                    self.last_auto_fetch_source_for_stripping_check
+                        .as_ref()
+                        .map_or("未知", |s| s.display_name()), // 显示来源名称
+                    paragraphs_after_processing.len()
+                );
+
+                // 调用行清理函数
+                paragraphs_after_processing =
+                    lyric_processor::line_stripper::strip_descriptive_metadata_blocks(
+                        paragraphs_after_processing,
+                        &settings_guard.stripping_keywords, // 清理关键词列表
+                        settings_guard.stripping_keyword_case_sensitive, // 关键词是否区分大小写
+                        settings_guard.enable_ttml_regex_stripping, // 是否启用正则清理
+                        &settings_guard.ttml_stripping_regexes, // 正则表达式列表
+                        settings_guard.ttml_regex_stripping_case_sensitive, // 正则是否区分大小写
+                    );
+
+                log::info!(
+                    "[UniLyricApp 更新应用状态] TTML段落自动清理完成。段落数变为: {}",
+                    paragraphs_after_processing.len()
+                );
+            } else {
+                log::debug!(
+                    "[UniLyricApp 更新应用状态] 自动清理功能总开关未启用或段落为空，跳过。"
+                );
+            }
+            // settings_guard 在此被 drop，锁释放
+        }
+        // --- 清理步骤结束 ---
+
+        // 1. 更新应用的核心歌词数据状态
+        // 使用处理后（可能被清理过）的段落列表更新应用状态
+        self.parsed_ttml_paragraphs = Some(paragraphs_after_processing); // 更新已解析的TTML段落
+        self.current_markers = data.markers; // 更新当前标记
+        self.source_is_line_timed = data.is_line_timed_source; // 更新源是否为逐行定时
+        self.current_raw_ttml_from_input = data.raw_ttml_from_input; // 更新原始TTML输入缓存
+        self.detected_formatted_ttml_source = data.detected_formatted_input.unwrap_or(false); // 更新是否检测到格式化TTML源
 
         // 2. 元数据处理核心逻辑
         {
             // MetadataStore 锁作用域开始
-            let mut store = self.metadata_store.lock().unwrap();
+            let mut store = self.metadata_store.lock().unwrap(); // 获取元数据存储的锁
             store.clear(); // 2a. 清空当前的 MetadataStore，准备从新源和固定项重新填充
 
             // 2b. 添加来自新源的元数据
@@ -2297,24 +1761,29 @@ impl UniLyricApp {
             // 但当前 add 逻辑是追加，固定值逻辑会在后面覆盖)
             if !self.session_platform_metadata.is_empty() {
                 for (key_str, value_str) in &self.session_platform_metadata {
-                    if let Err(_e) = store.add(key_str, value_str.clone()) {}
+                    // 忽略添加错误，因为某些键可能不符合规范，但仍尝试添加
+                    if let Err(_e) = store.add(key_str, value_str.clone()) {
+                        // log::trace!("[Unilyric 更新应用状态] 添加会话元数据 '{}' (值: '{}') 到Store时发生预期内的解析/添加问题: {}", key_str, value_str, _e);
+                    }
                 }
             }
 
             // 然后添加来自文件内嵌的通用元数据 (data.general_metadata)
             if !data.general_metadata.is_empty() {
                 for meta_item in &data.general_metadata {
-                    if let Err(_e) = store.add(&meta_item.key, meta_item.value.clone()) {}
+                    if let Err(_e) = store.add(&meta_item.key, meta_item.value.clone()) {
+                        // log::trace!("[Unilyric 更新应用状态] 添加文件元数据 '{}' (值: '{}') 到Store时发生预期内的解析/添加问题: {}", meta_item.key, meta_item.value, _e);
+                    }
                 }
             }
 
             // 添加从 ParsedSourceData 特定字段提取的元数据
             if let Some(lang) = &data.language_code {
-                let _ = store.add("language", lang.clone());
+                let _ = store.add("language", lang.clone()); // "language" 会被规范化为 CanonicalMetadataKey::Language
             }
             if !data.songwriters.is_empty() {
                 for sw in &data.songwriters {
-                    let _ = store.add("songwriters", sw.clone());
+                    let _ = store.add("songwriters", sw.clone()); // "songwriters" -> CanonicalMetadataKey::Songwriter (注意单复数)
                 }
             }
             if !data.apple_music_id.is_empty() {
@@ -2331,16 +1800,16 @@ impl UniLyricApp {
             // 2c. 应用/覆盖用户通过UI标记为“固定”并已保存到设置的元数据值
             //     `self.app_settings.pinned_metadata` 存储的是上次保存到INI的固定项（显示键->值列表）。
             //     `self.persistent_canonical_keys` 存储的是用户当前在UI上希望固定的元数据类型的规范化键。
-            let settings_pinned_map = self.app_settings.lock().unwrap().pinned_metadata.clone();
+            let settings_pinned_map = self.app_settings.lock().unwrap().pinned_metadata.clone(); // 获取设置中固定的元数据
             if !settings_pinned_map.is_empty() {
-                log::debug!(
+                log::info!(
                     "[Unilyric 更新应用状态] 应用 {} 个来自设置的固定元数据键。",
                     settings_pinned_map.len()
                 );
             }
 
             for (pinned_display_key, pinned_values_vec) in settings_pinned_map {
-                // pinned_values_vec 是 Vec<String>
+                // pinned_values_vec 是 Vec<String>，表示一个固定键可能有多个固定值
                 // 将设置中存储的显示键解析为其规范化形式
                 let canonical_key_of_pinned_item = match pinned_display_key
                     .trim()
@@ -2357,11 +1826,12 @@ impl UniLyricApp {
                     .contains(&canonical_key_of_pinned_item)
                 {
                     // 从Store中移除由新文件/下载加载的、与此固定键对应的所有值
+                    // 这样可以确保固定值覆盖来自源的值
                     store.remove(&canonical_key_of_pinned_item);
                     // 使用设置中存储的显示键和值（可能是多个）重新添加到Store。
                     // store.add 会再次将其键名规范化。
                     for pinned_value_str in pinned_values_vec {
-                        // 遍历值列表
+                        // 遍历该固定键的所有固定值
                         if let Err(e) = store.add(&pinned_display_key, pinned_value_str.clone()) {
                             log::warn!(
                                 "[Unilyric 更新应用状态] 应用设置中的固定元数据 '{}' (值: '{}') 到Store失败: {}",
@@ -2376,321 +1846,76 @@ impl UniLyricApp {
 
             // 2d. 显式移除 KRC 内部语言 Base64 值 (如果它因任何原因进入了Store)
             //     这一步作为最后防线，确保它不会出现在最终的元数据列表中。
-            store.remove(&CanonicalMetadataKey::KrcInternalTranslation);
+            if let Ok(key_to_remove) = "KrcInternalTranslation".parse::<CanonicalMetadataKey>() {
+                store.remove(&key_to_remove);
+            }
 
-            // 2e. 对元数据存储进行去重，确保值的唯一性
+            // 2e. 对元数据存储进行去重，确保每个键下的值的唯一性
             //     去重操作会保留每个键下唯一的、非空的值。
             //     如果一个键之前通过多次 add 累积了相同的值，去重后只会保留一个。
             store.deduplicate_values();
         } // MetadataStore 锁释放
 
-        // 3. 根据更新后的 MetadataStore 重建UI的可编辑元数据列表
-        self.rebuild_editable_metadata_from_store();
-    }
+        // 3. 处理从双语LRC主输入中提取的翻译
+        if let Some(bilingual_translations) = data.bilingual_extracted_translations {
+            if !bilingual_translations.is_empty() {
+                log::info!(
+                    "[Unilyric 更新应用状态] 应用从双语LRC主输入中提取的 {} 行翻译。",
+                    bilingual_translations.len()
+                );
+                // 1. 将 Vec<LrcLine> 转换为 Vec<DisplayLrcLine> (用于存储和UI)
+                let display_translations: Vec<DisplayLrcLine> = bilingual_translations
+                    .iter()
+                    .map(|lrc_line| DisplayLrcLine::Parsed(lrc_line.clone()))
+                    .collect();
 
-    /// 将通过“加载翻译/罗马音LRC”菜单加载的LRC行合并到当前的主歌词段落中，
-    /// 并更新右侧的翻译/罗马音LRC预览面板。
-    pub fn merge_lrc_into_paragraphs(&mut self) {
-        let translation_lrc_header = self.generate_specific_lrc_header(LrcContentType::Translation);
-        let romanization_lrc_header =
-            self.generate_specific_lrc_header(LrcContentType::Romanization);
+                // 2. 更新 loaded_translation_lrc (应用内部存储的翻译LRC行)
+                self.loaded_translation_lrc = Some(display_translations);
 
-        if self.parsed_ttml_paragraphs.is_none() {
-            // --- 无主段落时，仅更新LRC预览面板的逻辑 ---
-            if self.loaded_translation_lrc.is_some() {
+                // 3. 更新 display_translation_lrc_output (用于UI预览的LRC文本字符串)
+                //    需要重新生成LRC文本，包括可能的元数据头部
+                let mut temp_translation_lrc_output = String::new();
+                //    首先尝试从元数据存储中获取翻译相关的头部信息
+                let header;
+                {
+                    // 限制锁的范围
+                    let store_guard = self.metadata_store.lock().unwrap();
+                    header = self.generate_specific_lrc_header_from_store(
+                        LrcContentType::Translation, // 指定为翻译类型
+                        &store_guard,
+                    );
+                } // 元数据存储锁释放
+                temp_translation_lrc_output.push_str(&header); // 添加头部
+
+                // 添加LRC行
+                for lrc_line in bilingual_translations {
+                    let time_str = crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms); // 格式化时间戳
+                    if let Err(e) =
+                        writeln!(temp_translation_lrc_output, "{}{}", time_str, lrc_line.text)
+                    // 写入行
+                    {
+                        log::error!(
+                            "[Unilyric 更新应用状态] 写入双语翻译LRC行到字符串失败: {}",
+                            e
+                        );
+                    }
+                }
+                // 更新UI预览字符串，确保末尾有换行符（如果非空）
                 self.display_translation_lrc_output =
-                    self.loaded_translation_lrc
-                        .as_ref()
-                        .map_or(String::new(), |lines| {
-                            let mut temp_output = translation_lrc_header.clone();
-                            for l in lines {
-                                temp_output.push_str(&format!(
-                                    "{}{}\n",
-                                    crate::utils::format_lrc_time_ms(l.timestamp_ms),
-                                    l.text
-                                ));
-                            }
-                            let final_output = temp_output.trim_end().to_string();
-                            if final_output.is_empty() && translation_lrc_header.trim().is_empty() {
-                                String::new()
-                            } else {
-                                format!("{}\n", final_output)
-                            }
-                        });
-            } else {
-                self.display_translation_lrc_output.clear();
-            }
-
-            if self.loaded_romanization_lrc.is_some() {
-                self.display_romanization_lrc_output = self
-                    .loaded_romanization_lrc
-                    .as_ref()
-                    .map_or(String::new(), |lines| {
-                        let mut temp_output = romanization_lrc_header.clone();
-                        for l in lines {
-                            temp_output.push_str(&format!(
-                                "{}{}\n",
-                                crate::utils::format_lrc_time_ms(l.timestamp_ms),
-                                l.text
-                            ));
-                        }
-                        let final_output = temp_output.trim_end().to_string();
-                        if final_output.is_empty() && romanization_lrc_header.trim().is_empty() {
-                            String::new()
-                        } else {
-                            format!("{}\n", final_output)
-                        }
-                    });
-            } else {
-                self.display_romanization_lrc_output.clear();
-            }
-            return;
-        }
-
-        let paragraphs = self.parsed_ttml_paragraphs.as_mut().unwrap();
-        const LRC_MATCH_TOLERANCE_MS: u64 = 15; // 匹配容差
-
-        // --- 确定翻译语言代码 ---
-        let specific_translation_lang_for_para: Option<String>;
-        {
-            let store = self.metadata_store.lock().unwrap();
-            specific_translation_lang_for_para = store
-                .get_single_value_by_str("translation_language")
-                .cloned()
-                .or_else(|| {
-                    store
-                        .get_single_value(&crate::types::CanonicalMetadataKey::Language)
-                        .cloned()
-                });
-        }
-
-        // --- 合并翻译LRC ---
-        if let Some(ref lrc_trans_lines_vec) = self.loaded_translation_lrc {
-            log::info!(
-                "[Unilyric 合并LRC] 正在合并 {} 行已加载的翻译LRC到 {} 个主歌词段落。",
-                lrc_trans_lines_vec.len(),
-                paragraphs.len()
-            );
-
-            let mut available_lrc_lines: Vec<(&crate::types::LrcLine, bool)> = lrc_trans_lines_vec
-                .iter()
-                .map(|line| (line, false))
-                .collect();
-
-            for paragraph in paragraphs.iter_mut() {
-                // 1. 为主歌词部分匹配翻译
-                let para_start_ms = paragraph.p_start_ms;
-                let para_end_ms = paragraph.p_end_ms;
-                let mut best_match_main_idx: Option<usize> = None;
-                let mut smallest_diff_main = u64::MAX;
-
-                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                    if *used {
-                        continue;
-                    }
-                    let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
-                    if diff <= LRC_MATCH_TOLERANCE_MS {
-                        if diff < smallest_diff_main {
-                            smallest_diff_main = diff;
-                            best_match_main_idx = Some(current_lrc_idx);
-                        }
-                    } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
-                        && best_match_main_idx.is_some()
-                    {
-                        break;
-                    }
-                    if lrc_line.timestamp_ms > para_end_ms + LRC_MATCH_TOLERANCE_MS * 2 {
-                        break;
-                    }
-                }
-
-                if let Some(matched_idx) = best_match_main_idx {
-                    let (matched_lrc, _) = available_lrc_lines[matched_idx];
-                    if !matched_lrc.text.trim().is_empty() {
-                        // 只有当LRC行文本非空时才更新
-                        paragraph.translation = Some((
-                            matched_lrc.text.clone(),
-                            specific_translation_lang_for_para.clone(),
-                        ));
-                        // 标记该LRC行已被使用
-                        available_lrc_lines[matched_idx].1 = true;
-                    }
-                }
-
-                // 2. 为背景人声匹配翻译 (如果存在背景人声且有音节)
-                if let Some(bg_section_ref) = paragraph.background_section.as_ref() {
-                    // 使用不可变引用检查
-                    if !bg_section_ref.syllables.is_empty() {
-                        let bg_start_ms = bg_section_ref.start_ms;
-                        let bg_end_ms = bg_section_ref.end_ms;
-                        let mut best_match_bg_idx: Option<usize> = None;
-                        let mut smallest_diff_bg = u64::MAX;
-
-                        for (current_lrc_idx, (lrc_line, used)) in
-                            available_lrc_lines.iter().enumerate()
-                        {
-                            if *used {
-                                continue;
-                            }
-                            let diff =
-                                (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
-                            if diff <= LRC_MATCH_TOLERANCE_MS {
-                                if diff < smallest_diff_bg {
-                                    smallest_diff_bg = diff;
-                                    best_match_bg_idx = Some(current_lrc_idx);
-                                }
-                            } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
-                                && best_match_bg_idx.is_some()
-                            {
-                                break;
-                            }
-                            if lrc_line.timestamp_ms > bg_end_ms + LRC_MATCH_TOLERANCE_MS * 2 {
-                                break;
-                            }
-                        }
-
-                        if let Some(matched_idx) = best_match_bg_idx {
-                            let (matched_lrc, _) = available_lrc_lines[matched_idx];
-                            if !matched_lrc.text.trim().is_empty() {
-                                // 只有当LRC行文本非空时才更新
-                                // 获取可变引用来更新
-                                if let Some(bg_section_mut) = paragraph.background_section.as_mut()
-                                {
-                                    bg_section_mut.translation = Some((
-                                        matched_lrc.text.clone(),
-                                        specific_translation_lang_for_para.clone(),
-                                    ));
-                                    available_lrc_lines[matched_idx].1 = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // 合并后，重新生成翻译LRC预览面板的内容
-        match crate::lrc_generator::generate_lrc_from_paragraphs(
-            paragraphs,
-            LrcContentType::Translation,
-        ) {
-            Ok(text) => {
-                self.display_translation_lrc_output = translation_lrc_header + &text;
-            }
-            Err(e) => {
-                log::error!("[Unilyric 合并LRC] 生成翻译LRC预览失败：{}", e);
-                self.display_translation_lrc_output.clear();
+                    if temp_translation_lrc_output.trim().is_empty() {
+                        String::new() // 如果内容为空，则设置为空字符串
+                    } else {
+                        temp_translation_lrc_output
+                            .trim_end_matches('\n') // 移除可能的多余尾部换行
+                            .to_string()
+                            + "\n" // 添加一个尾部换行
+                    };
+                log::trace!("[Unilyric 更新应用状态] 双语翻译LRC面板内容已更新。");
             }
         }
 
-        // --- 合并罗马音LRC (仅在LRC提供新内容时覆盖) ---
-        if let Some(ref lrc_roma_lines_vec) = self.loaded_romanization_lrc {
-            log::info!(
-                "[Unilyric 合并LRC] 正在合并 {} 行已加载的罗马音LRC到 {} 个主歌词段落。",
-                lrc_roma_lines_vec.len(),
-                paragraphs.len()
-            );
-
-            let mut available_lrc_lines: Vec<(&crate::types::LrcLine, bool)> = lrc_roma_lines_vec
-                .iter()
-                .map(|line| (line, false))
-                .collect();
-
-            for paragraph in paragraphs.iter_mut() {
-                // 1. 为主歌词部分匹配罗马音
-                let para_start_ms = paragraph.p_start_ms;
-                let para_end_ms = paragraph.p_end_ms;
-                let mut best_match_main_idx: Option<usize> = None;
-                let mut smallest_diff_main = u64::MAX;
-
-                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                    if *used {
-                        continue;
-                    }
-                    let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
-                    if diff <= LRC_MATCH_TOLERANCE_MS {
-                        if diff < smallest_diff_main {
-                            smallest_diff_main = diff;
-                            best_match_main_idx = Some(current_lrc_idx);
-                        }
-                    } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
-                        && best_match_main_idx.is_some()
-                    {
-                        break;
-                    }
-                    if lrc_line.timestamp_ms > para_end_ms + LRC_MATCH_TOLERANCE_MS * 2 {
-                        break;
-                    }
-                }
-
-                if let Some(matched_idx) = best_match_main_idx {
-                    let (matched_lrc, _) = available_lrc_lines[matched_idx];
-                    if !matched_lrc.text.trim().is_empty() {
-                        // 只有当LRC行文本非空时才更新
-                        paragraph.romanization = Some(matched_lrc.text.clone());
-                        available_lrc_lines[matched_idx].1 = true;
-                    }
-                }
-
-                // 2. 为背景人声匹配罗马音
-                if let Some(bg_section_ref) = paragraph.background_section.as_ref() {
-                    // 使用不可变引用检查
-                    if !bg_section_ref.syllables.is_empty() {
-                        let bg_start_ms = bg_section_ref.start_ms;
-                        let bg_end_ms = bg_section_ref.end_ms;
-                        let mut best_match_bg_idx: Option<usize> = None;
-                        let mut smallest_diff_bg = u64::MAX;
-
-                        for (current_lrc_idx, (lrc_line, used)) in
-                            available_lrc_lines.iter().enumerate()
-                        {
-                            if *used {
-                                continue;
-                            }
-                            let diff =
-                                (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
-                            if diff <= LRC_MATCH_TOLERANCE_MS {
-                                if diff < smallest_diff_bg {
-                                    smallest_diff_bg = diff;
-                                    best_match_bg_idx = Some(current_lrc_idx);
-                                }
-                            } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
-                                && best_match_bg_idx.is_some()
-                            {
-                                break;
-                            }
-                            if lrc_line.timestamp_ms > bg_end_ms + LRC_MATCH_TOLERANCE_MS * 2 {
-                                break;
-                            }
-                        }
-
-                        if let Some(matched_idx) = best_match_bg_idx {
-                            let (matched_lrc, _) = available_lrc_lines[matched_idx];
-                            if !matched_lrc.text.trim().is_empty() {
-                                // 只有当LRC行文本非空时才更新
-                                if let Some(bg_section_mut) = paragraph.background_section.as_mut()
-                                {
-                                    bg_section_mut.romanization = Some(matched_lrc.text.clone());
-                                    available_lrc_lines[matched_idx].1 = true;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // 合并后，重新生成罗马音LRC预览面板的内容
-        match crate::lrc_generator::generate_lrc_from_paragraphs(
-            paragraphs,
-            LrcContentType::Romanization,
-        ) {
-            Ok(text) => {
-                self.display_romanization_lrc_output = romanization_lrc_header + &text;
-            }
-            Err(e) => {
-                log::error!("[Unilyric 合并LRC] 生成罗马音LRC预览失败：{}", e);
-                self.display_romanization_lrc_output.clear();
-            }
-        }
+        // 4. 根据更新后的 MetadataStore 重建UI的可编辑元数据列表
+        self.rebuild_editable_metadata_from_store();
     }
 
     /// 处理歌词转换的核心函数。
@@ -2700,160 +1925,305 @@ impl UniLyricApp {
     /// 4. 生成目标格式的输出文本。
     pub fn handle_convert(&mut self) {
         log::info!(
-            "[Unilyric 处理转换] 开始转换流程。输入文本是否为空: {}",
-            self.input_text.is_empty()
+            "[Unilyric 处理转换] 开始转换流程。输入文本是否为空: {}. 翻译LRC是否加载: {}, 罗马音LRC是否加载: {}",
+            self.input_text.is_empty(),
+            self.loaded_translation_lrc.is_some(),
+            self.loaded_romanization_lrc.is_some()
         );
-        self.output_text.clear(); // 清空上一次的输出结果
         self.conversion_in_progress = true; // 标记转换正在进行
-        self.new_trigger_log_exists = false; // 重置新日志触发标志
+        self.new_trigger_log_exists = false; // 重置新触发日志标志
 
-        let mut parsed_data_for_update: ParsedSourceData = Default::default(); // 初始化为空的解析数据
+        let mut parsed_data_for_update: ParsedSourceData = Default::default(); // 初始化空的解析数据
 
-        // 只有当输入文本非空时才尝试解析
+        // 步骤 1: 解析输入文本 (如果存在)
         if !self.input_text.trim().is_empty() {
+            // 如果输入文本不为空
             match self.parse_input_to_intermediate_data() {
                 Ok(parsed_data_bundle) => {
-                    // 解析成功，使用解析结果
+                    // 解析成功
                     parsed_data_for_update = parsed_data_bundle;
                 }
                 Err(e) => {
-                    // 解析失败，记录错误。parsed_data_for_update 保持默认（空）。
-                    // 即使解析失败，后续仍会尝试应用会话元数据和持久化元数据。
+                    // 解析失败
                     log::error!(
-                        "[Unilyric 处理转换] 解析源数据失败: {}. 仍将尝试应用元数据。",
+                        "[Unilyric 处理转换] 解析源数据失败: {}. 仍将尝试应用元数据和已加载LRC。",
                         e
                     );
-                    // 清理可能存在的旧解析数据，因为源已更改或解析失败
+                    // 清理可能存在的旧解析结果
                     self.parsed_ttml_paragraphs = None;
                     self.current_markers.clear();
                     self.source_is_line_timed = false;
                     self.current_raw_ttml_from_input = None;
+                    // 显示错误提示给用户
+                    self.toasts.add(egui_toast::Toast {
+                        text: format!("主歌词解析失败: {}", e).into(),
+                        kind: egui_toast::ToastKind::Error,
+                        options: egui_toast::ToastOptions::default()
+                            .duration_in_seconds(3.0)
+                            .show_icon(true),
+                        style: Default::default(),
+                    });
+                    // parsed_data_for_update 保持默认空值
                 }
             }
-        } else if self.parsed_ttml_paragraphs.is_none() {
-            // 输入文本为空，并且之前也没有已解析的段落，无需做特别处理。
-            // parsed_data_for_update 保持默认（空）。
-            log::info!("[Unilyric 处理转换] 输入文本为空且无已解析段落。");
-        } else {
-            // 输入文本为空，但之前存在已解析的段落 (例如用户清空了输入框)。
-            // 当前逻辑：如果输入文本为空，则清除已解析的段落。
-            // parsed_data_for_update 保持默认（空），这将导致 update_app_state_from_parsed_data 清除旧段落。
-            log::info!("[Unilyric 处理转换] 输入文本为空，将清除之前已解析的段落（如果存在）。");
+        } else if self.parsed_ttml_paragraphs.is_some() && self.input_text.trim().is_empty() {
+            // 如果输入文本为空，但之前有解析过的段落 (例如用户清空了输入框)
+            log::info!("[Unilyric 处理转换] 输入文本为空，清除主歌词段落。");
+            self.parsed_ttml_paragraphs = None; // 清除段落
+            self.current_markers.clear(); // 清除标记
+            self.output_text.clear(); // 清空输出文本
+            if self.websocket_server_enabled {
+                self.send_lyrics_update_to_websocket(); // 发送空的歌词更新
+            }
+            // parsed_data_for_update 保持默认空值，因为没有新的输入来更新状态
         }
 
-        // 无论解析是否成功，都调用 update_app_state_from_parsed_data。
-        // 如果解析失败或输入为空，parsed_data_for_update 是空的，
-        // 这会有效地清除旧的段落数据，但会正确处理元数据（如应用固定项）。
+        // 步骤 2: 更新应用状态 (元数据、标记等)
+        // 即使主歌词解析失败 (parsed_data_for_update 为空)，此步骤也会执行，
+        // 以便处理固定的元数据和可能已加载的次要LRC。
         self.update_app_state_from_parsed_data(parsed_data_for_update);
 
-        // 再次确保KRC内部翻译相关的元数据（通常是base64编码的）从最终的元数据存储中移除。
-        // 这是因为这类内部数据不应暴露给用户或包含在输出文件中。
-        {
-            // 加锁 MetadataStore
-            let mut store = self.metadata_store.lock().unwrap();
-            store.remove(&CanonicalMetadataKey::KrcInternalTranslation);
-            // 也尝试移除可能存在的自定义键形式 (以防万一)
-            store.remove(&CanonicalMetadataKey::Custom(
-                "krcinternaltranslation".to_string(),
-            ));
-            store.remove(&CanonicalMetadataKey::Custom(
-                "krc_internal_language_base64_value".to_string(),
-            ));
-        } // MetadataStore 锁释放
-        // 确保UI元数据列表也得到更新，以反映这个移除
-        self.rebuild_editable_metadata_from_store();
-
-        // 处理KRC内嵌翻译 (如果存在于 pending_krc_translation_lines)
-        // 这部分逻辑之前在 update_app_state_from_parsed_data 中被注释掉了，移到这里更合适，
-        // 因为它是在主歌词段落和元数据都已初步建立之后进行的。
+        // 步骤 3: 合并KRC内嵌翻译 (如果存在)
         if let Some(trans_lines) = self.pending_krc_translation_lines.take() {
-            // .take() 会消耗掉数据
-            if !trans_lines.is_empty() {
-                if let Some(ref mut paragraphs) = self.parsed_ttml_paragraphs {
-                    if !paragraphs.is_empty() {
-                        log::info!(
-                            "[Unilyric 处理转换] 正在应用KRC内嵌翻译 (共 {} 行)",
-                            trans_lines.len()
-                        );
-                        for (i, para_line) in paragraphs.iter_mut().enumerate() {
-                            if let Some(trans_text) = trans_lines.get(i) {
-                                let text_to_use = if trans_text == "//" {
-                                    ""
-                                } else {
-                                    trans_text.as_str()
-                                };
-                                // 只有当段落尚无翻译，或翻译为空时，才使用KRC内嵌翻译填充
-                                if para_line.translation.is_none()
-                                    || para_line
-                                        .translation
-                                        .as_ref()
-                                        .is_some_and(|(t, _)| t.is_empty())
-                                {
-                                    para_line.translation = Some((text_to_use.to_string(), None)); // KRC内嵌翻译通常无明确语言代码
-                                }
+            // 取出待处理的KRC翻译行
+            if let Some(ref mut paragraphs) = self.parsed_ttml_paragraphs {
+                // 如果主歌词段落存在
+                if !paragraphs.is_empty() && !trans_lines.is_empty() {
+                    log::info!(
+                        "[Unilyric 处理转换] 应用KRC内嵌翻译 ({} 行)",
+                        trans_lines.len()
+                    );
+                    // 将KRC翻译行合并到对应的TTML段落中
+                    for (i, para_line) in paragraphs.iter_mut().enumerate() {
+                        if let Some(trans_text) = trans_lines.get(i) {
+                            let text_to_use = if trans_text == "//" {
+                                // KRC中 "//" 表示空翻译
+                                ""
+                            } else {
+                                trans_text.as_str()
+                            };
+                            // 只有当段落没有翻译，或者翻译为空时，才应用KRC翻译
+                            if para_line.translation.is_none()
+                                || para_line
+                                    .translation
+                                    .as_ref()
+                                    .is_some_and(|(t, _)| t.is_empty())
+                            {
+                                para_line.translation = Some((text_to_use.to_string(), None)); // 语言代码未知
                             }
                         }
-                    } else {
-                        // 如果没有主段落，但有待处理的KRC翻译，将其放回以便后续处理（如果适用）
-                        // 或者记录警告并丢弃。当前选择放回。
-                        log::warn!(
-                            "[Unilyric 处理转换] KRC内嵌翻译存在，但无主歌词段落可合并。将暂存的翻译重新放回。"
-                        );
-                        self.pending_krc_translation_lines = Some(trans_lines);
                     }
-                } else {
-                    log::warn!(
-                        "[Unilyric 处理转换] KRC内嵌翻译存在，但 parsed_ttml_paragraphs 为 None。将暂存的翻译重新放回。"
-                    );
-                    self.pending_krc_translation_lines = Some(trans_lines);
                 }
+            } else {
+                // 如果主歌词段落不存在 (例如解析失败)，则将KRC翻译行放回，等待下次处理
+                self.pending_krc_translation_lines = Some(trans_lines);
             }
         }
 
-        // 合并从网络下载的次要歌词 (翻译LRC, 罗马音QRC/LRC)
-        self.merge_downloaded_secondary_lyrics();
-        // 合并用户通过菜单加载的次要LRC文件
-        self.merge_lrc_into_paragraphs();
+        // 步骤 4: 合并从网络下载的次要歌词 (翻译LRC, 罗马音QRC/LRC)
+        let pending_trans_lrc = self.pending_translation_lrc_from_download.take();
+        let pending_roma_qrc = self.pending_romanization_qrc_from_download.take();
+        let pending_roma_lrc = self.pending_romanization_lrc_from_download.take();
+        let pending_krc_lines = self.pending_krc_translation_lines.take(); // 再次检查，以防上面未处理
 
-        // 生成最终的目标格式输出文本
+        let (ind_trans_lrc, ind_roma_lrc) = {
+            // ind_ 表示 independent, 即独立生成的LRC
+            let metadata_store_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁
+
+            let pending_lyrics_data = lyrics_merger::PendingSecondaryLyrics {
+                translation_lrc: pending_trans_lrc,
+                romanization_qrc: pending_roma_qrc,
+                romanization_lrc: pending_roma_lrc,
+                krc_translation_lines: pending_krc_lines, // 传递KRC内嵌翻译（如果还存在）
+            };
+
+            // 调用歌词合并逻辑
+            lyrics_merger::merge_downloaded_secondary_lyrics(
+                &mut self.parsed_ttml_paragraphs, // 主歌词段落 (可变引用)
+                pending_lyrics_data,              // 待合并的次要歌词数据
+                &self.session_platform_metadata,  // 平台元数据 (用于辅助合并)
+                &metadata_store_guard,            // 元数据存储 (用于获取语言等信息)
+                self.source_format,               // 源格式 (用于判断是否需要特殊处理)
+            )
+        }; // 元数据存储锁在此释放
+
+        // 如果合并后生成了独立的翻译LRC行，并且当前没有手动加载的翻译LRC，则应用它
+        if let Some(lines) = ind_trans_lrc {
+            if self.loaded_translation_lrc.is_none() {
+                self.loaded_translation_lrc = Some(lines);
+            }
+        }
+        // 如果合并后生成了独立的罗马音LRC行，并且当前没有手动加载的罗马音LRC，则应用它
+        if let Some(lines) = ind_roma_lrc {
+            if self.loaded_romanization_lrc.is_none() {
+                self.loaded_romanization_lrc = Some(lines);
+            }
+        }
+
+        // 步骤 5: 如果主歌词段落存在，且翻译/罗马音LRC未手动加载，则尝试从主歌词段落生成它们
+        if self.parsed_ttml_paragraphs.is_some() {
+            let paragraphs_ref = self.parsed_ttml_paragraphs.as_ref().unwrap(); // 获取段落的不可变引用
+            if !paragraphs_ref.is_empty() {
+                let store_for_header_gen_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁 (用于生成LRC头部)
+
+                // 生成翻译LRC (如果未手动加载)
+                if self.loaded_translation_lrc.is_none() {
+                    let header = self.generate_specific_lrc_header_from_store(
+                        LrcContentType::Translation, // 指定为翻译类型
+                        &store_for_header_gen_guard,
+                    );
+                    match crate::lrc_generator::generate_lrc_from_paragraphs(
+                        paragraphs_ref,
+                        LrcContentType::Translation, // 从段落的翻译部分生成
+                    ) {
+                        Ok(lrc_text_body) => {
+                            // 只有当生成的LRC体或头部非空时才更新
+                            if !lrc_text_body.trim().is_empty() || !header.trim().is_empty() {
+                                let full_lrc_content = header + &lrc_text_body;
+                                self.display_translation_lrc_output =
+                                    if full_lrc_content.trim().is_empty() {
+                                        String::new()
+                                    } else {
+                                        full_lrc_content.trim_end_matches('\n').to_string() + "\n"
+                                    };
+                                // 尝试解析刚生成的LRC，以填充 loaded_translation_lrc
+                                match crate::lrc_parser::parse_lrc_text_to_lines(
+                                    &self.display_translation_lrc_output,
+                                ) {
+                                    Ok((display_lines, _bilingual_translations, _meta)) => {
+                                        self.loaded_translation_lrc = Some(display_lines);
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[HandleConvert] 解析自动生成的翻译LRC失败: {}",
+                                            e
+                                        );
+                                        self.loaded_translation_lrc = None;
+                                        self.display_translation_lrc_output.clear(); // 解析失败则清空
+                                    }
+                                }
+                            } else {
+                                // 如果生成内容为空，则清空
+                                self.display_translation_lrc_output.clear();
+                                self.loaded_translation_lrc = None;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("[HandleConvert] 生成翻译LRC失败: {}", e);
+                            self.display_translation_lrc_output.clear();
+                            self.loaded_translation_lrc = None;
+                        }
+                    }
+                }
+
+                // 生成罗马音LRC (如果未手动加载)
+                if self.loaded_romanization_lrc.is_none() {
+                    let header = self.generate_specific_lrc_header_from_store(
+                        LrcContentType::Romanization, // 指定为罗马音类型
+                        &store_for_header_gen_guard,
+                    );
+                    match crate::lrc_generator::generate_lrc_from_paragraphs(
+                        paragraphs_ref,
+                        LrcContentType::Romanization, // 从段落的罗马音部分生成 (如果TTML支持)
+                                                      // 注意：当前TTML结构可能没有直接的罗马音字段，
+                                                      // 此处可能需要调整逻辑，或依赖于翻译字段被用作罗马音的情况。
+                                                      // 假设 generate_lrc_from_paragraphs 能处理这种情况。
+                    ) {
+                        Ok(lrc_text_body) => {
+                            if !lrc_text_body.trim().is_empty() || !header.trim().is_empty() {
+                                let full_lrc_content = header + &lrc_text_body;
+                                self.display_romanization_lrc_output =
+                                    if full_lrc_content.trim().is_empty() {
+                                        String::new()
+                                    } else {
+                                        full_lrc_content.trim_end_matches('\n').to_string() + "\n"
+                                    };
+                                match crate::lrc_parser::parse_lrc_text_to_lines(
+                                    &self.display_romanization_lrc_output,
+                                ) {
+                                    Ok((display_lines, _bilingual_translations, _meta)) => {
+                                        self.loaded_romanization_lrc = Some(display_lines);
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "[HandleConvert] 解析自动生成的罗马音LRC失败: {}",
+                                            e
+                                        );
+                                        self.loaded_romanization_lrc = None;
+                                        self.display_romanization_lrc_output.clear();
+                                    }
+                                }
+                            } else {
+                                self.display_romanization_lrc_output.clear();
+                                self.loaded_romanization_lrc = None;
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("[HandleConvert] 生成罗马音LRC失败: {}", e);
+                            self.display_romanization_lrc_output.clear();
+                            self.loaded_romanization_lrc = None;
+                        }
+                    }
+                }
+            } // 段落非空检查结束
+        } // 主歌词段落存在检查结束
+
+        // 步骤 6: 将手动加载的翻译LRC和罗马音LRC（如果存在）合并回主歌词段落
+        // 这一步确保即使主歌词段落中已有翻译/罗马音，手动加载的也会覆盖或补充它们。
+        {
+            let metadata_store_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁
+            lyrics_merger::merge_manually_loaded_lrc_into_paragraphs(
+                &mut self.parsed_ttml_paragraphs,      // 主歌词段落 (可变引用)
+                self.loaded_translation_lrc.as_ref(),  // 手动加载的翻译LRC行
+                self.loaded_romanization_lrc.as_ref(), // 手动加载的罗马音LRC行
+                &metadata_store_guard,                 // 元数据存储
+            );
+        } // 元数据存储锁在此释放
+
+        // 步骤 7: 生成最终的目标格式输出文本
         self.generate_target_format_output();
+
+        // 步骤 8: 如果WebSocket服务器启用，发送更新后的歌词
+        if self.websocket_server_enabled {
+            self.send_lyrics_update_to_websocket();
+        }
 
         self.conversion_in_progress = false; // 标记转换结束
         log::info!("[Unilyric 处理转换] 转换流程执行完毕。");
     }
 
     /// 判断给定的歌词格式是否为逐行格式。
-    /// 逐行格式指的是歌词的每一行对应一个时间戳，而不是每个字或词。
-    /// 例如：LRC, LYL。
+    /// (这是一个静态辅助函数，虽然定义在 impl UniLyricApp 中，但可以移到更合适的地方，如 types.rs 或 utils.rs)
     pub fn source_format_is_line_timed(format: LyricFormat) -> bool {
-        matches!(format, LyricFormat::Lrc | LyricFormat::Lyl)
+        matches!(format, LyricFormat::Lrc | LyricFormat::Lyl) // LRC 和 LYL 是典型的逐行格式
     }
 
     /// 触发酷狗音乐KRC歌词的下载流程。
     pub fn trigger_kugou_download(&mut self) {
-        let query = self.kugou_query.trim().to_string();
+        let query = self.kugou_query.trim().to_string(); // 获取并清理查询字符串
         if query.is_empty() {
             log::error!("[Unilyric] 酷狗音乐下载：请输入有效的搜索内容。");
+            // 如果当前状态是下载中，也将其重置为空闲
             let mut download_status_locked = self.kugou_download_state.lock().unwrap();
-            // 如果正在下载中，也重置为空闲，避免UI卡顿
             if matches!(*download_status_locked, KrcDownloadState::Downloading) {
                 *download_status_locked = KrcDownloadState::Idle;
             }
             return;
         }
 
-        // 设置下载状态为Downloading
+        // 设置下载状态为“下载中”
         {
             let mut download_status_locked = self.kugou_download_state.lock().unwrap();
             *download_status_locked = KrcDownloadState::Downloading;
         }
 
-        // 克隆共享状态和HTTP客户端，用于新线程
+        // 克隆需要在新线程中使用的数据
         let state_clone = Arc::clone(&self.kugou_download_state);
         let client_clone = self.http_client.clone();
 
-        // 启动新线程执行网络请求
+        // 创建新线程执行异步下载任务
         std::thread::spawn(move || {
+            // 为新线程创建 Tokio 运行时
             let rt = match tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -2867,24 +2237,28 @@ impl UniLyricApp {
                 }
             };
 
+            // 在 Tokio 运行时中执行异步代码块
             rt.block_on(async {
                 log::info!("[Unilyric 酷狗下载线程] 正在获取 '{}' 的KRC歌词...", query);
+                // 调用酷狗歌词获取器的下载函数
                 match kugou_lyrics_fetcher::fetch_lyrics_for_song_async(&client_clone, &query).await
                 {
                     Ok(fetched_data) => {
+                        // 下载成功
                         log::info!(
                             "[Unilyric] 酷狗音乐下载成功：已获取 {} - {}",
                             fetched_data.song_name.as_deref().unwrap_or("未知歌名"),
                             fetched_data.artists_name.join("/")
                         );
                         let mut status_lock = state_clone.lock().unwrap();
-                        *status_lock = KrcDownloadState::Success(fetched_data);
+                        *status_lock = KrcDownloadState::Success(fetched_data); // 更新状态为成功
                     }
                     Err(e) => {
+                        // 下载失败
                         let error_message = format!("下载失败: {}", e);
                         log::error!("[Unilyric] 酷狗歌词下载失败: {}", error_message);
                         let mut status_lock = state_clone.lock().unwrap();
-                        *status_lock = KrcDownloadState::Error(error_message);
+                        *status_lock = KrcDownloadState::Error(error_message); // 更新状态为错误
                     }
                 }
             });
@@ -2894,526 +2268,366 @@ impl UniLyricApp {
     /// 为特定类型的LRC内容（翻译或罗马音）生成LRC文件头部元数据字符串。
     /// 例如 `[ti:歌名]\n[ar:歌手]\n[language:zh]\n`
     ///
-    /// # Arguments
+    /// # 参数
     /// * `content_type` - `LrcContentType`，指示是为翻译还是罗马音生成头部。
+    /// * `store` - `MetadataStore` 的引用，用于获取元数据。
     ///
-    /// # Returns
+    /// # 返回
     /// `String` - 生成的LRC头部字符串，每条元数据占一行。
-    fn generate_specific_lrc_header(&self, content_type: LrcContentType) -> String {
-        let mut header = String::new(); // 初始化空字符串用于构建头部
-        let store = self.metadata_store.lock().unwrap(); // 获取元数据存储的锁
-        let mut lang_to_use: Option<String> = None; // 用于存储最终要使用的语言代码
+    pub fn generate_specific_lrc_header_from_store(
+        &self, // self 在此函数中可能未使用，但保留以与类方法一致，或将来可能使用 self 的配置
+        content_type: LrcContentType,
+        store: &MetadataStore, // 从外部传入元数据存储的引用
+    ) -> String {
+        let mut header = String::new(); // 初始化空的头部字符串
+        let mut lang_to_use: Option<String> = None; // 用于存储要写入的语言代码
 
-        // 特别处理翻译类型的语言代码
+        // 根据内容类型确定语言代码的来源
         if content_type == LrcContentType::Translation {
-            // 优先级1: 尝试从已解析的主歌词段落的翻译信息中提取语言代码。
-            // 这适用于当翻译已合并到主歌词，并且主歌词段落中记录了翻译语言的情况。
+            // 如果是翻译LRC
+            // 优先从TTML段落的翻译部分获取语言代码
             if let Some(paragraphs) = &self.parsed_ttml_paragraphs {
                 for p in paragraphs {
                     if let Some((_text, Some(lang_code))) = &p.translation {
                         if !lang_code.is_empty() {
                             lang_to_use = Some(lang_code.clone());
-                            break; // 找到第一个非空语言代码即可
+                            break; // 找到第一个非空语言代码即停止
                         }
                     }
                 }
             }
-            // 优先级2: 如果段落中未找到，尝试从元数据存储中获取专门为“翻译”指定的语言代码。
-            // (假设存在一个如 "translation_language" 的自定义元数据键)
+            // 如果TTML段落中没有，则尝试从元数据存储中获取 "translation_language"
             if lang_to_use.is_none() {
                 lang_to_use = store
-                    .get_single_value_by_str("translation_language")
+                    .get_single_value_by_str("translation_language") // 自定义键
                     .cloned();
             }
         }
-        // 优先级3 (或罗马音的默认逻辑): 如果上述都未找到语言代码，或者内容类型不是翻译，
-        // 则尝试使用全局的元数据存储中的 "language" 标签。
+        // 如果上述都未找到，或者不是翻译类型，则尝试获取通用的 "language" 元数据
         if lang_to_use.is_none() {
             lang_to_use = store
-                .get_single_value(&CanonicalMetadataKey::Language)
+                .get_single_value(&crate::types::CanonicalMetadataKey::Language) // 标准语言键
                 .cloned();
         }
-        // 如果最终确定了语言代码，则将其添加到头部
+
+        // 如果获取到了语言代码，则写入LRC头部
         if let Some(lang) = lang_to_use {
             if !lang.is_empty() {
-                // 使用 writeln! 宏格式化并写入，它会自动添加换行符
-                let _ = writeln!(header, "[language:{}]", lang.trim()); // trim() 以防语言代码前后有意外空格
+                let _ = writeln!(header, "[language:{}]", lang.trim()); // 写入 [language:xx]
             }
         }
 
-        // 定义标准LRC标签与程序内部元数据规范键的映射关系
+        // 定义LRC标准标签与规范元数据键的映射关系
         let lrc_tags_map = [
-            (CanonicalMetadataKey::Title, "ti"),      // 歌名
-            (CanonicalMetadataKey::Artist, "ar"),     // 歌手
+            (CanonicalMetadataKey::Title, "ti"),      // 标题
+            (CanonicalMetadataKey::Artist, "ar"),     // 艺术家
             (CanonicalMetadataKey::Album, "al"),      // 专辑
-            (CanonicalMetadataKey::Author, "by"),     // LRC制作者 (对应 Author)
+            (CanonicalMetadataKey::Author, "by"),     // LRC文件创建者/歌词作者
             (CanonicalMetadataKey::Offset, "offset"), // 时间偏移
-            (CanonicalMetadataKey::Length, "length"), // 歌曲长度
-            (CanonicalMetadataKey::Editor, "re"),     // 使用的编辑器或程序
-            (CanonicalMetadataKey::Version, "ve"),    // 程序版本
-                                                      // 可以根据需要添加更多映射，例如自定义元数据到特定LRC标签
+            (CanonicalMetadataKey::Length, "length"), // 歌曲长度 (较少使用)
+            (CanonicalMetadataKey::Editor, "re"),     // LRC编辑器
+            (CanonicalMetadataKey::Version, "ve"),    // LRC版本
         ];
 
-        // 遍历映射表，从元数据存储中获取值并添加到头部
+        // 遍历映射关系，从元数据存储中获取值并写入头部
         for (canonical_key, lrc_tag_name) in lrc_tags_map.iter() {
-            // 尝试获取该规范键对应的所有值 (元数据存储可能为一个键存储多个值)
             if let Some(values_vec) = store.get_multiple_values(canonical_key) {
+                // 获取该键的所有值
                 if !values_vec.is_empty() {
-                    // 将所有非空值用 "/" 连接起来
+                    // 将多个值用 "/" 连接 (LRC标准通常只支持单个值，但这里做兼容处理)
                     let combined_value = values_vec
                         .iter()
-                        .map(|s| s.trim()) // 去除每个值的前后空格
-                        .filter(|s| !s.is_empty()) // 过滤掉处理后的空值
+                        .map(|s| s.trim()) // 去除首尾空格
+                        .filter(|s| !s.is_empty()) // 过滤空值
                         .collect::<Vec<&str>>()
-                        .join("/"); // 用斜杠连接多个值
+                        .join("/");
                     if !combined_value.is_empty() {
-                        let _ = writeln!(header, "[{}:{}]", lrc_tag_name, combined_value);
+                        if writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err() {
+                            log::error!("[生成LRC头部] 写入 {} 标签失败。", lrc_tag_name);
+                        }
                     }
                 }
             }
         }
-        header // 返回构建好的LRC头部字符串
+        header // 返回生成的头部字符串
     }
 
     /// 根据当前的应用状态（已解析的TTML段落、元数据等）生成目标格式的歌词文本，
     /// 并更新主输出框和相关的LRC预览面板。
     pub fn generate_target_format_output(&mut self) {
-        // 防止在下载过程中重复调用此函数 (如果输出框已显示下载提示)
-        if self.conversion_in_progress && self.output_text.contains("正在下载") {
-            log::warn!("[Unilyric 生成目标输出] 检测到正在下载，已跳过重复调用生成函数。");
-            return;
-        }
-        // conversion_in_progress 应该在 handle_convert 的开始和结束处管理，
-        // 这里不再重复设置，假设调用此函数时，状态是合适的。
-
-        // 获取用于生成的TTML段落列表的克隆
-        let paragraphs_for_gen: Vec<TtmlParagraph>;
-        if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
-            paragraphs_for_gen = paras_vec.clone();
-            log::info!(
-                "[Unilyric 生成目标输出] 准备从 {} 个已解析段落生成输出。",
-                paragraphs_for_gen.len()
-            );
-        } else {
-            // 如果没有已解析的段落 (例如，只有元数据，或者清空了输入)
-            log::warn!(
-                "[Unilyric 生成目标输出] self.parsed_ttml_paragraphs 为 None。将使用空段落列表生成。"
-            );
-            paragraphs_for_gen = Vec::new(); // 使用空列表，某些格式可能仍能生成元数据部分
-        };
-
-        // 为翻译和罗马音LRC预览生成头部元数据
-        let translation_lrc_header = self.generate_specific_lrc_header(LrcContentType::Translation);
-        let romanization_lrc_header =
-            self.generate_specific_lrc_header(LrcContentType::Romanization);
-        // 获取元数据存储的锁，供后续所有生成器使用，避免多次加锁
-        let store_guard_for_lrc_gen = self.metadata_store.lock().unwrap();
-
-        // --- 更新LRC预览面板的逻辑 ---
-
-        // 1. 生成翻译LRC预览 (self.display_translation_lrc_output)
-        if let Some(loaded_lines) = &self.loaded_translation_lrc {
-            // 如果用户手动加载了翻译LRC文件
-            let mut temp_output = translation_lrc_header.clone();
-            for l in loaded_lines {
-                let _ = writeln!(
-                    temp_output,
-                    "{}{}",
-                    crate::utils::format_lrc_time_ms(l.timestamp_ms),
-                    l.text.trim()
-                );
-            }
-            let trimmed_preview = temp_output.trim_end_matches('\n'); // 去除末尾可能的多余换行
-            // 只有当预览内容或头部非空时，才添加最后的换行符，保持格式整洁
-            self.display_translation_lrc_output =
-                if trimmed_preview.is_empty() && translation_lrc_header.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!("{}\n", trimmed_preview)
-                };
-        } else if !paragraphs_for_gen.is_empty() {
-            // 如果没有手动加载的，但有主歌词段落，则尝试从主段落生成翻译LRC
-            match crate::lrc_generator::generate_lrc_from_paragraphs(
-                &paragraphs_for_gen,
-                LrcContentType::Translation,
-            ) {
-                Ok(text) => self.display_translation_lrc_output = translation_lrc_header + &text, // 拼接头部和内容
-                Err(e) => {
-                    self.display_translation_lrc_output.clear();
-                    log::error!("生成翻译LRC预览失败: {}", e);
-                }
-            }
-        } else {
-            // 既无手动加载，也无主段落，则预览只显示头部（如果头部有内容）
-            self.display_translation_lrc_output = if !translation_lrc_header.trim().is_empty() {
-                translation_lrc_header.trim_end_matches('\n').to_string() + "\n"
-            } else {
-                String::new()
-            };
-        }
-
-        // 2. 生成罗马音LRC预览 (self.display_romanization_lrc_output) - 逻辑与翻译LRC类似
-        if let Some(loaded_lines) = &self.loaded_romanization_lrc {
-            let mut temp_output = romanization_lrc_header.clone();
-            for l in loaded_lines {
-                let _ = writeln!(
-                    temp_output,
-                    "{}{}",
-                    crate::utils::format_lrc_time_ms(l.timestamp_ms),
-                    l.text.trim()
-                );
-            }
-            let trimmed_preview = temp_output.trim_end_matches('\n');
-            self.display_romanization_lrc_output =
-                if trimmed_preview.is_empty() && romanization_lrc_header.trim().is_empty() {
-                    String::new()
-                } else {
-                    format!("{}\n", trimmed_preview)
-                };
-        } else if !paragraphs_for_gen.is_empty() {
-            match crate::lrc_generator::generate_lrc_from_paragraphs(
-                &paragraphs_for_gen,
-                LrcContentType::Romanization,
-            ) {
-                Ok(text) => self.display_romanization_lrc_output = romanization_lrc_header + &text,
-                Err(e) => {
-                    self.display_romanization_lrc_output.clear();
-                    log::error!("生成罗马音LRC预览失败: {}", e);
-                }
-            }
-        } else {
-            self.display_romanization_lrc_output = if !romanization_lrc_header.trim().is_empty() {
-                romanization_lrc_header.trim_end_matches('\n').to_string() + "\n"
-            } else {
-                String::new()
-            };
-        }
-
-        // --- 主输出生成逻辑 ---
-        // 根据选择的目标格式 (self.target_format) 调用相应的生成器函数
-        // store_guard_for_lrc_gen (元数据存储的锁) 已在上面获取，传递给生成器
+        // 根据选择的目标格式，调用相应的生成函数
         let result: Result<String, ConvertError> = match self.target_format {
-            LyricFormat::Lrc => {
-                // 生成LRC格式
-                crate::lrc_generator::generate_main_lrc_from_paragraphs(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
-                )
-            }
             LyricFormat::Ttml => {
-                // 生成TTML格式
-                // 参数: 段落, 元数据, 时间模式("Line"或"Word"), 是否格式化, 是否用于JSON内嵌
-                crate::ttml_generator::generate_ttml_from_paragraphs(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
-                    if self.source_is_line_timed {
-                        "Line"
+                // 生成 TTML 格式
+                if self.source_format == LyricFormat::Lrc {
+                    // 如果源是LRC，则生成逐行定时的TTML
+                    let paragraphs_to_use: Vec<TtmlParagraph>;
+                    if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                        paragraphs_to_use = paras_vec.clone();
                     } else {
-                        "Word"
-                    }, // 根据源是否逐行决定TTML时间模式
-                    Some(
-                        self.detected_formatted_ttml_source
-                            && (self.source_format == LyricFormat::Ttml
-                                || self.source_format == LyricFormat::Json),
-                    ), // 如果源是格式化的TTML/JSON，则目标TTML也格式化
-                    false, // false表示不用于JSON内嵌，是独立的TTML文件
+                        paragraphs_to_use = Vec::new(); // 如果没有解析段落，则使用空Vec
+                    }
+                    let store_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁
+                    crate::ttml_generator::generate_line_timed_ttml_from_paragraphs(
+                        &paragraphs_to_use,
+                        &store_guard,
+                    )
+                } else {
+                    // 其他源格式，生成标准TTML (可能是逐字或逐行，取决于 source_is_line_timed)
+                    let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                    if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                        paragraphs_for_gen_local = paras_vec.clone();
+                    } else {
+                        paragraphs_for_gen_local = Vec::new();
+                    };
+                    let store_guard = self.metadata_store.lock().unwrap();
+                    crate::ttml_generator::generate_ttml_from_paragraphs(
+                        &paragraphs_for_gen_local,
+                        &store_guard,
+                        if self.source_is_line_timed {
+                            // 根据源是否逐行定时决定TTML的timingMode
+                            "Line"
+                        } else {
+                            "Word"
+                        },
+                        // 是否使用Apple Music格式化TTML的检测结果
+                        Some(
+                            self.detected_formatted_ttml_source
+                                && (self.source_format == LyricFormat::Ttml // 源是TTML
+                                    || self.source_format == LyricFormat::Json), // 或源是JSON (通常内含TTML)
+                        ),
+                        false, // false 表示不是为Apple Music JSON内嵌TTML生成
+                    )
+                }
+            }
+            LyricFormat::Lrc => {
+                // 生成 LRC 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
+                crate::lrc_generator::generate_main_lrc_from_paragraphs(
+                    // 从主歌词部分生成LRC
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                 )
             }
             LyricFormat::Ass => {
-                // 生成ASS格式
-                crate::ass_generator::generate_ass(
-                    paragraphs_for_gen.to_vec(),
-                    &store_guard_for_lrc_gen,
-                )
+                // 生成 ASS 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
+                crate::ass_generator::generate_ass(paragraphs_for_gen_local.to_vec(), &store_guard)
             }
             LyricFormat::Json => {
-                // 生成JSON格式 (Apple Music)
+                // 生成 Apple Music JSON 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 let output_timing_mode_for_json_ttml = if self.source_is_line_timed {
                     "Line"
                 } else {
                     "Word"
                 };
-                // 首先生成内嵌的TTML字符串
+                // 先生成内嵌的TTML字符串
                 crate::ttml_generator::generate_ttml_from_paragraphs(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                     output_timing_mode_for_json_ttml,
                     Some(
+                        // 是否使用Apple Music格式化TTML的检测结果
                         self.detected_formatted_ttml_source
                             && (self.source_format == LyricFormat::Ttml
                                 || self.source_format == LyricFormat::Json),
                     ),
-                    true, // true表示此TTML用于JSON内嵌，不包含翻译和罗马音
+                    true, // true 表示为Apple Music JSON内嵌TTML生成 (可能有特殊处理)
                 )
                 .and_then(|ttml_json_content| {
                     // 如果TTML生成成功
-                    // 从元数据获取Apple Music ID，如果找不到则使用默认值
-                    let apple_music_id_from_store = store_guard_for_lrc_gen
+                    // 获取Apple Music ID
+                    let apple_music_id_from_store = store_guard
                         .get_single_value(&CanonicalMetadataKey::AppleMusicId)
                         .cloned()
-                        .unwrap_or_else(|| "unknown_id".to_string());
-                    // 构建Apple Music JSON所需的结构体
+                        .unwrap_or_else(|| "unknown_id".to_string()); // 如果没有则使用默认ID
+                    // 构建Apple Music JSON结构
                     let play_params = crate::types::AppleMusicPlayParams {
                         id: apple_music_id_from_store.clone(),
-                        kind: "lyric".to_string(),
-                        catalog_id: apple_music_id_from_store.clone(),
-                        display_type: 2,
+                        kind: "lyric".to_string(), // 通常是 "lyric" 或 "song"
+                        catalog_id: apple_music_id_from_store.clone(), // 通常与id相同
+                        display_type: 2,           // 某种显示类型标记
                     };
                     let attributes = crate::types::AppleMusicAttributes {
-                        ttml: ttml_json_content,
+                        ttml: ttml_json_content, // 内嵌的TTML内容
                         play_params,
                     };
                     let data_object = crate::types::AppleMusicDataObject {
                         id: apple_music_id_from_store,
-                        data_type: "syllable-lyrics".to_string(),
+                        data_type: "syllable-lyrics".to_string(), // 数据类型
                         attributes,
                     };
                     let root = crate::types::AppleMusicRoot {
-                        data: vec![data_object],
+                        data: vec![data_object], // 包含单个数据对象的数组
                     };
-                    // 将结构体序列化为JSON字符串
-                    serde_json::to_string(&root).map_err(ConvertError::JsonParse) // 映射serde错误到自定义错误类型
+                    // 序列化为JSON字符串
+                    serde_json::to_string(&root).map_err(ConvertError::JsonParse)
                 })
             }
             LyricFormat::Lys => {
-                // 生成LYS格式
+                // 生成 LYS 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 crate::lys_generator::generate_lys_from_ttml_data(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
-                    true,
-                ) // true表示包含头部元数据
+                    &paragraphs_for_gen_local,
+                    &store_guard,
+                    true, // true 表示包含时间戳 (LYS标准格式)
+                )
             }
             LyricFormat::Qrc => {
-                // 生成QRC格式
+                // 生成 QRC 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 crate::qrc_generator::generate_qrc_from_ttml_data(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                 )
             }
             LyricFormat::Yrc => {
-                // 生成YRC格式
+                // 生成 YRC 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 crate::yrc_generator::generate_yrc_from_ttml_data(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                 )
             }
             LyricFormat::Lyl => {
-                // 生成LYL格式
-                crate::lyricify_lines_generator::generate_from_ttml_data(&paragraphs_for_gen)
+                // 生成 LYL (Lyricify Lines) 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                // LYL格式通常不依赖外部元数据存储，直接从TTML段落转换
+                crate::lyricify_lines_generator::generate_from_ttml_data(&paragraphs_for_gen_local)
             }
             LyricFormat::Spl => {
-                // 生成SPL格式
+                // 生成 SPL (Smalyrics) 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 crate::spl_generator::generate_spl_from_ttml_data(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                 )
             }
             LyricFormat::Lqe => {
-                // 生成LQE格式
-                // LQE格式需要主歌词、翻译LRC、罗马音LRC等多种信息，以及元数据。
-                // 下面准备这些信息传递给LQE生成器。
-                let mut lqe_extracted_translation_lrc_content: Option<String> = None;
-                let mut lqe_translation_language: Option<String> = None;
-                let mut lqe_extracted_romanization_lrc_content: Option<String> = None;
-                let mut lqe_romanization_language: Option<String> = None;
-
-                // --- 准备翻译LRC内容和语言代码 ---
-                if let Some(loaded_lines) = &self.loaded_translation_lrc {
-                    // 如果用户手动加载了翻译LRC
-                    let mut lrc_text_body = String::new();
-                    for l_line in loaded_lines {
-                        let _ = writeln!(
-                            lrc_text_body,
-                            "{}{}",
-                            crate::utils::format_lrc_time_ms(l_line.timestamp_ms),
-                            l_line.text.trim()
-                        );
-                    }
-                    if !lrc_text_body.trim().is_empty() {
-                        lqe_extracted_translation_lrc_content =
-                            Some(lrc_text_body.trim_end_matches('\n').to_string() + "\n");
-                    }
-                    // 尝试从元数据存储中获取翻译语言代码
-                    lqe_translation_language = store_guard_for_lrc_gen
-                        .get_single_value_by_str("translation_language")
-                        .cloned()
-                        .or_else(|| {
-                            store_guard_for_lrc_gen
-                                .get_single_value(&CanonicalMetadataKey::Language)
-                                .cloned()
-                        });
-                    log::info!(
-                        "[LQE生成准备] 使用手动加载的翻译LRC。语言: {:?}",
-                        lqe_translation_language
-                    );
+                // 生成 LQE 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
                 } else {
-                    // 没有手动加载的翻译LRC，尝试从主歌词段落 (paragraphs_for_gen) 生成
-                    if paragraphs_for_gen.iter().any(|p| {
-                        p.translation.is_some()
-                            && p.translation
-                                .as_ref()
-                                .is_some_and(|(t, _)| !t.trim().is_empty())
-                    }) {
-                        match crate::lrc_generator::generate_lrc_from_paragraphs(
-                            &paragraphs_for_gen,
-                            LrcContentType::Translation,
-                        ) {
-                            Ok(generated_lrc) if !generated_lrc.trim().is_empty() => {
-                                lqe_extracted_translation_lrc_content = Some(generated_lrc);
-                                // 尝试从段落的翻译信息中或元数据存储中获取语言代码
-                                lqe_translation_language = paragraphs_for_gen
-                                    .iter()
-                                    .find_map(|p| {
-                                        p.translation
-                                            .as_ref()
-                                            .and_then(|(_, lang_opt)| lang_opt.clone())
-                                            .filter(|s| !s.is_empty())
-                                    })
-                                    .or_else(|| {
-                                        store_guard_for_lrc_gen
-                                            .get_single_value_by_str("translation_language")
-                                            .cloned()
-                                    })
-                                    .or_else(|| {
-                                        store_guard_for_lrc_gen
-                                            .get_single_value(&CanonicalMetadataKey::Language)
-                                            .cloned()
-                                    });
-                                log::info!(
-                                    "[LQE生成准备] 从TTML段落生成翻译LRC。语言: {:?}",
-                                    lqe_translation_language
-                                );
-                            }
-                            Ok(_) => log::info!("[LQE生成准备] 从TTML段落生成的翻译LRC为空。"),
-                            Err(e) => log::error!("[LQE生成准备] 从TTML段落生成翻译LRC失败: {}", e),
-                        }
-                    } else {
-                        log::info!("[LQE生成准备] TTML段落中无翻译信息，翻译LRC部分将为空。");
-                    }
-                }
-
-                // --- 准备罗马音LRC内容和语言代码 (逻辑与翻译LRC类似) ---
-                if let Some(loaded_lines) = &self.loaded_romanization_lrc {
-                    let mut lrc_text_body = String::new();
-                    for l_line in loaded_lines {
-                        let _ = writeln!(
-                            lrc_text_body,
-                            "{}{}",
-                            crate::utils::format_lrc_time_ms(l_line.timestamp_ms),
-                            l_line.text.trim()
-                        );
-                    }
-                    if !lrc_text_body.trim().is_empty() {
-                        lqe_extracted_romanization_lrc_content =
-                            Some(lrc_text_body.trim_end_matches('\n').to_string() + "\n");
-                    }
-                    lqe_romanization_language = store_guard_for_lrc_gen
-                        .get_single_value_by_str("romanization_language")
-                        .cloned();
-                    log::info!(
-                        "[LQE生成准备] 使用手动加载的罗马音LRC。语言: {:?}",
-                        lqe_romanization_language
-                    );
-                } else if paragraphs_for_gen.iter().any(|p| {
-                    p.romanization.is_some()
-                        && p.romanization
-                            .as_ref()
-                            .is_some_and(|r| !r.trim().is_empty())
-                }) {
-                    match crate::lrc_generator::generate_lrc_from_paragraphs(
-                        &paragraphs_for_gen,
-                        LrcContentType::Romanization,
-                    ) {
-                        Ok(generated_lrc) if !generated_lrc.trim().is_empty() => {
-                            lqe_extracted_romanization_lrc_content = Some(generated_lrc);
-                            lqe_romanization_language = store_guard_for_lrc_gen
-                                .get_single_value_by_str("romanization_language")
-                                .cloned();
-                            log::info!(
-                                "[LQE生成准备] 从TTML段落生成罗马音LRC。语言: {:?}",
-                                lqe_romanization_language
-                            );
-                        }
-                        Ok(_) => log::info!("[LQE生成准备] 从TTML段落生成的罗马音LRC为空。"),
-                        Err(e) => {
-                            log::error!("[LQE生成准备] 从TTML段落生成罗马音LRC失败: {}", e)
-                        }
-                    }
-                } else {
-                    log::info!("[LQE生成准备] TTML段落中无罗马音信息，罗马音LRC部分将为空。");
-                }
-
-                // 构建 ParsedSourceData 实例，作为传递给 LQE 生成器的数据包
-                let source_data_for_lqe_gen = ParsedSourceData {
-                    paragraphs: paragraphs_for_gen.to_vec(), // 主歌词段落
-                    language_code: store_guard_for_lrc_gen
-                        .get_single_value(&CanonicalMetadataKey::Language)
-                        .cloned(), // 全局语言代码
-                    songwriters: store_guard_for_lrc_gen
-                        .get_multiple_values(&CanonicalMetadataKey::Songwriter)
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
+                // 为LQE生成器准备 ParsedSourceData 结构，填充所需信息
+                let source_data_for_lqe_gen = crate::types::ParsedSourceData {
+                    paragraphs: paragraphs_for_gen_local.to_vec(),
+                    language_code: store_guard // 从元数据存储获取语言代码
+                        .get_single_value(&crate::types::CanonicalMetadataKey::Language)
+                        .cloned(),
+                    songwriters: store_guard // 获取词曲作者
+                        .get_multiple_values(&crate::types::CanonicalMetadataKey::Songwriter)
                         .cloned()
-                        .unwrap_or_default(), // 词曲作者
-                    agent_names: self
-                        .session_platform_metadata // 从会话元数据中提取演唱者信息 (v1, v2等)
+                        .unwrap_or_default(),
+                    agent_names: self // 获取角色名 (通常来自ASS或平台元数据)
+                        .session_platform_metadata
                         .iter()
-                        .filter(|(k, _)| {
+                        .filter(|(k, _)| { // 过滤出符合角色ID格式的键 (如 v1, v1.01)
                             k.starts_with('v')
-                                && (k.len() == 2 || k.len() == 5)
-                                && k[1..].chars().all(char::is_numeric)
+                                && (k.len() == 2 || k.len() == 5) // 长度为2 (v1) 或 5 (v1.01)
+                                && k[1..].chars().all(|c| c.is_numeric() || c == '.') // 后续字符为数字或点
                         })
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
-                    apple_music_id: store_guard_for_lrc_gen
-                        .get_single_value(&CanonicalMetadataKey::AppleMusicId)
+                    apple_music_id: store_guard // 获取Apple Music ID
+                        .get_single_value(&crate::types::CanonicalMetadataKey::AppleMusicId)
                         .cloned()
-                        .unwrap_or_default(), // Apple Music ID
-                    general_metadata: vec![], // LQE的全局元数据由metadata_store直接提供给生成器，这里不重复传递
-                    markers: self.current_markers.clone(), // 标记
-                    is_line_timed_source: self.source_is_line_timed, // 是否逐行格式
-                    raw_ttml_from_input: self.current_raw_ttml_from_input.clone(), // 原始TTML输入 (如果适用)
-                    detected_formatted_input: Some(self.detected_formatted_ttml_source), // 是否检测到格式化
-                    _source_translation_language: None, // LQE不直接使用这个字段
-
-                    // 填充准备好的翻译和罗马音LRC内容及语言
-                    lqe_extracted_translation_lrc_content,
-                    lqe_translation_language,
-                    lqe_extracted_romanization_lrc_content,
-                    lqe_romanization_language,
-
-                    // 根据源格式决定LQE主歌词部分的格式 (是LRC还是逐字)
-                    lqe_main_lyrics_as_lrc: self.source_format == LyricFormat::Lrc,
-                    // 如果源是LRC，并且有直接的LRC主歌词内容 (例如从网易云下载的)，则使用它
-                    lqe_direct_main_lrc_content: if self.source_format == LyricFormat::Lrc
-                        && self.direct_netease_main_lrc_content.is_some()
-                    {
-                        self.direct_netease_main_lrc_content.clone()
-                    } else if self.source_format == LyricFormat::Lrc
-                        && !self.input_text.is_empty()
-                        && self
-                            .parsed_ttml_paragraphs
-                            .as_ref()
-                            .is_some_and(|p| p.is_empty())
-                    {
-                        // 边缘情况：源是LRC，输入框有内容，但未解析出段落（可能是纯元数据LRC）。
-                        // 此时，如果希望LQE的主歌词部分是这个原始LRC，可以在这里设置。
-                        // 当前选择不使用，优先从段落生成或使用 direct_netease_main_lrc_content。
-                        None
+                        .unwrap_or_default(),
+                    markers: self.current_markers.clone(), // 当前标记
+                    is_line_timed_source: self.source_is_line_timed, // 源是否逐行定时
+                    raw_ttml_from_input: self.current_raw_ttml_from_input.clone(), // 原始TTML输入
+                    detected_formatted_input: Some(self.detected_formatted_ttml_source), // 是否检测到格式化输入
+                    // LQE特定字段，用于存储翻译和罗马音的LRC内容及其语言
+                    lqe_extracted_translation_lrc_content: self
+                        .loaded_translation_lrc // 如果加载了翻译LRC
+                        .as_ref()
+                        .map(|_| self.display_translation_lrc_output.clone()), // 则使用其UI显示文本
+                    lqe_translation_language: store_guard // 翻译语言
+                        .get_single_value_by_str("translation_language")
+                        .cloned(),
+                    lqe_extracted_romanization_lrc_content: self
+                        .loaded_romanization_lrc // 如果加载了罗马音LRC
+                        .as_ref()
+                        .map(|_| self.display_romanization_lrc_output.clone()), // 则使用其UI显示文本
+                    lqe_romanization_language: store_guard // 罗马音语言
+                        .get_single_value_by_str("romanization_language")
+                        .cloned(),
+                    lqe_main_lyrics_as_lrc: self.source_format == LyricFormat::Lrc, // 主歌词源是否为LRC
+                    lqe_direct_main_lrc_content: if self.source_format == LyricFormat::Lrc { // 如果主歌词源是LRC
+                        self.direct_netease_main_lrc_content.clone() // 使用直接获取的LRC内容 (特殊情况)
                     } else {
                         None
                     },
+                    ..Default::default() // 其他字段使用默认值
                 };
-
-                // 调用LQE生成器
                 crate::lqe_generator::generate_lqe_from_intermediate_data(
                     &source_data_for_lqe_gen,
-                    &store_guard_for_lrc_gen,
+                    &store_guard,
                 )
             }
             LyricFormat::Krc => {
-                // 生成KRC格式
+                // 生成 KRC 格式
+                let paragraphs_for_gen_local: Vec<TtmlParagraph>;
+                if let Some(ref paras_vec) = self.parsed_ttml_paragraphs {
+                    paragraphs_for_gen_local = paras_vec.clone();
+                } else {
+                    paragraphs_for_gen_local = Vec::new();
+                };
+                let store_guard = self.metadata_store.lock().unwrap();
                 crate::krc_generator::generate_krc_from_ttml_data(
-                    &paragraphs_for_gen,
-                    &store_guard_for_lrc_gen,
+                    &paragraphs_for_gen_local,
+                    &store_guard,
                 )
             }
         };
@@ -3421,12 +2635,8 @@ impl UniLyricApp {
         // 处理生成结果
         match result {
             Ok(text) => {
-                // 生成成功
-                self.output_text = text; // 更新主输出框内容
-                log::info!(
-                    "[Unilyric 生成目标输出] 已成功生成目标格式 {:?} 的输出。",
-                    self.target_format.to_string()
-                );
+                // 生成成功，更新输出文本框
+                self.output_text = text;
             }
             Err(e) => {
                 // 生成失败
@@ -3435,492 +2645,760 @@ impl UniLyricApp {
                     self.target_format.to_string(),
                     e
                 );
-                self.output_text.clear(); // 清空输出框
-                // 可以在这里向用户显示更友好的错误提示，例如通过一个状态栏或对话框
+                self.output_text.clear(); // 清空输出文本框
+                // 显示错误提示给用户
+                self.toasts.add(egui_toast::Toast {
+                    text: format!("生成 {} 失败: {}", self.target_format, e).into(),
+                    kind: egui_toast::ToastKind::Error,
+                    options: egui_toast::ToastOptions::default()
+                        .duration_in_seconds(3.0)
+                        .show_icon(true),
+                    style: Default::default(),
+                });
             }
         }
-        // 确保在函数结束前释放元数据存储的锁 (如果 store_guard_for_lrc_gen 在这里仍然存活)
-        // 由于 store_guard_for_lrc_gen 是在函数开始时获取的，它会在函数结束时自动释放。
     }
 
-    /// 辅助方法：将QRC格式的次要歌词内容（主要是罗马音）合并到主歌词段落中。
-    /// 匹配逻辑：对于每个主歌词段落，查找第一个开始时间与之在指定容差内匹配的QRC行。
-    /// 一旦QRC行被匹配，则不再用于后续主歌词段落。
-    ///
-    /// # Arguments
-    /// * `primary_paragraphs` - 可变的主歌词段落列表 (`Vec<TtmlParagraph>`)。
-    /// * `qrc_content` - 包含次要歌词的完整QRC文本字符串。
-    /// * `content_type` - 指示QRC内容是翻译还是罗马音 (主要用于日志和潜在的未来扩展，目前QRC主要用于罗马音)。
-    ///
-    /// # Returns
-    /// `Result<(), ConvertError>` - 如果解析QRC内容时发生错误，则返回Err。
-    fn merge_secondary_qrc_into_paragraphs_internal(
-        primary_paragraphs: &mut [TtmlParagraph],
-        qrc_content: &str,
-        content_type: LrcContentType, // 虽然QRC主要用于罗马音，但保留类型以便日志区分
-    ) -> Result<(), ConvertError> {
-        // 如果没有QRC内容或没有主歌词段落，则无需操作
-        if qrc_content.is_empty() || primary_paragraphs.is_empty() {
-            return Ok(());
+    /// 启动进度模拟定时器（如果需要）。
+    /// 定时器用于在连接到 AMLL Player 且媒体正在播放时，模拟播放进度并发送时间更新。
+    pub fn start_progress_timer_if_needed(&mut self) {
+        // 获取连接器是否启用
+        let connector_enabled = self.media_connector_config.lock().unwrap().enabled;
+        // 检查 WebSocket 是否已连接
+        let ws_connected =
+            *self.media_connector_status.lock().unwrap() == WebsocketStatus::已连接;
+
+        // 使用 self.is_currently_playing_sensed_by_smtc，这个状态由 SMTC 事件直接更新，更可靠
+        let is_playing_sensed_by_smtc = self.is_currently_playing_sensed_by_smtc;
+
+        // 定时器应该只在连接器启用、WebSocket已连接、并且媒体正在播放时运行
+        if connector_enabled && ws_connected && is_playing_sensed_by_smtc {
+            // 检查定时器是否未运行或已结束
+            if self
+                .progress_timer_join_handle
+                .as_ref()
+                .is_none_or(|h| h.is_finished())
+            // .is_none_or() 是 nightly API，稳定版可用 .map_or(true, |h| h.is_finished())
+            {
+                log::trace!(
+                    "[UniLyric] 启动进度定时器任务 (条件满足: 连接器启用={}, WebSocket连接={}, 播放中={}).",
+                    connector_enabled,
+                    ws_connected,
+                    is_playing_sensed_by_smtc
+                );
+                // 确保在启动新定时器前，任何旧的定时器都已停止
+                self.stop_progress_timer(); // 发送停止信号给可能存在的旧定时器
+
+                let interval = self.progress_simulation_interval; // 获取模拟间隔
+                let media_info_arc = Arc::clone(&self.current_media_info); // 当前媒体信息
+
+                // 确保媒体连接器命令发送端存在
+                let Some(cmd_tx) = self.media_connector_command_tx.clone() else {
+                    log::warn!(
+                        "[UniLyric] 无法启动进度定时器：媒体连接器命令发送端 (media_connector_command_tx) 为 None。"
+                    );
+                    return;
+                };
+
+                let connector_config_arc = Arc::clone(&self.media_connector_config); // 连接器配置
+                let tokio_runtime_arc = Arc::clone(&self.tokio_runtime); // Tokio 运行时
+
+                // 创建用于关闭定时器任务的 oneshot channel
+                let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+                self.progress_timer_shutdown_tx = Some(shutdown_tx); // 保存发送端
+
+                // 克隆用于从定时器任务接收更新的发送端 (如果定时器任务需要向主应用发送更新)
+                let update_tx_clone = self.media_connector_update_tx_for_worker.clone();
+
+                // 在 Tokio 运行时中启动定时器任务
+                let handle = tokio_runtime_arc.spawn(run_progress_timer_task(
+                    interval,
+                    media_info_arc,
+                    cmd_tx,
+                    connector_config_arc,
+                    shutdown_rx, // 传递关闭信号的接收端
+                    update_tx_clone,
+                ));
+                self.progress_timer_join_handle = Some(handle); // 保存任务句柄
+            } else {
+                // log::trace!("[UniLyric] 进度定时器任务已在运行，无需重复启动。");
+            }
+        } else {
+            // 如果条件不满足（例如 WebSocket 未连接或未播放），则确保定时器停止
+            // log::trace!(
+            //     "[UniLyric] 进度定时器启动条件未满足 (连接器启用={}, WebSocket连接={}, 播放中={})，将停止定时器。",
+            //     connector_enabled, ws_connected, is_playing_sensed_by_smtc
+            // );
+            self.stop_progress_timer(); // 确保定时器已停止
         }
-        log::debug!(
-            "[Unilyric 合并次要QRC] 类型 {:?}，QRC内容预览: {:.100}...", // 截断预览
-            content_type,
-            qrc_content
+    }
+
+    /// 停止进度模拟定时器。
+    pub fn stop_progress_timer(&mut self) {
+        // 如果存在关闭信号发送端
+        if let Some(tx) = self.progress_timer_shutdown_tx.take() {
+            // 发送关闭信号
+            if tx.send(()).is_err() {
+                // 发送失败，可能任务已经自行退出
+                log::warn!("[UniLyric] 发送关闭信号给进度定时器失败 (可能已退出)。");
+            } else {
+                log::trace!("[UniLyric] 已发送关闭信号给进度定时器。");
+            }
+        }
+        // Join handle 会在任务结束时自动清理，或者可以在应用关闭时显式 join (如果需要等待任务完成)
+        // 当前设计是发送信号后不等待，让任务自行结束。
+        if self.progress_timer_join_handle.is_some() {
+            // log::trace!("[UniLyric] 进度定时器任务句柄存在，将在任务结束时自动清理。");
+            // 如果需要立即等待任务结束，可以取消注释下面的代码，但这可能阻塞UI线程
+            // if let Some(handle) = self.progress_timer_join_handle.take() {
+            //     tokio_runtime_arc.block_on(async { handle.await }).ok();
+            // }
+        }
+    }
+
+    /// 从存储的已处理歌词结果中加载歌词。
+    /// 通常用于从自动搜索结果中选择一个来源并应用其歌词。
+    ///
+    /// # 参数
+    /// * `stored_data` - `ProcessedLyricsSourceData` 结构，包含已处理的歌词和元数据。
+    /// * `original_source_enum` - `AutoSearchSource` 枚举，指示此数据的原始来源。
+    pub(crate) fn load_lyrics_from_stored_result(
+        &mut self,
+        stored_data: ProcessedLyricsSourceData,
+        original_source_enum: AutoSearchSource,
+    ) {
+        log::info!(
+            "[UniLyric] 从 {:?} 加载存储的歌词结果: 歌曲名 '{:?}', 艺术家 '{:?}'",
+            original_source_enum.display_name(), // 显示来源名称
+            stored_data // 从平台元数据中获取歌曲名和艺术家
+                .platform_metadata
+                .get("musicName") // 假设平台元数据中有 "musicName" 键
+                .cloned()
+                .unwrap_or_default(),
+            stored_data
+                .platform_metadata
+                .get("artist") // 假设平台元数据中有 "artist" 键
+                .cloned()
+                .unwrap_or_default()
         );
 
-        // 1. 解析传入的QRC文本内容
-        let (secondary_qrc_lines, _secondary_qrc_meta) = // _secondary_qrc_meta (QRC元数据) 暂不使用
-            match qrc_parser::load_qrc_from_string(qrc_content) {
-                Ok(result) => result,
-                Err(e) => {
-                    log::error!("[Unilyric 合并次要QRC] 解析次要QRC内容失败: {}", e);
-                    return Err(e); // 将解析错误向上传播
-                }
-            };
+        // 1. 记录当前来源，用于可能的后续处理（如歌词清理）
+        self.last_auto_fetch_source_for_stripping_check = Some(original_source_enum);
 
-        if secondary_qrc_lines.is_empty() {
-            log::debug!("[Unilyric 合并次要QRC] 次要QRC内容解析后为空行，不执行合并。");
-            return Ok(());
-        }
+        // 2. 设置应用状态以准备转换
+        self.last_auto_fetch_source_format = Some(stored_data.format); // 记录原始获取格式，用于本地缓存保存
+        self.clear_all_data(); // 清理旧的歌词数据和部分元数据（保留固定的元数据）
 
-        // 2. 定义时间戳匹配容差
-        const QRC_MATCH_TOLERANCE_MS: u64 = 15; // 15毫秒的容差，与LRC合并逻辑保持一致
+        self.input_text = stored_data.main_lyrics; // 使用存储的原始主歌词作为输入
+        self.source_format = stored_data.format; // 设置源格式
 
-        // 3. 迭代主歌词段落，为每个段落查找并合并匹配的QRC行
-        let mut qrc_search_start_idx = 0; // 用于跟踪QRC行的消耗，避免重复匹配已使用的QRC行
+        // 暂存从网络获取的次要歌词信息 (如果 stored_data 中有这些字段)
+        self.pending_translation_lrc_from_download = stored_data.translation_lrc;
+        self.pending_romanization_qrc_from_download = stored_data.romanization_qrc;
+        self.pending_romanization_lrc_from_download = stored_data.romanization_lrc;
+        self.pending_krc_translation_lines = stored_data.krc_translation_lines;
+        self.session_platform_metadata = stored_data.platform_metadata; // 应用平台元数据
+        self.metadata_source_is_download = true; // 标记元数据主要来自下载（或等效的已处理源）
 
-        for primary_paragraph in &mut *primary_paragraphs {
-            let para_start_ms = primary_paragraph.p_start_ms; // 当前主段落的开始时间
+        // 清理手动加载的LRC，因为我们将使用来自存储结果的（可能包含的）次要歌词
+        self.loaded_translation_lrc = None;
+        self.loaded_romanization_lrc = None;
 
-            // 从 qrc_search_start_idx 开始遍历次要QRC行
-            for (current_qrc_idx, sec_qrc_line) in secondary_qrc_lines
-                .iter()
-                .enumerate()
-                .skip(qrc_search_start_idx)
-            {
-                let sec_qrc_line_start_ms = sec_qrc_line.line_start_ms; // QRC行的开始时间
+        // 3. 执行核心转换逻辑
+        self.handle_convert();
 
-                // 计算当前QRC行开始时间与主歌词段落开始时间的绝对差值
-                let diff_ms = (sec_qrc_line_start_ms as i64 - para_start_ms as i64).unsigned_abs();
+        // 4. 清理暂存的来源标记，以防影响后续非自动下载的操作
+        self.last_auto_fetch_source_for_stripping_check = None;
 
-                // 如果差值在容差范围内，则认为匹配成功
-                if diff_ms <= QRC_MATCH_TOLERANCE_MS {
-                    // 将QRC行的所有音节文本连接起来作为该行的完整文本内容。
-                    // QRC本身是逐字的，但在这里我们将其视为一整行内容来匹配主歌词的行。
-                    let mut combined_text_for_line = String::new();
-                    if !sec_qrc_line.syllables.is_empty() {
-                        let mut line_text_parts: Vec<String> = Vec::new();
-                        for syl in sec_qrc_line.syllables.iter() {
-                            line_text_parts.push(syl.text.clone());
-                            // 注意：QRC的 LysSyllable 没有 ends_with_space 标志。
-                            // 这里的简单连接假设 qrc_parser 输出的 LysSyllable.text 已包含必要的空格。
-                        }
-                        combined_text_for_line = line_text_parts.join("").trim().to_string(); // 连接并去除首尾多余空格
-                    }
-
-                    // 只有当连接后的文本非空时才进行设置
-                    if !combined_text_for_line.is_empty() {
-                        match content_type {
-                            LrcContentType::Romanization => {
-                                primary_paragraph.romanization =
-                                    Some(combined_text_for_line.clone());
-                                log::trace!(
-                                    "[Unilyric 合并次要QRC] 段落 [{}ms] 匹配到罗马音QRC行 [{}ms]: '{}'",
-                                    para_start_ms,
-                                    sec_qrc_line_start_ms,
-                                    combined_text_for_line
-                                );
-                            }
-                            LrcContentType::Translation => {
-                                // QRC通常不用于存储独立翻译行，但为保持接口一致性，也处理此情况
-                                primary_paragraph.translation =
-                                    Some((combined_text_for_line.clone(), None)); // QRC不携带语言代码
-                                log::trace!(
-                                    "[Unilyric 合并次要QRC] 段落 [{}ms] 匹配到翻译QRC行 [{}ms]: '{}'",
-                                    para_start_ms,
-                                    sec_qrc_line_start_ms,
-                                    combined_text_for_line
-                                );
-                            }
-                        }
-                    } else if combined_text_for_line.is_empty() && sec_qrc_line.line_duration_ms > 0
+        // 5. 发送TTML到AMLL Player (如果已连接且output_text非空)
+        if self.media_connector_config.lock().unwrap().enabled {
+            // 如果媒体连接器启用
+            if let Some(tx) = &self.media_connector_command_tx {
+                // 如果命令发送端存在
+                if !self.output_text.is_empty() {
+                    // 如果输出文本非空 (即已生成目标格式歌词)
+                    log::info!(
+                        "[UniLyricApp 加载存储结果] 发送从 {:?} 加载并处理后的 TTML (长度: {}) 到播放器。",
+                        original_source_enum.display_name(),
+                        self.output_text.len()
+                    );
+                    let ttml_body = ProtocolBody::SetLyricFromTTML {
+                        // 构建协议体
+                        data: self.output_text.as_str().into(), // 歌词数据
+                    };
+                    if tx // 发送命令
+                        .send(ConnectorCommand::SendProtocolBody(ttml_body))
+                        .is_err()
                     {
-                        // 如果QRC行文本为空但有持续时间（例如，一个空的QRC行 [1000,500]），
-                        // 则也视为空匹配，以消耗掉这个时间点的QRC行，并设置为空字符串。
-                        match content_type {
-                            LrcContentType::Romanization => {
-                                primary_paragraph.romanization = Some(String::new()); // 设置为空串
-                                log::trace!(
-                                    "[Unilyric 合并次要QRC] 段落 [{}ms] 匹配到空的罗马音QRC行 [{}ms]",
-                                    para_start_ms,
-                                    sec_qrc_line_start_ms
-                                );
-                            }
-                            LrcContentType::Translation => {
-                                primary_paragraph.translation = Some((String::new(), None)); // 设置为空串
-                                log::trace!(
-                                    "[Unilyric 合并次要QRC] 段落 [{}ms] 匹配到空的翻译QRC行 [{}ms]",
-                                    para_start_ms,
-                                    sec_qrc_line_start_ms
-                                );
-                            }
-                        }
+                        log::error!("[UniLyricApp 加载存储结果] 发送 TTML 失败。");
                     }
-
-                    // "消耗"掉这条QRC行：更新下次QRC搜索的起始索引
-                    qrc_search_start_idx = current_qrc_idx + 1;
-                    break; // 找到匹配后，处理下一个主歌词段落
+                } else {
+                    log::warn!(
+                        "[UniLyricApp 加载存储结果] 处理后输出为空，不发送TTML。来源: {:?}",
+                        original_source_enum
+                    );
                 }
-
-                // 如果当前QRC行的时间戳已经远超当前主歌词段落开始时间+容差，并且尚未为该主段落找到匹配，
-                // 那么后续的QRC行（时间更晚）也不太可能匹配当前主段落的开始时间。
-                if sec_qrc_line_start_ms > para_start_ms + QRC_MATCH_TOLERANCE_MS {
-                    break; // 提前结束对当前主段落的QRC行搜索
-                }
-            } // 内层 for current_qrc_idx 循环结束
-        } // 外层 for para_idx 循环结束
-        Ok(())
-    }
-
-    /// 辅助方法：将LRC格式的次要歌词内容（翻译或罗马音）合并到主歌词段落中。
-    /// 匹配逻辑：对于每个主歌词段落，查找第一个开始时间与之在指定容差内匹配的LRC行。
-    /// 一旦LRC行被匹配，则不再用于后续主歌词段落。
-    ///
-    /// # Arguments
-    /// * `primary_paragraphs` - 可变的主歌词段落列表 (`Vec<TtmlParagraph>`)。
-    /// * `lrc_content` - 包含次要歌词的完整LRC文本字符串。
-    ///   对于来自QQ音乐的翻译，此字符串应已通过 `preprocess_qq_translation_lrc_content` 处理。
-    /// * `content_type` - 指示LRC内容是翻译 (`LrcContentType::Translation`) 还是罗马音 (`LrcContentType::Romanization`)。
-    /// * `language_code_from_lrc_meta` - 从LRC文件头部元数据中解析出的可选语言代码 (主要用于翻译)。
-    ///
-    /// # Returns
-    /// `Result<(), ConvertError>` - 如果解析LRC内容时发生错误，则返回Err。
-    fn merge_lrc_lines_into_paragraphs_internal(
-        primary_paragraphs: &mut [TtmlParagraph],
-        lrc_content: &str,
-        content_type: LrcContentType,
-        language_code_from_lrc_meta: Option<String>, // 从LRC元数据（如[language:xx]）传入的语言代码
-    ) -> Result<(), ConvertError> {
-        // 如果没有LRC内容或没有主歌词段落，则无需操作
-        if lrc_content.is_empty() || primary_paragraphs.is_empty() {
-            return Ok(());
+            }
         }
 
-        // 1. 解析传入的LRC文本内容
-        // lrc_parser 会返回解析出的LrcLine列表和从LRC头部提取的元数据
-        let (lrc_lines, parsed_lrc_meta) = // parsed_lrc_meta 是 Vec<AssMetadata>
-            match lrc_parser::parse_lrc_text_to_lines(lrc_content) {
-                Ok(result) => result,
-                Err(e) => {
-                    log::error!("[Unilyric 合并次要LRC] 解析次要LRC内容失败: {}", e);
-                    return Err(e); // 将解析错误向上传播
-                }
+        // 6. 更新UI上对应源的搜索状态为成功
+        //    这有助于用户了解哪个来源的歌词被成功加载了。
+        let status_arc_to_update = match original_source_enum {
+            AutoSearchSource::QqMusic => &self.qqmusic_auto_search_status,
+            AutoSearchSource::Kugou => &self.kugou_auto_search_status,
+            AutoSearchSource::Netease => &self.netease_auto_search_status,
+            AutoSearchSource::AmllDb => &self.amll_db_auto_search_status,
+            AutoSearchSource::LocalCache => &self.local_cache_auto_search_status,
+        };
+        // 只有当源不是本地缓存时，才强制更新状态为成功，
+        // 因为本地缓存加载是不同的流程，其状态可能已通过其他方式管理。
+        if original_source_enum != AutoSearchSource::LocalCache {
+            *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Success(self.source_format);
+        }
+
+        // 7. 标记UI已被用户主动填充内容
+        self.current_auto_search_ui_populated = true;
+        // 如果设置了“非总是搜索所有源”，则将其他源标记为未尝试（因为用户已主动加载了一个）
+        if !self.app_settings.lock().unwrap().always_search_all_sources {
+            app_fetch_core::set_other_sources_not_attempted(self, original_source_enum);
+        }
+
+        // 8. 显示成功提示
+        self.toasts.add(egui_toast::Toast {
+            text: format!(
+                "已加载并处理来自 {} 的歌词",
+                original_source_enum.display_name()
+            )
+            .into(),
+            kind: egui_toast::ToastKind::Info,
+            options: egui_toast::ToastOptions::default()
+                .duration_in_seconds(2.5)
+                .show_icon(true),
+            ..Default::default()
+        });
+    }
+
+    /// 处理用户选择新的 SMTC (System Media Transport Controls) 会话的逻辑。
+    /// SMTC 会话通常对应一个正在播放媒体的应用。
+    ///
+    /// # 参数
+    /// * `session_id_to_select` - 用户选择的会话 ID (通常是 SourceAppUserModelId)。
+    ///   如果为 None，表示用户可能选择了“自动选择”或清除了特定选择。
+    pub fn select_new_smtc_session(&mut self, session_id_to_select: Option<String>) {
+        let mut current_selected_guard = self.selected_smtc_session_id.lock().unwrap(); // 获取当前选定会话ID的锁
+
+        // 如果用户尝试选择当前已经选中的会话，则不执行任何操作
+        if *current_selected_guard == session_id_to_select {
+            log::trace!(
+                "[UniLyricApp] 用户尝试选择当前已选中的 SMTC 会话 ({:?})，不执行操作。",
+                session_id_to_select
+            );
+            return;
+        }
+
+        log::info!("[UniLyricApp] 切换 SMTC 会话到: {:?}", session_id_to_select);
+        *current_selected_guard = session_id_to_select.clone(); // 更新当前选定的会话ID
+        drop(current_selected_guard); // 释放锁
+
+        // 保存用户选择到应用设置，以便下次启动时恢复
+        if let Ok(mut settings) = self.app_settings.lock() {
+            settings.last_selected_smtc_session_id = session_id_to_select.clone();
+            if settings.save().is_err() {
+                log::error!("[UniLyricApp] 保存用户选择的 SMTC 会话 ID 到设置失败。");
+            }
+        }
+
+        // 向媒体连接器工作线程发送命令，通知其切换到新的SMTC会话
+        if let Some(ref tx) = self.media_connector_command_tx {
+            let command_payload = session_id_to_select.unwrap_or_default(); // 如果是None，则发送空字符串（表示自动）
+            if tx
+                .send(ConnectorCommand::SelectSmtcSession(command_payload.clone()))
+                .is_err()
+            {
+                log::error!(
+                    "[UniLyricApp] 发送 SelectSmtcSession 命令 (ID: {}) 失败。",
+                    command_payload
+                );
+            } else {
+                log::debug!(
+                    "[UniLyricApp] 已发送 SelectSmtcSession 命令 (ID: {}) 给 worker。",
+                    command_payload
+                );
+            }
+        } else {
+            log::warn!("[UniLyricApp] media_connector_command_tx 不可用，无法发送会话选择命令。");
+        }
+    }
+
+    /// 处理 SMTC 更新，并将其信息发送到 WebSocket 服务器（如果启用）。
+    /// 当 SMTC 报告新的播放信息（如歌曲标题、艺术家变化）时调用此方法。
+    ///
+    /// # 参数
+    /// * `new_smtc_info` - `crate::amll_connector::NowPlayingInfo` 结构，包含新的播放信息。
+    pub fn process_smtc_update_for_websocket(
+        &mut self,
+        new_smtc_info: &crate::amll_connector::NowPlayingInfo,
+    ) {
+        // 如果 WebSocket 服务器命令发送端存在
+        if let Some(tx) = &self.websocket_server_command_tx {
+            let title = new_smtc_info.title.clone(); // 获取歌曲标题
+            let artist = new_smtc_info.artist.clone(); // 获取艺术家
+            let ttml_lyrics = if !self.output_text.is_empty() {
+                // 仅当有歌词（已处理并生成到 output_text）时发送
+                Some(self.output_text.clone())
+            } else {
+                None // 如果没有歌词，则不发送
             };
 
-        if lrc_lines.is_empty() {
-            log::debug!("[Unilyric 合并次要LRC] 次要LRC内容解析后为空行，不执行合并。");
-            return Ok(());
-        }
-
-        // 2. 确定用于翻译的最终语言代码
-        // 优先级：函数参数传入的 (`language_code_from_lrc_meta`) > LRC文件头部自动解析的
-        let final_language_code_for_translation: Option<String> = if content_type
-            == LrcContentType::Translation
-        {
-            language_code_from_lrc_meta.or_else(|| {
-                // 如果参数中没有，则尝试从解析出的LRC元数据中查找 "language" 或 "lang" 标签
-                parsed_lrc_meta
-                    .iter()
-                    .find(|m| {
-                        m.key.eq_ignore_ascii_case("language") || m.key.eq_ignore_ascii_case("lang")
-                    })
-                    .map(|m| m.value.clone())
-            })
-        } else {
-            None // 罗马音通常不携带语言代码，或由LQE生成器等后续步骤处理默认值
-        };
-
-        // 3. 定义时间戳匹配容差
-        const LRC_MATCH_TOLERANCE_MS: u64 = 15; // 15毫秒的容差
-
-        // 4. 迭代主歌词段落，为每个段落查找并合并匹配的LRC行
-        let mut lrc_search_start_idx = 0; // 用于跟踪LRC行的消耗，避免重复匹配已使用的LRC行
-
-        for primary_paragraph in primary_paragraphs {
-            let para_start_ms = primary_paragraph.p_start_ms; // 当前主段落的开始时间
-
-            // 从 lrc_search_start_idx 开始遍历LRC行
-            for (current_lrc_idx, lrc_line) in
-                lrc_lines.iter().enumerate().skip(lrc_search_start_idx)
+            // 构建播放信息负载
+            let playback_info_payload = PlaybackInfoPayload {
+                title,
+                artist,
+                ttml_lyrics,
+            };
+            // 尝试发送播放信息到 WebSocket 服务器
+            if let Err(e) = tx.try_send(ServerCommand::BroadcastPlaybackInfo(playback_info_payload))
             {
-                let lrc_ts = lrc_line.timestamp_ms; // 当前LRC行的时间戳
-
-                // 计算当前LRC行时间戳与主歌词段落开始时间的绝对差值
-                let diff_ms = (lrc_ts as i64 - para_start_ms as i64).unsigned_abs();
-
-                // 如果差值在容差范围内，则认为匹配成功
-                if diff_ms <= LRC_MATCH_TOLERANCE_MS {
-                    // 获取LRC行的文本。如果此LRC内容来自QQ音乐的翻译且原为"//"，
-                    // `preprocess_qq_translation_lrc_content` 应已将其转换为空字符串。
-                    let text_to_set = lrc_line.text.clone();
-
-                    // 根据内容类型（翻译或罗马音）更新主歌词段落
-                    match content_type {
-                        LrcContentType::Romanization => {
-                            primary_paragraph.romanization = Some(text_to_set);
-                            log::trace!(
-                                "[Unilyric 合并次要LRC] 段落 [{}ms] 匹配到罗马音LRC行 [{}ms]: '{}'",
-                                para_start_ms,
-                                lrc_ts,
-                                primary_paragraph.romanization.as_deref().unwrap_or("")
-                            );
-                        }
-                        LrcContentType::Translation => {
-                            primary_paragraph.translation =
-                                Some((text_to_set, final_language_code_for_translation.clone()));
-                            log::trace!(
-                                "[Unilyric 合并次要LRC] 段落 [{}ms] 匹配到翻译LRC行 [{}ms]: '{}' (语言: {:?})",
-                                para_start_ms,
-                                lrc_ts,
-                                primary_paragraph
-                                    .translation
-                                    .as_ref()
-                                    .map_or("", |(t, _)| t),
-                                final_language_code_for_translation
-                            );
-                        }
-                    }
-                    // "消耗"掉这条LRC行：更新下次LRC搜索的起始索引
-                    lrc_search_start_idx = current_lrc_idx + 1;
-                    break; // 找到匹配后，停止为当前主歌词段落搜索LRC行，移至下一个主段落
-                }
-
-                // 优化：由于LRC行已按时间排序，如果当前LRC行的时间戳已经
-                // 远超当前主歌词段落开始时间+容差，并且尚未为该主段落找到匹配，
-                // 那么后续的LRC行（时间更晚）也不可能匹配当前主段落的开始时间。
-                // 因此，可以提前结束对当前主段落的LRC行搜索。
-                if lrc_ts > para_start_ms + LRC_MATCH_TOLERANCE_MS {
-                    break;
-                }
-            } // 内层 for current_lrc_idx 循环结束
-        } // 外层 for para_idx 循环结束
-        Ok(())
+                // 使用 try_send 避免阻塞，如果通道已满或关闭则记录警告
+                warn!(
+                    "[UniLyricApp] 发送 PlaybackInfo 到 WebSocket 服务器失败 (通道可能已满或关闭): {}",
+                    e
+                );
+            } else {
+                // log::trace!("[UniLyricApp] 已发送 PlaybackInfo 到 WebSocket 服务器。"); // 成功发送，可选日志
+            }
+        }
     }
-} // impl UniLyricApp 结束
 
-// 实现 eframe::App trait，使 UniLyricApp 能够作为 egui 应用程序运行。
-impl eframe::App for UniLyricApp {
-    /// `update` 方法是 eframe 应用的核心，每一帧都会调用此方法来处理事件、更新状态和绘制UI。
-    ///
-    /// # Arguments
-    /// * `ctx` - `&egui::Context`，egui的上下文，用于UI绘制和事件处理。
-    /// * `_frame` - `&mut eframe::Frame`，eframe的窗口框架，可用于控制窗口属性等 (此处未使用，故用_标记)。
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // --- 处理从日志后端接收到的日志 ---
-        let mut new_logs_received_this_frame = false; // 标记本帧是否收到新日志
-        let mut has_warn_or_higher = false; // 标记本帧收到的日志中是否有警告或更高级别
-        while let Ok(log_entry) = self.ui_log_receiver.try_recv() {
-            // 非阻塞地尝试接收日志
-            if self.log_display_buffer.len() >= 200 {
-                // 限制日志缓冲区大小
-                self.log_display_buffer.remove(0); // 移除最旧的日志
-            }
-            // 检查日志等级，如果达到警告级别，则标记
-            if log_entry.level >= crate::logger::LogLevel::Warn {
-                has_warn_or_higher = true;
-            }
-            self.log_display_buffer.push(log_entry); // 将新日志添加到显示缓冲区
-            new_logs_received_this_frame = true;
-        }
-        // 如果收到警告或更高级别的日志，则自动显示日志面板
-        if has_warn_or_higher {
-            self.show_bottom_log_panel = true;
-        } else if new_logs_received_this_frame && !self.show_bottom_log_panel {
-            // 如果收到新日志但日志面板未显示，则标记有新的触发性日志 (例如，用于在按钮上显示提示)
-            self.new_trigger_log_exists = true;
-        }
-
-        // --- 处理网络下载完成事件 ---
-        self.handle_qq_download_completion(); // 检查并处理QQ音乐下载完成
-        self.handle_kugou_download_completion(); // 检查并处理酷狗音乐下载完成
-        self.handle_netease_download_completion(); // 检查并处理网易云音乐下载完成
-        self.handle_amll_ttml_download_completion();
-
-        // --- 更新UI面板的显示状态 ---
-        // 如果当前有标记点数据，则显示标记点面板
-        self.show_markers_panel = !self.current_markers.is_empty();
-        // 如果加载了翻译LRC文件或翻译LRC预览内容非空，则显示翻译LRC面板
-        self.show_translation_lrc_panel = self.loaded_translation_lrc.is_some()
-            || !self.display_translation_lrc_output.is_empty();
-        // 如果加载了罗马音LRC文件或罗马音LRC预览内容非空，则显示罗马音LRC面板
-        self.show_romanization_lrc_panel = self.loaded_romanization_lrc.is_some()
-            || !self.display_romanization_lrc_output.is_empty();
-
-        // --- 处理文件拖放相关的状态更新 ---
-        // 获取鼠标指针当前悬停位置 (如果正在拖动文件)
-        if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-            self.last_known_pointer_pos_while_dragging = Some(pos);
-        }
-        // 检查是否有文件正悬停在窗口上
-        let files_are_hovering_window_now = !ctx.input(|i| i.raw.hovered_files.is_empty());
-        // 检查本帧是否有文件被放下 (拖放操作完成)
-        let files_were_dropped_this_frame = !ctx.input(|i| i.raw.dropped_files.is_empty());
-
-        if files_are_hovering_window_now && !files_were_dropped_this_frame {
-            // 如果有文件悬停但尚未放下，则标记窗口正被文件悬停
-            self.is_any_file_hovering_window = true;
-        } else if !files_are_hovering_window_now && !files_were_dropped_this_frame {
-            // 如果既无文件悬停也无文件放下 (例如，拖动结束在窗口外，或从未开始拖动)
-            self.is_any_file_hovering_window = false;
-            // 如果鼠标指针已离开窗口，清除最后已知的拖动指针位置
-            if ctx.input(|i| i.pointer.hover_pos().is_none()) {
-                self.last_known_pointer_pos_while_dragging = None;
-            }
-        }
-
-        // --- 绘制UI主要面板 ---
-        // 绘制顶部工具栏
-        egui::TopBottomPanel::top("top_panel_id").show(ctx, |ui| {
-            self.draw_toolbar(ui); // 调用工具栏绘制函数 (定义在 ui_toolbar.rs)
-        });
-        // 绘制底部日志面板 (如果 self.show_bottom_log_panel 为 true)
-        self.draw_log_panel(ctx); // 调用日志面板绘制函数 (定义在 ui_log_panel.rs)
-
-        // 计算各个侧边面板的推荐宽度，基于屏幕宽度动态调整
-        let available_width = ctx.screen_rect().width();
-        let input_panel_width = (available_width * 0.25).clamp(200.0, 400.0); // 输入面板宽度
-        let lrc_panel_width = (available_width * 0.20).clamp(150.0, 350.0); // LRC预览面板宽度
-        let markers_panel_width = (available_width * 0.18).clamp(120.0, 300.0); // 标记面板宽度
-
-        // 绘制左侧输入面板
-        egui::SidePanel::left("input_panel")
-            .default_width(input_panel_width)
-            .show(ctx, |ui| {
-                self.draw_input_panel_contents(ui); // 调用输入面板内容绘制函数 (定义在 ui_input_panel.rs)
-            });
-
-        // 根据状态绘制右侧的各种可选面板
-        if self.show_markers_panel {
-            // 如果显示标记点面板
-            egui::SidePanel::right("markers_panel")
-                .default_width(markers_panel_width)
-                .show(ctx, |ui| {
-                    self.draw_markers_panel_contents(ui, self.wrap_text);
-                });
-        }
-        if self.show_translation_lrc_panel {
-            // 如果显示翻译LRC面板
-            egui::SidePanel::right("translation_lrc_panel")
-                .default_width(lrc_panel_width)
-                .show(ctx, |ui| {
-                    self.draw_translation_lrc_panel_contents(ui);
-                });
-        }
-        if self.show_romanization_lrc_panel {
-            // 如果显示罗马音LRC面板
-            egui::SidePanel::right("romanization_lrc_panel")
-                .default_width(lrc_panel_width)
-                .show(ctx, |ui| {
-                    self.draw_romanization_lrc_panel_contents(ui);
-                });
-        }
-
-        // 绘制中央输出面板 (占据剩余空间)
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_output_panel_contents(ui); // 调用输出面板内容绘制函数 (定义在 ui_output_panel.rs)
-        });
-
-        // --- 绘制模态窗口和覆盖层 ---
-        // 绘制元数据编辑窗口 (如果 self.show_metadata_panel 为 true)
-        if self.show_metadata_panel {
-            let mut show_metadata_panel_mut = self.show_metadata_panel; // 可变绑定，用于窗口的 open 参数
-            let mut window_is_still_open = show_metadata_panel_mut; // 跟踪窗口是否仍然打开
-            egui::Window::new("编辑元数据") // 窗口标题
-                .open(&mut window_is_still_open) // 绑定到窗口的打开/关闭状态
-                .default_width(450.0) // 默认宽度
-                .default_height(400.0) // 默认高度
-                .resizable(true) // 可调整大小
-                .collapsible(true) // 可折叠
-                .max_height(600.0) // 最大高度
-                .show(ctx, |ui| {
-                    // 调用元数据编辑器窗口内容绘制函数 (定义在 ui_metadata_editor.rs)
-                    self.draw_metadata_editor_window_contents(ui, &mut show_metadata_panel_mut);
-                });
-            // 如果用户关闭了窗口 (window_is_still_open 变为 false)，则更新状态
-            if !window_is_still_open {
-                show_metadata_panel_mut = false;
-            }
-            self.show_metadata_panel = show_metadata_panel_mut; // 将窗口状态同步回应用状态
-        }
-
-        // --- 处理文件拖放逻辑 ---
-        let files_are_hovered = !ctx.input(|i| i.raw.hovered_files.is_empty()); // 是否有文件悬停
-        let mut is_dropping_file_this_frame = false; // 标记本帧是否有文件被放下
-
-        if !ctx.input(|i| i.raw.dropped_files.is_empty()) {
-            // 如果本帧有文件被放下
-            is_dropping_file_this_frame = true; // 标记正在放下文件
-            let files = ctx.input(|i| i.raw.dropped_files.clone()); // 获取被放下的文件列表
-            if let Some(file) = files.first() {
-                // 只处理第一个拖放的文件
-                if let Some(path) = &file.path {
-                    // 如果文件有路径 (来自文件系统)
-                    // 调用文件加载和转换函数 (定义在 io.rs)
-                    crate::io::load_file_and_convert(self, path.clone())
-                } else if let Some(bytes) = &file.bytes {
-                    // 如果文件是字节数据 (例如从浏览器拖放的文本片段)
-                    if let Ok(text_content) = String::from_utf8(bytes.to_vec()) {
-                        //尝试从字节解码为UTF-8文本
-                        self.clear_all_data(); // 清理旧数据
-                        self.input_text = text_content; // 设置新内容到输入框
-                        // 对于拖放的文本片段，可能难以确定其原始格式。
-                        // 这里简单地使用当前选择的源格式，并触发转换。
-                        self.metadata_source_is_download = false; // 标记为本地内容，非网络下载
-                        self.handle_convert(); // 触发转换流程
+    /// 发送当前歌词（作为 PlaybackInfo 的一部分）到 WebSocket 服务器。
+    /// 当歌词内容发生变化时（例如，用户编辑、加载新歌词、转换格式后）调用此方法。
+    fn send_lyrics_update_to_websocket(&mut self) {
+        // 如果 WebSocket 服务器命令发送端存在
+        if let Some(tx) = &self.websocket_server_command_tx {
+            // 我们需要从当前状态构建 PlaybackInfoPayload，因为协议要求 title 和 artist 也一起发送
+            let current_title;
+            let current_artist;
+            {
+                // 限制 media_info_guard 的作用域
+                let media_info_guard = self.current_media_info.try_lock(); // 使用 try_lock 避免阻塞UI线程
+                if let Ok(guard) = media_info_guard {
+                    if let Some(info) = &*guard {
+                        // 如果成功获取锁且有媒体信息
+                        current_title = info.title.clone();
+                        current_artist = info.artist.clone();
                     } else {
-                        log::warn!("[Unilyric] 拖放的字节数据不是有效的UTF-8文本，无法处理。");
+                        // 无媒体信息
+                        current_title = None;
+                        current_artist = None;
+                    }
+                } else {
+                    // 获取锁失败
+                    current_title = None;
+                    current_artist = None;
+                }
+            } // media_info_guard 锁在此释放
+
+            // 构建播放信息负载，包含当前歌词
+            let playback_info_payload = PlaybackInfoPayload {
+                title: current_title,
+                artist: current_artist,
+                ttml_lyrics: if self.output_text.is_empty() {
+                    None
+                } else {
+                    Some(self.output_text.clone())
+                }, // 如果歌词为空，则发送None
+            };
+
+            // 尝试发送播放信息（包含歌词更新）
+            if let Err(e) = tx.try_send(ServerCommand::BroadcastPlaybackInfo(playback_info_payload))
+            {
+                warn!(
+                    "[UniLyricApp] 发送歌词更新 (作为PlaybackInfo) 到 WebSocket 服务器失败: {}",
+                    e
+                );
+            } else {
+                // log::trace!("[UniLyricApp] 已发送歌词更新 (作为PlaybackInfo) 到 WebSocket 服务器。");
+            }
+        }
+    }
+
+    /// 发送当前播放时间更新到 WebSocket 服务器。
+    /// 当 SMTC 报告播放时间变化，或者应用内部模拟播放进度时调用。
+    ///
+    /// # 参数
+    /// * `current_time_ms` - 当前播放时间，单位毫秒。
+    pub fn send_time_update_to_websocket(&self, current_time_ms: u64) {
+        // 如果 WebSocket 服务器命令发送端存在
+        if let Some(tx) = &self.websocket_server_command_tx {
+            // 构建时间更新负载，时间单位转换为秒 (浮点数)
+            let time_update_payload = TimeUpdatePayload {
+                current_time_seconds: current_time_ms as f64 / 1000.0,
+            };
+            // 尝试发送时间更新
+            if let Err(e) = tx.try_send(ServerCommand::BroadcastTimeUpdate(time_update_payload)) {
+                warn!(
+                    "[UniLyricApp] 发送 TimeUpdate 到 WebSocket 服务器失败 (通道可能已满或关闭): {}",
+                    e
+                );
+            } else {
+                // log::trace!("[UniLyricApp] 已发送 TimeUpdate ({:.3}s) 到 WebSocket 服务器。", current_time_ms as f64 / 1000.0);
+            }
+        }
+    }
+
+    /// 触发将当前TTML歌词上传到 TTML DB (通过 dpaste.org 和 GitHub Issue)。
+    pub fn trigger_ttml_db_upload(&mut self) {
+        // --- 阶段 A: 预检查 ---
+        // 防止重复点击
+        if self.ttml_db_upload_in_progress {
+            log::warn!("[TTML数据库上传] 操作已在进行中，防止重复点击。");
+            return;
+        }
+        // 检查是否有TTML输出且格式正确
+        if self.output_text.is_empty() || self.target_format != LyricFormat::Ttml {
+            log::error!("[TTML数据库上传] 没有TTML输出或格式不正确。");
+            let error_msg = "错误：无TTML歌词内容，或当前输出非TTML格式。".to_string();
+            // 发送准备错误消息给UI线程
+            if self
+                .ttml_db_upload_action_tx
+                .send(TtmlDbUploadUserAction::PreparationError(error_msg.clone()))
+                .is_err()
+            {
+                log::error!("[TTML数据库上传] 发送PreparationError消息失败 (无TTML)。");
+            } else {
+                // 同时显示一个toast提示
+                self.toasts.add(Toast {
+                    text: error_msg.into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(4.0)
+                        .show_icon(true),
+                    style: Default::default(),
+                });
+            }
+            return;
+        }
+        // 检查元数据：艺术家和歌曲标题是否存在
+        let artists_vec_opt: Option<Vec<String>>;
+        let titles_vec_opt: Option<Vec<String>>;
+        {
+            // 限制元数据存储锁的范围
+            let store_guard = self.metadata_store.lock().unwrap();
+            artists_vec_opt = store_guard
+                .get_multiple_values(&CanonicalMetadataKey::Artist)
+                .cloned();
+            titles_vec_opt = store_guard
+                .get_multiple_values(&CanonicalMetadataKey::Title)
+                .cloned();
+        }
+        let artists_exist = artists_vec_opt
+            .as_ref()
+            .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
+        let titles_exist = titles_vec_opt
+            .as_ref()
+            .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
+
+        if !artists_exist || !titles_exist {
+            log::error!("[TTML数据库上传] 缺少艺术家或歌曲标题元数据。");
+            let error_msg = "错误：上传前请确保歌词包含艺术家和歌曲标题元数据。".to_string();
+            if self
+                .ttml_db_upload_action_tx
+                .send(TtmlDbUploadUserAction::PreparationError(error_msg.clone()))
+                .is_err()
+            {
+                log::error!("[TTML数据库上传] 发送PreparationError消息失败 (元数据缺失)。");
+            } else {
+                self.toasts.add(Toast {
+                    text: error_msg.into(),
+                    kind: ToastKind::Error,
+                    options: ToastOptions::default()
+                        .duration_in_seconds(4.0)
+                        .show_icon(true),
+                    style: Default::default(),
+                });
+            }
+            return;
+        }
+        // 准备用于GitHub Issue的艺术家和标题字符串
+        let artist_str_for_meta = artists_vec_opt.unwrap_or_default().join("/");
+        let title_str_for_meta = titles_vec_opt.unwrap_or_default().join("/");
+
+        // --- 阶段 B: 设置状态并准备异步任务 ---
+        self.ttml_db_upload_in_progress = true; // 标记上传正在进行
+        self.ttml_db_last_paste_url = None; // 清除上一次的 dpaste URL
+        // 清空可能残留的旧消息
+        while self.ttml_db_upload_action_rx.try_recv().is_ok() {}
+
+        // 克隆需要在异步任务中使用的数据
+        let action_sender_clone = self.ttml_db_upload_action_tx.clone(); // 用于从异步任务发送消息回UI
+        let ttml_content_to_upload = self.output_text.clone(); // 要上传的TTML内容
+        let http_client_for_async = self.http_client.clone(); // HTTP客户端
+        let tokio_runtime_arc = self.tokio_runtime.clone(); // Tokio运行时
+
+        // TTML DB GitHub仓库信息
+        let ttml_db_repo_owner = "Steve-xmh".to_string();
+        let ttml_db_repo_name = "amll-ttml-db".to_string();
+
+        let artist_for_async = artist_str_for_meta.clone();
+        let title_for_async = title_str_for_meta.clone();
+
+        // 发送初始“进行中”消息
+        if action_sender_clone
+            .send(TtmlDbUploadUserAction::InProgressUpdate(
+                "正在上传TTML到dpaste.org...".to_string(),
+            ))
+            .is_err()
+        {
+            log::error!("[TTML数据库上传] 启动时发送InProgressUpdate消息失败。");
+            self.ttml_db_upload_in_progress = false; // 重置状态
+            return;
+        }
+
+        // --- 阶段 C: 执行异步任务 ---
+        tokio_runtime_arc.spawn(async move { // 在Tokio运行时中执行异步块
+            let dpaste_api_url = "https://dpaste.org/api/"; // dpaste.org API URL
+
+            // 构建 multipart/form-data 请求体
+            let form = reqwest::multipart::Form::new()
+                .text("content", ttml_content_to_upload) // TTML内容
+                .text("lexer", "xml")                   // 指定语法高亮为 XML
+                .text("format", "url")                  // 要求返回纯文本的 URL
+                .text("expires", "604800");             // 设置过期时间为7天 (604800秒)
+
+            log::debug!(
+                "[TTML数据库上传 异步任务] 开始上传到 dpaste.org (URL: {}).",
+                dpaste_api_url
+            );
+
+            // 执行 dpaste.org 上传
+            let dpaste_upload_result: Result<String, String> = async {
+                let response = http_client_for_async
+                    .post(dpaste_api_url)
+                    .header("User-Agent", "UniLyricApp/0.1.0") // 设置User-Agent
+                    .multipart(form) // 设置请求体
+                    .send()
+                    .await; // 发送请求并等待响应
+
+                match response {
+                    Ok(res) => {
+                        // 请求成功发送
+                        let status_code = res.status();
+                        log::debug!(
+                            "[TTML数据库上传 异步任务] dpaste.org API 响应状态码: {}",
+                            status_code
+                        );
+
+                        if status_code == reqwest::StatusCode::OK { // 如果HTTP状态码为200 OK
+                            match res.text().await { // 读取响应体文本
+                                Ok(body_text) => {
+                                    let base_url = body_text.trim().to_string(); // 去除首尾空格
+                                    // 验证返回的是否为有效的URL
+                                    if base_url.starts_with("http://") || base_url.starts_with("https://") {
+                                        // 构建指向 raw 内容的 URL
+                                        let raw_paste_url = if base_url.ends_with('/') {
+                                            format!("{}raw", base_url)
+                                        } else {
+                                            format!("{}/raw", base_url)
+                                        };
+                                        log::info!(
+                                            "[TTML数据库上传 异步任务] dpaste.org 上传成功，基础链接: {}, Raw链接: {}",
+                                            base_url,
+                                            raw_paste_url
+                                        );
+                                        Ok(raw_paste_url) // 返回 raw 内容的 URL
+                                    } else {
+                                        log::error!(
+                                            "[TTML数据库上传 异步任务] dpaste.org API 响应成功但 Body 不是有效的 URL: {}",
+                                            base_url.chars().take(100).collect::<String>() // 记录部分响应体
+                                        );
+                                        Err("dpaste.org API 响应成功但 Body 不是有效的 URL".to_string())
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "[TTML数据库上传 异步任务] 读取 dpaste.org API 成功响应的 Body 失败: {}",
+                                        e
+                                    );
+                                    Err(format!("读取 dpaste.org API 成功响应的 Body 失败: {}", e))
+                                }
+                            }
+                        } else { // HTTP状态码非200
+                            let error_text = res
+                                .text()
+                                .await
+                                .unwrap_or_else(|_| "获取 dpaste.org API 错误详情失败".to_string());
+                            log::error!(
+                                "[TTML数据库上传 异步任务] dpaste.org API 请求失败 (状态码 {}): {}",
+                                status_code,
+                                error_text.chars().take(250).collect::<String>() // 记录部分错误文本
+                            );
+                            Err(format!(
+                                "dpaste.org API 请求失败 (状态码 {}): {}",
+                                status_code,
+                                error_text.chars().take(100).collect::<String>()
+                            ))
+                        }
+                    }
+                    Err(e) => { // 网络请求本身失败
+                        log::error!(
+                            "[TTML数据库上传 异步任务] 发送 dpaste.org API 请求网络错误: {}",
+                            e
+                        );
+                        Err(format!("发送 dpaste.org API 请求网络错误: {}", e))
                     }
                 }
             }
-        }
+            .await; // dpaste 上传的 async 块结束
 
-        // 绘制设置窗口 (如果 self.show_settings_window 为 true)
-        if self.show_settings_window {
-            self.draw_settings_window(ctx);
-        }
+            // 处理 dpaste 上传结果
+            match dpaste_upload_result {
+                Ok(paste_url_from_api) => {
+                    // dpaste 上传成功，准备 GitHub Issue URL
+                    let issue_title_prefix = "[歌词提交] ";
+                    let issue_title_content = format!("{} - {}", artist_for_async, title_for_async);
+                    let final_issue_title_str = format!("{}{}", issue_title_prefix, issue_title_content);
+                    let issue_title_encoded = urlencoding::encode(&final_issue_title_str).into_owned(); // URL编码标题
 
-        // 绘制各个网络下载的模态窗口 (如果其显示标志为 true)
-        self.draw_qqmusic_download_modal_window(ctx);
-        self.draw_kugou_download_modal_window(ctx);
-        self.draw_netease_download_modal_window(ctx);
-        self.draw_amll_download_modal_window(ctx);
+                    let labels_str = "歌词提交"; // GitHub Issue 标签
+                    let labels_encoded = urlencoding::encode(labels_str).into_owned();
 
-        // 如果有文件悬停在窗口上，并且本帧没有文件被放下，则显示拖放覆盖提示
-        if files_are_hovered && !is_dropping_file_this_frame {
-            egui::Area::new("drag_drop_overlay_area".into()) // 创建一个覆盖整个屏幕的区域
-                .fixed_pos(egui::Pos2::ZERO) // 位置从 (0,0) 开始
-                .order(egui::Order::Foreground) // 确保在最顶层绘制
-                .show(ctx, |ui_overlay| {
-                    let screen_rect = ui_overlay.ctx().screen_rect(); // 获取屏幕矩形
-                    ui_overlay.set_clip_rect(screen_rect); // 设置裁剪区域为整个屏幕
+                    let assignees_str = "Steve-xmh"; // GitHub Issue 指派人
+                    let assignees_encoded = urlencoding::encode(assignees_str).into_owned();
 
-                    // 绘制半透明背景
-                    ui_overlay.painter().rect_filled(
-                        screen_rect,
-                        0.0,                                              // 圆角半径
-                        Color32::from_rgba_unmultiplied(20, 20, 20, 190), // 深灰色半透明
+                    // 构建预填表单的 GitHub Issue URL
+                    let github_issue_url_to_open = format!(
+                        "https://github.com/{}/{}/issues/new?template=submit-lyric.yml&title={}&labels={}&assignees={}",
+                        ttml_db_repo_owner,
+                        ttml_db_repo_name,
+                        issue_title_encoded,
+                        labels_encoded,
+                        assignees_encoded
+                        // 注意：dpaste_url 需要通过 issue template 的 body 参数传递，
+                        // 或者让用户手动粘贴。这里只生成打开 issue 页面的链接。
+                        // 如果模板支持通过URL参数预填body，可以添加 &body=...paste_url_from_api...
                     );
 
-                    // 在屏幕中央绘制提示文本
-                    ui_overlay.painter().text(
-                        screen_rect.center(),             // 文本位置
-                        egui::Align2::CENTER_CENTER,      // 对齐方式
-                        "拖放到此处以加载",               // 提示文本
-                        egui::FontId::proportional(50.0), // 字体大小
-                        Color32::WHITE,                   // 文本颜色
+                    // 发送成功消息给UI线程
+                    if action_sender_clone.send(TtmlDbUploadUserAction::PasteReadyAndCopied {
+                        paste_url: paste_url_from_api, // dpaste 的 raw URL
+                        github_issue_url_to_open,     // GitHub Issue URL
+                    }).is_err() {
+                        log::error!("[TTML数据库上传 异步任务] 发送PasteReadyAndCopied消息失败。");
+                    }
+                }
+                Err(e_msg) => {
+                    // dpaste 上传失败
+                    log::error!("[TTML数据库上传 异步任务] dpaste.org 上传流程失败: {}", e_msg);
+                    // 发送错误消息给UI线程
+                    if action_sender_clone.send(TtmlDbUploadUserAction::Error(format!("dpaste.org上传失败: {}", e_msg))).is_err() {
+                         log::error!("[TTML数据库上传 异步任务] 发送Error消息失败。");
+                    }
+                }
+            }
+        }); // Tokio spawn 结束
+    }
+}
+
+// 实现 eframe::App trait，用于定义应用的行为和UI更新逻辑
+impl eframe::App for UniLyricApp {
+    /// 每帧更新时调用此方法。
+    ///
+    /// # 参数
+    /// * `ctx` - `egui::Context`，用于UI绘制和交互。
+    /// * `_frame` - `eframe::Frame`，应用窗口的引用 (此处未使用，故用 `_` 开头)。
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 1. 处理窗口关闭请求
+        // 如果用户请求关闭窗口 (例如点击关闭按钮) 且尚未启动关闭流程
+        if ctx.input(|i| i.viewport().close_requested()) && !self.shutdown_initiated {
+            self.shutdown_initiated = true; // 标记关闭流程已启动，防止重复执行
+            log::trace!("[UniLyricApp 更新循环] 检测到窗口关闭请求。正在启动关闭序列...");
+
+            // 停止进度模拟定时器
+            self.stop_progress_timer();
+            log::trace!(
+                "[UniLyricApp 更新循环] UniLyricApp 内的 SMTC 进度模拟定时器已通过窗口关闭请求停止。"
+            );
+
+            // 向 AMLL Connector Worker 发送关闭命令
+            if let Some(tx) = &self.media_connector_command_tx {
+                log::trace!(
+                    "[UniLyricApp 更新循环] 正在向 AMLL Connector Worker 发送 Shutdown 命令..."
+                );
+                if tx
+                    .send(crate::amll_connector::ConnectorCommand::Shutdown)
+                    .is_err()
+                {
+                    log::warn!(
+                        "[UniLyricApp 更新循环] 向 AMLL Connector Worker 发送 Shutdown 命令失败 (通道可能已关闭)。"
                     );
+                } else {
+                    log::trace!(
+                        "[UniLyricApp 更新循环] Shutdown 命令已成功发送给 AMLL Connector Worker。"
+                    );
+                }
+            } else {
+                log::warn!(
+                    "[UniLyricApp 更新循环] media_connector_command_tx 为 None，无法向 Worker 发送 Shutdown 命令。"
+                );
+            }
+
+            // 向 WebSocket 服务器任务发送关闭命令
+            if let Some(ws_tx) = self.websocket_server_command_tx.take() {
+                // 使用 take() 获取所有权
+                log::trace!(
+                    "[UniLyricApp 更新循环] 正在向 WebSocket 服务器任务发送 Shutdown 命令..."
+                );
+                let rt = std::sync::Arc::clone(&self.tokio_runtime); // 克隆 Tokio 运行时 Arc
+                rt.spawn(async move { // 在 Tokio 运行时中异步发送关闭命令
+                    if ws_tx.send(crate::websocket_server::ServerCommand::Shutdown).await.is_err() {
+                        log::warn!("[UniLyricApp 更新循环] 向 WebSocket 服务器任务发送 Shutdown 命令失败 (通道可能已关闭)。");
+                    } else {
+                        log::trace!("[UniLyricApp 更新循环] Shutdown 命令已成功发送给 WebSocket 服务器任务。");
+                    }
                 });
+            } else {
+                log::warn!(
+                    "[UniLyricApp 更新循环] websocket_server_command_tx 已为 None，无法向 WebSocket 服务器发送 Shutdown 命令。"
+                );
+            }
+            log::trace!("[UniLyricApp 更新循环] 关闭信号已发送。等待 eframe 关闭应用。");
+            // eframe 会在下一帧处理实际的窗口关闭
         }
-    } // update 方法结束
-} // impl eframe::App 结束
+
+        // 2. 处理来自其他线程的日志消息 (通过通道接收)
+        app_update::process_log_messages(self);
+
+        // 3. 处理各种下载完成事件 (例如 QQ音乐、酷狗、网易云、AMLL TTML)
+        // 这些函数会检查对应的下载状态，并在成功或失败时处理数据或错误
+        app_update::handle_qq_download_completion_logic(self);
+        app_update::handle_kugou_download_completion_logic(self);
+        app_update::handle_netease_download_completion_logic(self);
+        app_update::handle_amll_ttml_download_completion_logic(self);
+
+        // 4. 处理来自 AMLL Connector worker 的更新 (例如 SMTC 状态、播放信息)
+        app_update::process_connector_updates(self);
+
+        // 5. 处理自动获取歌词的结果 (当所有自动搜索源完成后)
+        app_update::handle_auto_fetch_results(self);
+
+        // 6. 请求UI重绘
+        // 设置一个默认的重绘延迟，如果媒体连接器启用，则使用较短的延迟以更频繁地更新UI
+        let mut desired_repaint_delay = Duration::from_millis(1000); // 默认1秒
+        if self.media_connector_config.lock().unwrap().enabled {
+            desired_repaint_delay = desired_repaint_delay.min(Duration::from_millis(500)); // 连接器启用时，0.5秒
+        }
+        ctx.request_repaint_after(desired_repaint_delay); // 请求在指定延迟后重绘
+
+        // 7. 绘制所有UI面板和模态窗口
+        app_update::draw_ui_elements(self, ctx);
+
+        // 8. 处理文件拖放事件
+        app_update::handle_file_drops(self, ctx);
+
+        // 9. 处理 TTML DB 上传相关的用户操作和状态更新
+        app_update::handle_ttml_db_upload_actions(self);
+
+        // 10. 显示 toast 通知
+        self.toasts.show(ctx);
+    }
+}

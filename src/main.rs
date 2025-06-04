@@ -20,10 +20,14 @@
 mod types; // 定义应用程序中使用的各种数据类型。
 #[macro_use] // 这个属性表示 `utils` 模块中定义的宏将被导入到当前作用域，可以直接使用。
 mod utils; // 包含一些工具函数或宏，例如 `log_info!` 可能在这里定义。
+mod amll_connector;
 mod amll_lyrics_fetcher;
 mod app; // 包含应用程序核心逻辑和 UI 定义的模块。
+mod app_definition;
+pub mod app_fetch_core;
 mod app_settings; // 用于管理应用程序设置的模块。
 mod app_ui; // 包含应用程序用户界面 (UI) 相关逻辑的模块。
+mod app_update;
 mod ass_generator; // 用于生成 ASS 字幕格式的模块。
 mod ass_parser; // 用于解析 ASS (Advanced SubStation Alpha) 字幕格式的模块。
 mod io;
@@ -37,9 +41,11 @@ mod lqe_parser; // 用于解析 LQE 歌词格式的模块。
 mod lqe_to_ttml_data; // 用于将 LQE 格式数据转换为 TTML 格式数据的模块。
 mod lrc_generator; // 用于生成 LRC 歌词格式的模块。
 mod lrc_parser; // 用于解析 LRC (LyRiCs) 歌词格式的模块。
+mod lyric_processor;
 mod lyricify_lines_generator; // 用于生成 Lyricify 逐行歌词格式的模块。
 mod lyricify_lines_parser; // 用于解析 Lyricify 逐行歌词格式的模块。
 mod lyricify_lines_to_ttml_data; // 用于将 Lyricify 逐行歌词格式数据转换为 TTML 格式数据的模块。
+mod lyrics_merger;
 mod lys_generator; // 用于生成 LYS 格式的模块。
 mod lys_parser; // 用于解析 LYS 格式的模块。
 mod lys_to_ttml_data; // 用于将 LYS 格式数据转换为 TTML 格式数据的模块。
@@ -54,6 +60,7 @@ mod spl_parser; // 用于解析 SPL 格式的模块。
 mod spl_to_ttml_data; // 用于将 SPL 格式数据转换为 TTML 格式数据的模块。
 mod ttml_generator; // 用于生成 TTML 字幕格式的模块。
 mod ttml_parser; // 用于解析 TTML (Timed Text Markup Language) 字幕格式的模块。
+mod websocket_server;
 mod yrc_generator; // 用于生成 YRC (网易云音乐歌词) 格式的模块。
 mod yrc_parser; // 用于解析 YRC (网易云音乐歌词) 格式的模块。
 mod yrc_to_ttml_data; // 用于将 YRC 格式数据转换为 TTML 格式数据的模块。
@@ -115,7 +122,8 @@ fn main() {
             // 创建 UniLyricApp 的实例。
             // `app_settings.clone()` 创建设置的副本，因为 `app_settings` 可能会在其他地方被使用。
             // `ui_log_receiver` 被传递给应用程序实例，以便它可以接收和显示日志。
-            let app_instance = app::UniLyricApp::new(cc, app_settings.clone(), ui_log_receiver);
+            let app_instance =
+                crate::app_definition::UniLyricApp::new(cc, app_settings.clone(), ui_log_receiver);
             // 返回一个包装好的应用程序实例。
             // `Ok(Box::new(app_instance))` 表示成功创建了应用程序实例。
             // `Box<dyn eframe::App>` 是一个trait object，表示任何实现了 `eframe::App` trait 的类型。

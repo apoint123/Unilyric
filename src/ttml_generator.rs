@@ -1,28 +1,22 @@
-// 导入标准库的 I/O 相关模块，以及 HashMap 用于存储属性
 use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Cursor, Error as IoError, ErrorKind as IoErrorKind}; // 用于转义 XML 特殊字符
+use std::io::{self, Cursor, Error as IoError, ErrorKind as IoErrorKind};
 
-// 从项目类型模块导入所需的数据结构和错误类型
+use crate::metadata_processor::MetadataStore;
+use crate::types::CanonicalMetadataKey;
 use crate::types::{
     ActorRole, AssLineContent, AssLineInfo, ConvertError, ProcessedAssData, TtmlParagraph,
 };
-// 导入元数据存储和处理器
-use crate::metadata_processor::MetadataStore;
-// 导入工具函数，例如用于清理背景文本括号的函数
 use crate::utils::clean_parentheses_from_bg_text;
-// 导入元数据键的规范表示
-use crate::types::CanonicalMetadataKey;
 
 /// 辅助函数: 将 quick_xml::Error 映射到 std::io::Error。
-/// 主要用于在 quick_xml 的 write_inner_content 闭包中返回统一的 io::Result。
 fn map_xml_error_to_io(e: quick_xml::Error) -> IoError {
     IoError::new(IoErrorKind::Other, e)
 }
 
-/// 辅助函数: 格式化毫秒时间为 TTML 标准时间字符串 (HH:MM:SS.mmm, MM:SS.mmm, 或 SS.mmm)。
+/// 辅助函数: 格式化毫秒时间为 TTML 时间字符串 (HH:MM:SS.mmm, MM:SS.mmm, 或 SS.mmm)。
 fn format_ttml_time(ms: u64) -> String {
     let h = ms / 3_600_000;
     let m = (ms % 3_600_000) / 60_000;
@@ -40,7 +34,7 @@ fn format_ttml_time(ms: u64) -> String {
 
 /// 内部辅助函数：根据收集到的 ASS 行信息写入一个 TTML `<p>` 元素及其内容。
 /// 此函数处理主歌词、关联的背景歌词（包括其翻译和罗马音）、以及主翻译和主罗马音。
-fn write_ttml_p_from_ass_line_details(
+fn write_ttml_p_from_ass_lines(
     writer: &mut Writer<Cursor<&mut Vec<u8>>>,    // XML写入器
     key_counter: &mut usize,                      // 用于生成唯一 itunes:key 的计数器
     main_line_ass: &AssLineInfo,                  // 当前处理的“主”ASS行（必须是主唱或合唱）
@@ -104,7 +98,7 @@ fn write_ttml_p_from_ass_line_details(
             && !has_main_trans_content
             && !has_main_roma_content
         {
-            return Ok(()); // 如果没有任何可渲染内容，则不生成此 <p>
+            return Ok(()); // 如果没有任何内容，则不生成此段落
         }
 
         *key_counter += 1;
@@ -331,7 +325,7 @@ fn write_ttml_div_from_ass_lines(
                             ActorRole::Vocal1 | ActorRole::Vocal2 | ActorRole::Chorus => {
                                 // 遇到主唱或合唱行：结束上一个 <p>（如果存在）
                                 if let Some(main_line_to_write) = current_p_main_line {
-                                    write_ttml_p_from_ass_line_details(
+                                    write_ttml_p_from_ass_lines(
                                         div_content_writer,
                                         line_key_counter,
                                         main_line_to_write,
@@ -360,7 +354,7 @@ fn write_ttml_div_from_ass_lines(
                                         } else {
                                             // 如果 current_p_main_line 本身就是背景行，这意味着前一个独立的背景 <p> 应该结束了。
                                             // 然后这个新的背景行将开始自己的（独立的）<p>。
-                                            write_ttml_p_from_ass_line_details(
+                                            write_ttml_p_from_ass_lines(
                                                 div_content_writer,
                                                 line_key_counter,
                                                 main_line_being_built,
@@ -406,7 +400,7 @@ fn write_ttml_div_from_ass_lines(
 
             // 处理循环结束后最后一个累积的 <p>
             if let Some(main_line_to_write) = current_p_main_line {
-                write_ttml_p_from_ass_line_details(
+                write_ttml_p_from_ass_lines(
                     div_content_writer,
                     line_key_counter,
                     main_line_to_write,
@@ -715,7 +709,6 @@ pub fn generate_ttml_from_paragraphs(
     let relevant_paragraphs_for_agents: Vec<&TtmlParagraph> = paragraphs
         .iter()
         .filter(|p| {
-            // 和下面 relevant_paragraphs 逻辑一致
             let has_main_syls = !p.main_syllables.is_empty();
             let has_bg_content =
                 p.background_section.as_ref().is_some_and(|bs| {
@@ -1157,4 +1150,194 @@ fn write_ttml_div_from_paragraphs_internal(
             Ok(())
         })?;
     Ok(())
+}
+
+/// 从解析后的 LRC 数据生成逐行TTML。
+///
+/// # Arguments
+/// * `original_parsed_lrc_lines` - 从 LRC 解析器获得的 LrcLine 列表。
+/// * `lrc_metadata` - 从 LRC 文件头部解析的元数据。
+///
+/// # Returns
+/// `Result<String, ConvertError>` - 成功时返回生成的 TTML 字符串，失败时返回错误。
+pub fn generate_line_timed_ttml_from_paragraphs(
+    paragraphs: &[TtmlParagraph],
+    metadata_store: &MetadataStore,
+) -> Result<String, ConvertError> {
+    let mut buffer = Vec::new();
+    let mut writer = Writer::new(Cursor::new(&mut buffer));
+
+    // 1. 准备 <tt> 标签的属性
+    let mut tt_attributes_map: HashMap<&str, String> = HashMap::new();
+    tt_attributes_map.insert("xmlns", "http://www.w3.org/ns/ttml".to_string());
+    tt_attributes_map.insert(
+        "xmlns:itunes",
+        "http://music.apple.com/lyric-ttml-internal".to_string(),
+    );
+    tt_attributes_map.insert(
+        "xmlns:ttm",
+        "http://www.w3.org/ns/ttml#metadata".to_string(),
+    );
+    tt_attributes_map.insert("itunes:timing", "Line".to_string());
+
+    if let Some(lang_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Language) {
+        if !lang_val.is_empty() {
+            let lang_to_use = lang_val.clone();
+            tt_attributes_map.insert("xml:lang", lang_to_use);
+        }
+    }
+
+    let amll_keys = [
+        CanonicalMetadataKey::Album,
+        CanonicalMetadataKey::AppleMusicId,
+        CanonicalMetadataKey::Artist,
+        CanonicalMetadataKey::Custom("isrc".to_string()),
+        CanonicalMetadataKey::Title,
+        CanonicalMetadataKey::Custom("ncmMusicId".to_string()),
+        CanonicalMetadataKey::Custom("qqMusicId".to_string()),
+        CanonicalMetadataKey::Custom("spotifyId".to_string()),
+        CanonicalMetadataKey::Custom("ttmlAuthorGithub".to_string()),
+        CanonicalMetadataKey::Author,
+    ];
+    if amll_keys.iter().any(|key| {
+        metadata_store
+            .get_multiple_values(key)
+            .is_some_and(|vals| vals.iter().any(|v| !v.is_empty()))
+    }) {
+        tt_attributes_map.insert("xmlns:amll", "http://www.example.com/ns/amll".to_string());
+    }
+
+    let mut sorted_tt_attributes: Vec<(&str, String)> = tt_attributes_map.into_iter().collect();
+    sorted_tt_attributes.sort_by_key(|&(key, _)| key);
+    let mut tt_start_event = BytesStart::new("tt");
+    for (key, value) in &sorted_tt_attributes {
+        tt_start_event.push_attribute((*key, value.as_str()));
+    }
+    writer.write_event(Event::Start(tt_start_event))?;
+
+    // 2. 写入 <head> 和 <metadata>
+    writer.write_event(Event::Start(BytesStart::new("head")))?;
+    writer.write_event(Event::Start(BytesStart::new("metadata")))?;
+
+    let mut agent_tag = BytesStart::new("ttm:agent");
+    agent_tag.push_attribute(("xml:id", "v1"));
+    agent_tag.push_attribute(("type", "person"));
+    writer.write_event(Event::Empty(agent_tag))?;
+
+    // (可选) 写入其他从元数据转换来的标准TTML元数据
+    if let Some(title) = metadata_store.get_single_value(&CanonicalMetadataKey::Title) {
+        if !title.is_empty() {
+            writer
+                .create_element("ttm:title")
+                .write_text_content(BytesText::from_escaped(escape(title).as_ref()))?;
+        }
+    }
+
+    writer.write_event(Event::End(BytesEnd::new("metadata")))?;
+    writer.write_event(Event::End(BytesEnd::new("head")))?;
+
+    // 3. 准备 <p> 元素的数据
+    let body_overall_start_ms;
+    let mut body_overall_end_ms = 0;
+
+    // 过滤掉完全没有主歌词文本的段落 (这些段落可能只包含空的音节或仅用于时间标记)
+    let valid_paragraphs: Vec<&TtmlParagraph> = paragraphs
+        .iter()
+        .filter(|p| {
+            p.main_syllables
+                .iter()
+                .any(|syl| !syl.text.trim().is_empty())
+        })
+        .collect();
+
+    if !valid_paragraphs.is_empty() {
+        body_overall_start_ms = valid_paragraphs.first().map_or(0, |p| p.p_start_ms);
+        body_overall_end_ms = valid_paragraphs.last().map_or(0, |p| p.p_end_ms); // p_end_ms 应该已经被正确计算
+    } else {
+        body_overall_start_ms = 0;
+    }
+
+    // 4. 写入 <body> 标签
+    let body_dur_str = format_ttml_time(body_overall_end_ms);
+
+    writer
+        .create_element("body")
+        .with_attribute(("dur", body_dur_str.as_str()))
+        .write_inner_content(|body_writer: &mut Writer<Cursor<&mut Vec<u8>>>| -> Result<(), std::io::Error> {
+            if !valid_paragraphs.is_empty() {
+                let div_begin_str = format_ttml_time(body_overall_start_ms);
+                let div_end_str = format_ttml_time(body_overall_end_ms);
+                let mut div_attributes = vec![
+                    ("begin", div_begin_str.as_str()),
+                    ("end", div_end_str.as_str()),
+                ];
+                if let Some(song_part_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Custom("songPart".to_string())) {
+                     if !song_part_val.is_empty() {
+                        div_attributes.push(("itunes:songPart", song_part_val.as_str()));
+                     }
+                }
+
+                body_writer
+                    .create_element("div")
+                    .with_attributes(div_attributes)
+                    .write_inner_content(|div_content_writer: &mut Writer<Cursor<&mut Vec<u8>>>| -> Result<(), std::io::Error> {
+                        let mut line_key_counter = 0;
+                        for para_to_render in valid_paragraphs { // 使用过滤后的段落
+                            line_key_counter += 1;
+                            let p_start_str = format_ttml_time(para_to_render.p_start_ms);
+                            let p_end_str = format_ttml_time(para_to_render.p_end_ms); // 使用段落自身的结束时间
+                            let key_val = format!("L{}", line_key_counter);
+
+                            let p_attributes = vec![
+                                ("begin", p_start_str.as_str()),
+                                ("end", p_end_str.as_str()),
+                                ("itunes:key", key_val.as_str()),
+                                ("ttm:agent", "v1"), // 固定agent
+                            ];
+
+                            div_content_writer
+                                .create_element("p")
+                                .with_attributes(p_attributes)
+                                .write_inner_content(|p_writer: &mut Writer<Cursor<&mut Vec<u8>>>| -> Result<(), std::io::Error> {
+                                    // 主文本 (假设LRC行只有一个音节代表整行)
+                                    if let Some(main_syl) = para_to_render.main_syllables.first() {
+                                        if !main_syl.text.trim().is_empty() {
+                                             p_writer.write_event(Event::Text(BytesText::from_escaped(escape(&main_syl.text).as_ref())))?;
+                                        }
+                                    }
+
+                                    // 写入翻译
+                                    if let Some((trans_text, trans_lang_opt)) = &para_to_render.translation {
+                                        if !trans_text.is_empty() {
+                                            let mut trans_span = p_writer.create_element("span")
+                                                .with_attribute(("ttm:role", "x-translation"));
+                                            if let Some(lang) = trans_lang_opt {
+                                                if !lang.is_empty() {
+                                                    trans_span = trans_span.with_attribute(("xml:lang", lang.as_str()));
+                                                }
+                                            }
+                                            trans_span.write_text_content(BytesText::from_escaped(escape(trans_text).as_ref()))?;
+                                        }
+                                    }
+
+                                    // 写入罗马音
+                                    if let Some(roma_text) = &para_to_render.romanization {
+                                        if !roma_text.is_empty() {
+                                            p_writer.create_element("span")
+                                                .with_attribute(("ttm:role", "x-roman"))
+                                                .write_text_content(BytesText::from_escaped(escape(roma_text).as_ref()))?;
+                                        }
+                                    }
+                                    Ok(())
+                                })?;
+                        }
+                        Ok(())
+                    })?;
+            }
+            Ok(())
+        })?;
+
+    writer.write_event(Event::End(BytesEnd::new("tt")))?;
+
+    String::from_utf8(buffer).map_err(ConvertError::FromUtf8)
 }

@@ -1,40 +1,53 @@
-// 导入项目中定义的类型，LysSyllable 是原始解析器（如LYS, QRC, KRC解析器）输出的音节结构，
-// TtmlSyllable 是转换为TTML中间表示时使用的音节结构。
+use std::path::PathBuf;
+
 use crate::types::{LysSyllable, TtmlSyllable};
 
-/// 声明一个宏 `log_marker!`，用于输出带有 "MARKER" 目标和行号的日志信息。
-/// 这通常用于在代码中标记特定的执行点或调试信息。
-#[macro_export] // 导出宏，使其在其他模块中可用
+use directories::ProjectDirs;
+use log::{error, info, trace, warn};
+use once_cell::sync::Lazy;
+use opencc_rust::{DefaultConfig, OpenCC, generate_static_dictionary};
+use tempfile::{TempDir, tempdir};
+
+#[macro_export]
 macro_rules! log_marker {
-    // 宏接受两个参数：$line (行号表达式) 和 $text (要记录的文本表达式)
     ($line:expr, $text:expr) => {
-        // 使用 log::info! 宏记录信息，指定目标为 "MARKER"
         log::info!(target: "MARKER", "行 {}: {}", $line, $text)
     };
 }
 
-/// 清理背景文本两端的括号。
-/// 例如，输入 "(一些文本)" 会返回 "一些文本"。
-/// 它会移除字符串开头和结尾的单个半角括号，并去除结果两端的空白。
-///
-/// # Arguments
-/// * `text` - 需要清理的文本字符串切片。
-///
-/// # Returns
-/// `String` - 清理后的字符串。
+/// 清理文本两端的括号（单个或成对）
 pub fn clean_parentheses_from_bg_text(text: &str) -> String {
-    let mut cleaned_slice = text.trim(); // 首先去除原始文本两端的空白
-
-    // 检查并移除开头的括号
-    if cleaned_slice.starts_with('(') && !cleaned_slice.is_empty() {
-        cleaned_slice = &cleaned_slice[1..]; // 切掉第一个字符
-    }
-    // 检查并移除结尾的括号
-    if cleaned_slice.ends_with(')') && !cleaned_slice.is_empty() {
-        cleaned_slice = &cleaned_slice[..cleaned_slice.len() - 1]; // 切掉最后一个字符
+    if text.is_empty() {
+        return "".to_string();
     }
 
-    cleaned_slice.trim().to_string() // 再次去除可能因移除括号而产生的空白，并转换为String
+    let first_char = text.chars().next();
+    let last_char = text.chars().last();
+
+    let has_leading_paren = first_char == Some('(');
+    let has_trailing_paren = last_char == Some(')');
+
+    let mut start_index = 0;
+    let mut end_index = text.len();
+
+    if has_leading_paren && has_trailing_paren && text.len() >= 2 {
+        // 同时有开头和结尾括号
+        start_index = text.chars().next().unwrap().len_utf8();
+        end_index = text.char_indices().last().unwrap().0;
+    } else if has_leading_paren {
+        // 只有开头括号
+        start_index = text.chars().next().unwrap().len_utf8();
+    } else if has_trailing_paren {
+        // 只有结尾括号
+        end_index = text.char_indices().last().unwrap().0;
+    }
+    let final_content_slice = if start_index >= end_index {
+        ""
+    } else {
+        &text[start_index..end_index]
+    };
+
+    final_content_slice.to_string()
 }
 
 /// 将原始音节列表（如来自 LYS, QRC, KRC 等格式的 `LysSyllable`）
@@ -198,8 +211,6 @@ pub fn post_process_ttml_syllable_line_spacing(syllables: &mut Vec<TtmlSyllable>
         // 如果所有音节的文本都为空（例如，一行纯粹的静默或空格音节，经过步骤1后可能还剩下一个空格音节），
         // 则清空整个列表。这确保不会输出只有空音节的行（除非它们有特殊含义且被保留）。
         // 实际行为取决于步骤1：如果一行全是空文本音节，步骤1后可能为空。如果剩下一个空格音节，这里会清空。
-        // 如果希望保留纯空格行（例如，一个文本为" "的音节），此逻辑可能需要调整。
-        // 当前的组合效果是，纯粹由空音节或仅含一个空格音节（且被视为空）的行会被完全移除。
         syllables.clear();
     }
 }
@@ -217,4 +228,206 @@ pub fn format_lrc_time_ms(ms: u64) -> String {
     let seconds = (ms % 60000) / 1000; // 计算秒
     let milliseconds = ms % 1000; // 计算毫秒
     format!("[{:02}:{:02}.{:03}]", minutes, seconds, milliseconds) // 格式化输出
+}
+
+pub fn get_app_data_dir() -> Option<PathBuf> {
+    if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
+        let data_dir = proj_dirs.data_local_dir();
+        if !data_dir.exists() {
+            if let Err(e) = std::fs::create_dir_all(data_dir) {
+                log::error!("[UniLyric] 无法创建应用数据目录 {:?}: {}", data_dir, e);
+                return None;
+            }
+        }
+        Some(data_dir.to_path_buf())
+    } else {
+        log::error!("[UniLyric] 无法获取应用数据目录。");
+        None
+    }
+}
+
+/// 预处理LRC内容字符串，主要用于处理QQ音乐下载的翻译LRC。
+/// 将文本内容为 "//" 的LRC行转换为空文本行（只保留时间戳部分）。
+///
+/// # Arguments
+/// * `lrc_content` - 原始的LRC多行文本字符串。
+///
+/// # Returns
+/// `String` - 处理后的LRC多行文本字符串。
+pub fn preprocess_qq_translation_lrc_content(lrc_content: String) -> String {
+    lrc_content
+        .lines() // 将输入字符串按行分割成迭代器
+        .map(|line_str| {
+            // 对每一行进行处理
+            // 尝试找到最后一个 ']' 字符，这通常是LRC时间戳的结束位置
+            if let Some(text_start_idx) = line_str.rfind(']') {
+                let timestamp_part = &line_str[..=text_start_idx]; // 提取时间戳部分 (包括 ']')
+                let text_part = line_str[text_start_idx + 1..].trim(); // 提取文本部分并去除首尾空格
+
+                if text_part == "//" {
+                    // 如果文本部分正好是 "//"，则只返回时间戳部分（即文本变为空）
+                    timestamp_part.to_string()
+                } else {
+                    // 否则，返回原始行字符串
+                    line_str.to_string()
+                }
+            } else {
+                // 如果行不包含 ']'，说明它可能不是标准的LRC行
+                String::new()
+            }
+        })
+        .collect::<Vec<String>>() // 将处理过的所有行收集到一个Vec<String>
+        .join("\n") // 再用换行符将它们连接回一个多行字符串
+}
+
+// 全局静态变量，用于存储一次性初始化后的 OpenCC 转换器实例或初始化错误。
+// Lazy 块仅在首次访问时执行。
+static OPENCC_T2S_CONVERTER: Lazy<Result<OpenCCSingleton, String>> = Lazy::new(|| {
+    trace!("[简繁转换] 首次尝试初始化 OpenCC T2S 转换器 (Lazy 模式)...");
+    OpenCCSingleton::new(DefaultConfig::T2S, "T2S")
+});
+
+/// 用于封装 OpenCC 实例及其依赖的临时目录，以确保正确的生命周期管理。
+struct OpenCCSingleton {
+    /// 持有 TempDir 以确保其生命周期与 OpenCC 实例一致。
+    /// 当 OpenCCSingleton 被销毁时，_temp_dir 也会被销毁，临时目录随之清理。
+    _temp_dir: TempDir,
+    converter: OpenCC,
+}
+
+impl OpenCCSingleton {
+    /// 创建一个新的 OpenCCSingleton 实例。
+    ///
+    /// # Arguments
+    /// * `config` - 要使用的 OpenCC 默认配置 (例如 `DefaultConfig::T2S`)。
+    /// * `config_name_str` - 配置的名称字符串，用于日志记录。
+    fn new(config: DefaultConfig, config_name_str: &str) -> Result<Self, String> {
+        // 1. 创建临时目录
+        let temp_dir = tempdir()
+            .map_err(|e| format!("为 OpenCC {} 创建临时目录失败: {}", config_name_str, e))?;
+        let dict_path = temp_dir.path();
+        trace!(
+            "[简繁转换] OpenCC {} 的临时词典目录已创建: {}",
+            config_name_str,
+            dict_path.display()
+        );
+
+        // 2. 将静态词典文件提取到临时目录
+        if let Err(e) = generate_static_dictionary(dict_path, config) {
+            return Err(format!(
+                "为 OpenCC {} 生成静态词典文件失败: {}",
+                config_name_str, e
+            ));
+        }
+        trace!(
+            "[简繁转换] OpenCC {} 的静态词典文件已提取至临时目录。",
+            config_name_str
+        );
+
+        // 3. 构建配置文件的完整路径
+        let config_file_name = config.get_file_name();
+        let config_file_path = dict_path.join(config_file_name);
+
+        // 4. 使用提取的配置文件初始化 OpenCC 实例
+        let converter = OpenCC::new(&config_file_path).map_err(|e| {
+            format!(
+                "使用 {} 配置文件 ({}) 初始化 OpenCC 失败: {}",
+                config_name_str,
+                config_file_path.display(),
+                e
+            )
+        })?;
+
+        trace!(
+            "[简繁转换] OpenCC {} 转换器初始化成功。配置文件: {}",
+            config_name_str,
+            config_file_path.display()
+        );
+        Ok(OpenCCSingleton {
+            _temp_dir: temp_dir,
+            converter,
+            // config_name: config_name_str.to_string(),
+        })
+    }
+}
+
+/// 获取对已初始化的 T2S (繁体转简体) OpenCC 转换器的静态引用。
+///
+/// 如果初始化成功，返回 `Ok(&'static OpenCC)`。
+/// 如果初始化失败，返回 `Err(&'static String)`，其中包含错误信息。
+/// 由于 `OPENCC_T2S_CONVERTER` 是静态的 `Lazy`，其内部 `Result` 的引用也是静态的。
+fn get_t2s_converter() -> Result<&'static OpenCC, &'static String> {
+    // `Lazy::force` 会确保初始化已执行，然后 `as_ref` 将 `Result<T, E>` 转换为 `Result<&T, &E>`
+    // 由于 `OPENCC_T2S_CONVERTER` 是 `&'static Lazy<...>`，所以 `&T` 和 `&E` 也是 `&'static T` 和 `&'static E`
+    OPENCC_T2S_CONVERTER
+        .as_ref()
+        .map(|singleton| &singleton.converter)
+}
+
+/// 将文本从繁体中文转换为简体中文 (使用 opencc-rust)。
+/// 如果转换失败或初始化 OpenCC 转换器失败，会记录错误并返回原始文本。
+pub fn convert_traditional_to_simplified(text: &str) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    match get_t2s_converter() {
+        Ok(converter) => {
+            // 成功获取转换器
+            if text.contains('\0') {
+                warn!(
+                    "[简繁转换] 输入文本 \"{}\" 包含null字节，可能导致OpenCC处理异常。正在尝试移除null字节后转换。",
+                    text
+                );
+                let sanitized_text = text.replace('\0', "");
+                // 如果原始文本非空但净化后变空（例如，文本只包含null字节）
+                if sanitized_text.is_empty() && !text.is_empty() {
+                    warn!("[简繁转换] 移除null字节后文本变为空。返回原始文本。");
+                    return text.to_string();
+                }
+                let simplified_text: String = converter.convert(&sanitized_text);
+
+                if text != simplified_text {
+                    // 比较的是原始带null的text和转换后文本
+                    trace!(
+                        "[简繁转换] 原文(null已处理): '{}' -> 简体: '{}'",
+                        sanitized_text, simplified_text
+                    );
+                } else if !sanitized_text.is_empty()
+                    && sanitized_text.chars().any(|c| c as u32 > 127 && c != ' ')
+                {
+                    // 检查是否包含非ASCII字符（排除空格），以避免对纯英文等文本记录不必要的“无变化”日志
+                    trace!(
+                        "[简繁转换] 文本(null已处理) '{}' 转换为简体后无变化。",
+                        sanitized_text
+                    );
+                }
+                simplified_text
+            } else {
+                let simplified_text: String = converter.convert(text);
+
+                if text != simplified_text {
+                    info!("[简繁转换] 原文: '{}' -> 简体: '{}'", text, simplified_text);
+                } else if !text.is_empty() && text.chars().any(|c| c as u32 > 127 && c != ' ') {
+                    // 检查是否包含非ASCII字符（排除空格）
+                    trace!(
+                        "[简繁转换] 文本 '{}' 转换为简体后无变化 (可能已是简体或无对应转换)。",
+                        text
+                    );
+                }
+                simplified_text
+            }
+        }
+        Err(e_str) => {
+            // e_str 是 &'static String
+            // 初始化或获取转换器失败
+            // OpenCCSingleton::new 中已经记录了详细的初始化错误日志
+            // 此处仅记录获取转换器接口失败，并提示功能可能不可用
+            error!(
+                "[简繁转换] 获取 OpenCC T2S 转换器失败: {}。繁简转换功能将不可用。返回原文。",
+                e_str
+            );
+            text.to_string()
+        }
+    }
 }

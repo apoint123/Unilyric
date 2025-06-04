@@ -192,10 +192,10 @@ pub async fn fetch_lyrics_for_song_async(
     let song_infos = search_song_info_async(client, song_keywords, None, Some(5)).await?;
 
     if song_infos.is_empty() {
-        log::warn!(
-            "[KugouFetcher] 使用关键词 '{}' 未找到任何歌曲信息。",
-            song_keywords
-        );
+        // log::warn!(
+        //     "[KugouFetcher] 使用关键词 '{}' 未找到任何歌曲信息。",
+        //     song_keywords
+        // );
         return Err(KugouError::LyricsNotFound("未找到歌曲".to_string()));
     }
 
@@ -263,11 +263,11 @@ pub async fn fetch_lyrics_for_song_async(
     .await
     {
         Ok(_) => {
-            log::warn!(
-                "[KugouFetcher] 使用关键词 '{}' 首次搜索歌词候选为空，尝试使用原始关键词 '{}'",
-                lyric_search_keyword,
-                song_keywords
-            );
+            // log::warn!(
+            //     "[KugouFetcher] 使用关键词 '{}' 首次搜索歌词候选为空，尝试使用原始关键词 '{}'",
+            //     lyric_search_keyword,
+            //     song_keywords
+            // );
             search_lyrics_candidates_async(client, song_keywords, duration_ms, hash_for_search)
                 .await?
         }
@@ -283,10 +283,7 @@ pub async fn fetch_lyrics_for_song_async(
         }
     };
     if lyrics_candidates.is_empty() {
-        log::warn!(
-            "[KugouFetcher] 使用所有尝试后，仍未找到歌词候选 : {}",
-            lyric_search_keyword
-        );
+        log::warn!("[KugouFetcher] 未找到歌词候选 : {}", lyric_search_keyword);
         return Err(KugouError::NoCandidatesFound);
     }
     let best_lyric_candidate = lyrics_candidates

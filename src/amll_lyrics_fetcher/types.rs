@@ -71,7 +71,6 @@ impl fmt::Display for AmllSearchField {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AmllIndexEntry {
-    pub id: String,
     pub metadata: Vec<(String, Vec<String>)>,
     #[serde(rename = "rawLyricFile")]
     pub raw_lyric_file: String,

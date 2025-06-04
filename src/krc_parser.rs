@@ -66,7 +66,7 @@ pub fn load_krc_from_string(
                     key: "KrcInternalTranslation".to_string(),
                     value: base64_value.as_str().to_string(),
                 });
-                log::debug!("[KRC 解析] 行 {}: 处理KRC特有language标签。", line_number);
+                log::info!("[KRC 解析] 行 {}: 处理KRC特有language标签。", line_number);
             }
             continue; // 处理完 language 标签后跳到下一行
         }
@@ -88,7 +88,7 @@ pub fn load_krc_from_string(
                             key: key.clone(),
                             value: value.clone(),
                         });
-                        log::debug!(
+                        log::trace!(
                             "[KRC 解析] 行 {}: 处理标准元数据标签: [{}:{}]",
                             line_number,
                             key,
@@ -147,7 +147,7 @@ pub fn load_krc_from_string(
                     let unprocessed_text =
                         &syllables_part[current_char_pos_in_syllables_part..syl_match_start];
                     if !unprocessed_text.trim().is_empty() {
-                        log::debug!(
+                        log::info!(
                             "[KRC 解析] 行 {}: 在音节时间戳 '{}' 前发现未处理文本: '{}'",
                             line_number,
                             syl_cap.get(0).unwrap().as_str(),

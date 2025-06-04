@@ -22,7 +22,6 @@ use regex::Regex;
 //   - `\.`: 匹配点号。
 //   - `\d{1,6}`: 匹配1到6位数字（毫秒部分）。
 // - `\]`: 匹配右方括号 `]`。
-// `expect` 用于在正则表达式编译失败时 panic，因为这是程序启动时的关键部分。
 static SPL_SINGLE_LINE_START_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^\[(\d{1,3}:\d{1,2}\.\d{1,6})\]").expect("未能编译 SPL_SINGLE_LINE_START_REGEX")
 });
@@ -33,9 +32,6 @@ static SPL_SINGLE_LINE_START_REGEX: Lazy<Regex> = Lazy::new(|| {
 // - `\[(\d{1,3}:\d{1,2}\.\d{1,6})\]`: 匹配并捕获方括号内的时间戳（捕获组1）。
 // - `|`: 或操作符。
 // - `<(\d{1,3}:\d{1,2}\.\d{1,6})>`: 匹配并捕获尖括号内的时间戳（捕获组2）。
-//   注意：实际使用时，需要检查哪个捕获组匹配成功。
-//   如果方括号匹配，则caps.get(1)有值；如果尖括号匹配，则caps.get(2)有值。
-//    后续代码中 `inline_match.as_str()` 获取整个匹配，然后判断首尾字符来提取内部时间戳，这样更简单。
 static SPL_INLINE_TIMESTAMP_REGEX: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"\[(\d{1,3}:\d{1,2}\.\d{1,6})\]|<(\d{1,3}:\d{1,2}\.\d{1,6})>")
         .expect("未能编译 SPL_INLINE_TIMESTAMP_REGEX")

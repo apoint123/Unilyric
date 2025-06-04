@@ -1,5 +1,6 @@
 use crate::types::{
-    ConvertError, LqeSection, LrcLine, LyricFormat, ParsedLqeData, ParsedSourceData, TtmlParagraph,
+    self, ConvertError, LqeSection, LrcLine, LyricFormat, ParsedLqeData, ParsedSourceData,
+    TtmlParagraph,
 };
 use crate::{
     lrc_parser, lyricify_lines_parser, lyricify_lines_to_ttml_data, lys_parser, lys_to_ttml_data,
@@ -31,7 +32,16 @@ fn parse_lyrics(section: &LqeSection) -> Result<Vec<TtmlParagraph>, ConvertError
 }
 
 fn parse_embedded_lrc(section_content: &str) -> Result<Vec<LrcLine>, ConvertError> {
-    let (lrc_lines, _lrc_meta) = lrc_parser::parse_lrc_text_to_lines(section_content)?;
+    let (display_lrc_lines, _bilingual_translations, _lrc_meta) =
+        lrc_parser::parse_lrc_text_to_lines(section_content)?;
+
+    let lrc_lines: Vec<LrcLine> = display_lrc_lines
+        .into_iter()
+        .filter_map(|display_line| match display_line {
+            types::DisplayLrcLine::Parsed(lrc_line) => Some(lrc_line),
+            _ => None, // 忽略原始行或无法解析的行
+        })
+        .collect();
     Ok(lrc_lines)
 }
 

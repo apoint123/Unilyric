@@ -172,7 +172,7 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
     Ok(hours * 3_600_000 + minutes * 60_000 + seconds * 1000 + milliseconds)
 }
 
-// 枚举：表示 TTML 中 <span> 标签可能的内容类型
+/// 枚举：表示 TTML 中 <span> 标签可能的内容类型
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SpanContentType {
     None,                // 未指定或通用内容
@@ -182,15 +182,16 @@ enum SpanContentType {
     BackgroundContainer, // 背景歌词容器 (通常是 <span ttm:role="x-bg">)
 }
 
-// 枚举：表示当前解析的文本应附加到主歌词部分还是背景歌词部分
+/// 枚举：表示当前解析的文本应附加到主歌词部分还是背景歌词部分
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum TextTargetContext {
     Main,       // 目标是主歌词
     Background, // 目标是背景歌词
 }
 
-// 枚举：记录上一个结束的 <span> 标签是否是音节，以及是主音节还是背景音节
-// 用于处理音节后的空格（如果空格在 <span> 标签之外作为纯文本节点存在）
+/// 枚举：记录上一个结束的 <span> 标签是否是音节，以及是主音节还是背景音节
+///
+/// 用于处理音节后的空格（如果空格在 <span> 标签之外作为纯文本节点存在）
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LastEndedSyllableSpanInfo {
     None,               // 上一个结束的 span 不是音节，或者是第一个音节
@@ -217,8 +218,6 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
     let mut paragraphs: Vec<TtmlParagraph> = Vec::new(); // 存储歌词段落
     let mut metadata: Vec<AssMetadata> = Vec::new(); // 存储元数据
     let mut is_line_timing_mode = false; // 标记是否为逐行歌词
-    // 标记是否检测到TTML源文件可能经过了格式化（例如，IDE自动格式化引入了标签间的换行和缩进）
-    // 这种情况可能导致音节间的空格解析不准确。
     let mut detected_formatted_ttml_or_normalized_text = false;
     let mut first_translation_lang_code: Option<String> = None;
 
@@ -315,7 +314,7 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                     "songwriter" if in_songwriters_tag => {
                         // <songwriter>
                         in_songwriter_tag = true;
-                        current_songwriter_name.clear(); // 清空当前的作曲者名称累加器
+                        current_songwriter_name.clear();
                     }
                     // <ttm:agent> 标签
                     "agent" if full_name_bytes.as_ref() == b"ttm:agent" && in_metadata_section => {
@@ -617,19 +616,22 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         // 逐字歌词处理
                         // 检查是否是音节后的空格文本
                         if last_ended_syllable_span_info != LastEndedSyllableSpanInfo::None {
-                            // 如果文本包含换行符，或者不仅仅是单个空格，则可能意味着TTML源文件被格式化过
-                            if !detected_formatted_ttml_or_normalized_text
-                                && text_str.contains('\n')
+                            // 如果文本节点包含换行符，并且之前未检测到格式化，则设置标志。
+                            if text_str.contains('\n')
+                                && !detected_formatted_ttml_or_normalized_text
                             {
+                                // log::debug!(target: "unilyric::ttml_parser", "[TTML 处理] 检测到可能的格式化TTML (span之间存在换行符)");
                                 detected_formatted_ttml_or_normalized_text = true;
                             }
-                            if !detected_formatted_ttml_or_normalized_text && text_str == " " {
-                                // 精确匹配单个空格
+
+                            // 关键修改：检查文本节点是否只包含空白字符 (一个或多个)
+                            if !text_str.is_empty() && text_str.chars().all(char::is_whitespace) {
+                                // log::debug!(target: "unilyric::ttml_parser", "[TTML DEBUG] 纯空白文本节点 '{}' 检测到。为前一个音节设置 ends_with_space=true。", text_str);
                                 if let Some(para) = current_paragraph_word_mode.as_mut() {
                                     match last_ended_syllable_span_info {
-                                        // 为上一个音节设置 ends_with_space
                                         LastEndedSyllableSpanInfo::MainSyllable => {
                                             if let Some(last_syl) = para.main_syllables.last_mut() {
+                                                // If there's an inter-syllable space, the preceding syllable logically ends with a space.
                                                 last_syl.ends_with_space = true;
                                             }
                                         }
@@ -641,13 +643,19 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                                 }
                                             }
                                         }
-                                        _ => {}
+                                        _ => {} // Should not happen if last_ended_syllable_span_info is not None
                                     }
                                 }
+                            } else if !text_str.is_empty() {
+                                // 文本节点在音节之间，但包含非空白字符。这通常是无效的TTML结构。
+                                // log::warn!(target: "unilyric::ttml_parser", "[TTML 处理警告] 在音节span之间检测到包含非空白字符的文本节点: '{}'。此文本将被忽略。", text_str);
                             }
-                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::None; // 重置
+                            // 如果 text_str 为空，则不执行任何操作，因为空文本节点不应影响空格。
+
+                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::None; // 重置状态
                         } else {
-                            // 否则，文本属于当前活动的 <span>
+                            // 文本属于当前活动的 <span> (例如，在 <span ttm:role="x-translation">TEXT</span> 内部)
+                            // 或者在逐字模式下，文本直接在 <p> 内但不在任何 span 内
                             if !span_type_stack_word_mode.is_empty() {
                                 current_span_text_accumulator.push_str(text_str);
                             }
@@ -749,49 +757,98 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                             if let (Some(start_ms), Some(end_ms)) =
                                                 (begin_ms_opt, end_ms_opt)
                                             {
-                                                let syllable = TtmlSyllable {
-                                                    text: raw_accumulated_text,
-                                                    start_ms,
-                                                    end_ms,
-                                                    ends_with_space: false,
-                                                };
-                                                match context {
-                                                    // 根据上下文添加到主音节或背景音节
-                                                    TextTargetContext::Main => {
-                                                        if !syllable.text.is_empty()
-                                                            || (syllable.end_ms > syllable.start_ms)
-                                                        {
-                                                            para.main_syllables.push(syllable);
-                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::MainSyllable;
-                                                        } else {
-                                                            last_ended_syllable_span_info =
-                                                                LastEndedSyllableSpanInfo::None;
-                                                        }
-                                                    }
-                                                    TextTargetContext::Background => {
-                                                        if !syllable.text.is_empty()
-                                                            || (syllable.end_ms > syllable.start_ms)
-                                                        {
-                                                            let bg_sec = para
-                                                                .background_section
-                                                                .get_or_insert_with(
-                                                                    Default::default,
-                                                                );
-                                                            if bg_sec.syllables.is_empty()
-                                                                && bg_sec.start_ms == 0
-                                                                && bg_sec.end_ms == 0
-                                                            {
-                                                                if let Some(container_span_info) = span_type_stack_word_mode.iter().find(|(st,_,_,_,_)| *st == SpanContentType::BackgroundContainer) { bg_sec.start_ms = container_span_info.2.unwrap_or(para.p_start_ms); bg_sec.end_ms = container_span_info.3.unwrap_or(para.p_end_ms); }
-                                                            }
-                                                            bg_sec.syllables.push(syllable);
-                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
-                                                        } else {
-                                                            last_ended_syllable_span_info =
-                                                                LastEndedSyllableSpanInfo::None;
-                                                        }
+                                                let accumulated_text = raw_accumulated_text; // raw_accumulated_text is already cloned
+
+                                                let core_text_str: String;
+                                                let mut syllable_has_trailing_space_internally =
+                                                    false;
+
+                                                if !accumulated_text.is_empty()
+                                                    && accumulated_text
+                                                        .chars()
+                                                        .all(char::is_whitespace)
+                                                {
+                                                    // Case 1: Accumulated text is purely whitespace (e.g., "  ") and has time.
+                                                    // Normalize to a single space if it's a timed space.
+                                                    core_text_str = " ".to_string();
+                                                    // This single space is the content; it doesn't imply an *additional* trailing space via ends_with_space.
+                                                } else {
+                                                    // Case 2: Accumulated text has non-whitespace characters or is empty.
+                                                    let trimmed_text = accumulated_text.trim_end();
+                                                    core_text_str = trimmed_text.to_string();
+                                                    if accumulated_text.len() > trimmed_text.len() {
+                                                        // If trimming removed characters, it means there was trailing whitespace.
+                                                        syllable_has_trailing_space_internally =
+                                                            true;
                                                     }
                                                 }
+
+                                                // Only create a TtmlSyllable if there's actual content
+                                                // or if it was an intentionally timed empty/space syllable.
+                                                let is_meaningful_empty_or_space_syl =
+                                                    (core_text_str.is_empty()
+                                                        || core_text_str == " ")
+                                                        && end_ms > start_ms;
+
+                                                if !core_text_str.is_empty()
+                                                    || is_meaningful_empty_or_space_syl
+                                                {
+                                                    let syllable_to_add = TtmlSyllable {
+                                                        text: core_text_str,
+                                                        start_ms,
+                                                        end_ms,
+                                                        // The ends_with_space flag is now true if the original internal text had trailing spaces.
+                                                        // It can be further set to true by an inter-syllable space node.
+                                                        ends_with_space:
+                                                            syllable_has_trailing_space_internally,
+                                                    };
+
+                                                    match context {
+                                                        TextTargetContext::Main => {
+                                                            if para.main_syllables.is_empty()
+                                                                && syllable_to_add.start_ms
+                                                                    < para.p_start_ms
+                                                                && para.p_start_ms != 0
+                                                            {
+                                                                // Adjust paragraph start time if first syllable starts earlier
+                                                                // This can happen with some oddly structured TTMLs.
+                                                                // log::debug!(target: "unilyric::ttml_parser", "Adjusting p_start_ms from {} to {} for main syllable", para.p_start_ms, syllable_to_add.start_ms);
+                                                                // para.p_start_ms = syllable_to_add.start_ms;
+                                                            }
+                                                            para.main_syllables
+                                                                .push(syllable_to_add);
+                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::MainSyllable;
+                                                        }
+                                                        TextTargetContext::Background => {
+                                                            let bg_sec = para.background_section.get_or_insert_with(|| {
+                        // Initialize BackgroundSection with parent <p> times as a fallback,
+                        // or with the x-bg span's times if available and more accurate.
+                        // The x-bg span's times were captured when its StartEvent was processed.
+                        let bg_span_info_on_stack = span_type_stack_word_mode.iter().find(|(st, _, _, _, _)| *st == SpanContentType::BackgroundContainer);
+                        let bg_start = bg_span_info_on_stack.and_then(|s| s.2).unwrap_or(para.p_start_ms);
+                        let bg_end = bg_span_info_on_stack.and_then(|s| s.3).unwrap_or(para.p_end_ms);
+                        BackgroundSection { start_ms: bg_start, end_ms: bg_end, ..Default::default() }
+                    });
+                                                            if bg_sec.syllables.is_empty()
+                                                                && syllable_to_add.start_ms
+                                                                    < bg_sec.start_ms
+                                                                && bg_sec.start_ms != 0
+                                                            {
+                                                                // log::debug!(target: "unilyric::ttml_parser", "Adjusting bg_sec.start_ms from {} to {} for bg syllable", bg_sec.start_ms, syllable_to_add.start_ms);
+                                                                // bg_sec.start_ms = syllable_to_add.start_ms;
+                                                            }
+                                                            bg_sec.syllables.push(syllable_to_add);
+                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
+                                                        }
+                                                    }
+                                                } else {
+                                                    // No meaningful syllable content was formed (e.g. empty text with no duration)
+                                                    last_ended_syllable_span_info =
+                                                        LastEndedSyllableSpanInfo::None;
+                                                }
                                             } else {
+                                                // Syllable span without begin/end times, generally ignore or log.
+                                                // log::warn!(target: "unilyric::ttml_parser", "[TTML 处理警告] 音节span缺少时间信息，已忽略。文本: '{}'", raw_accumulated_text);
                                                 last_ended_syllable_span_info =
                                                     LastEndedSyllableSpanInfo::None;
                                             }
@@ -850,18 +907,113 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                             last_ended_syllable_span_info =
                                                 LastEndedSyllableSpanInfo::None;
                                         }
+                                        SpanContentType::BackgroundContainer => {
+                                            let trimmed_direct_text = raw_accumulated_text.trim();
+
+                                            if !trimmed_direct_text.is_empty() {
+                                                if let Some(para_mut) =
+                                                    current_paragraph_word_mode.as_mut()
+                                                {
+                                                    let bg_section_has_no_syllables = para_mut
+                                                        .background_section
+                                                        .as_ref()
+                                                        .is_none_or(|bs| bs.syllables.is_empty());
+
+                                                    if bg_section_has_no_syllables {
+                                                        if let (
+                                                            Some(bg_start_ms),
+                                                            Some(bg_end_ms),
+                                                        ) = (begin_ms_opt, end_ms_opt)
+                                                        {
+                                                            if bg_end_ms > bg_start_ms
+                                                                || (!trimmed_direct_text.is_empty()
+                                                                    && bg_end_ms == bg_start_ms)
+                                                            {
+                                                                let syllable_text_content =
+                                                                    raw_accumulated_text.clone();
+
+                                                                let ends_with_space_flag =
+                                                                    syllable_text_content
+                                                                        .ends_with(' ')
+                                                                        && syllable_text_content
+                                                                            .len()
+                                                                            > 1
+                                                                        && !syllable_text_content
+                                                                            .trim_end()
+                                                                            .is_empty();
+
+                                                                let syllable = TtmlSyllable {
+                                                                    text: syllable_text_content,
+                                                                    start_ms: bg_start_ms,
+                                                                    end_ms: bg_end_ms,
+                                                                    ends_with_space:
+                                                                        ends_with_space_flag,
+                                                                };
+
+                                                                let bg_sec = para_mut
+                                                                    .background_section
+                                                                    .get_or_insert_with(|| {
+                                                                        BackgroundSection {
+                                                                            start_ms: bg_start_ms,
+                                                                            end_ms: bg_end_ms,
+                                                                            ..Default::default()
+                                                                        }
+                                                                    });
+                                                                bg_sec.start_ms = bg_sec
+                                                                    .start_ms
+                                                                    .min(bg_start_ms);
+                                                                bg_sec.end_ms =
+                                                                    bg_sec.end_ms.max(bg_end_ms);
+
+                                                                bg_sec.syllables.push(syllable);
+                                                                last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
+                                                            } else if !trimmed_direct_text
+                                                                .is_empty()
+                                                            {
+                                                                log::warn!(
+                                                                    target: "unilyric::ttml_parser",
+                                                                    "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但时间戳无效 ({}ms - {}ms)。该文本未作为音节处理。",
+                                                                    raw_accumulated_text, bg_start_ms, bg_end_ms
+                                                                );
+                                                                last_ended_syllable_span_info =
+                                                                    LastEndedSyllableSpanInfo::None;
+                                                            } else {
+                                                                last_ended_syllable_span_info =
+                                                                    LastEndedSyllableSpanInfo::None;
+                                                            }
+                                                        } else {
+                                                            log::warn!(
+                                                                target: "unilyric::ttml_parser",
+                                                                "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但该 x-bg span 缺少时间信息。该文本未作为音节处理。",
+                                                                raw_accumulated_text
+                                                            );
+                                                            last_ended_syllable_span_info =
+                                                                LastEndedSyllableSpanInfo::None;
+                                                        }
+                                                    } else if !trimmed_direct_text.is_empty() {
+                                                        log::warn!(
+                                                            target: "unilyric::ttml_parser",
+                                                            "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但也包含嵌套音节。该直接文本被忽略。",
+                                                            raw_accumulated_text
+                                                        );
+                                                    }
+                                                } else {
+                                                    last_ended_syllable_span_info =
+                                                        LastEndedSyllableSpanInfo::None;
+                                                }
+                                            }
+                                        }
                                         _ => {
                                             last_ended_syllable_span_info =
                                                 LastEndedSyllableSpanInfo::None;
-                                        } // 其他 span 类型
+                                        }
                                     }
                                 }
                             }
                         } else {
                             last_ended_syllable_span_info = LastEndedSyllableSpanInfo::None;
-                        } // span 栈为空
+                        }
                     }
-                    // 处理元数据相关的结束标签
                     "metadata" if in_metadata_section => {
                         in_metadata_section = false;
                     }
@@ -897,21 +1049,20 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         in_agent_tag = false;
                         current_agent_id_for_name = None;
                     }
-                    _ => {} // 其他结束标签
+                    _ => {}
                 }
             }
-            Ok(Event::Eof) => break, // 文件结束
+            Ok(Event::Eof) => break,
             Err(quick_xml_error) => {
-                // XML 解析错误
                 let error_msg = format!(
-                    "[TTML 处理] XML解析错误于位置 {}: {}",
+                    "[TTML 处理] XML解析错误，位置 {}: {}",
                     reader.buffer_position(),
                     quick_xml_error
                 );
                 error!(target: "unilyric::ttml_parser", "{}", error_msg);
                 return Err(ConvertError::Xml(quick_xml_error));
             }
-            _ => {} // 其他事件类型忽略
+            _ => {}
         }
     }
     info!(target: "unilyric::ttml_parser", "[TTML 处理] 解析完成. 共 {} 段落, {} 条元数据. 行模式: {}, 格式化: {}", paragraphs.len(), metadata.len(), is_line_timing_mode, detected_formatted_ttml_or_normalized_text);

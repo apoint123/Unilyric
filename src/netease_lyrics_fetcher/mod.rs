@@ -33,10 +33,10 @@ pub async fn search_and_fetch_first_netease_lyrics(
         .result
         .and_then(|r| r.songs.into_iter().next())
         .ok_or_else(|| {
-            log::warn!(
-                "[NeteaseLyricsFetcher] 使用关键词 '{}' 未找到歌曲",
-                keywords
-            );
+            // log::warn!(
+            //     "[NeteaseLyricsFetcher] 使用关键词 '{}' 未找到歌曲",
+            //     keywords
+            // );
             NeteaseError::SongNotFound(keywords.to_string())
         })?;
 

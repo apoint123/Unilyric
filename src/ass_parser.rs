@@ -270,7 +270,7 @@ pub fn parse_actor(
         // 如果是无引号的值被捕获，但规则可能要求引号（取决于具体规范或期望），这里可以添加警告。
         // 当前逻辑：只要正则匹配到，就尝试使用。
         if is_unquoted_capture && extracted_value.is_some() {
-            log::debug!(
+            log::info!(
                 "行 {}: itunes:song-part 的值 ('{}') 未用引号包裹，但仍被解析。",
                 line_num,
                 extracted_value.unwrap()

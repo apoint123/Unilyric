@@ -54,7 +54,7 @@ pub fn load_from_string(json_content: &str) -> Result<ParsedJsonDataBundle, Conv
         ttml_internal_metadata,
         is_line_timed_val,
         detected_formatted,
-        detected_ttml_trans_lang, // 新增：接收检测到的翻译语言
+        detected_ttml_trans_lang,
     ) = match ttml_parser::parse_ttml_from_string(ttml_string_from_json_attributes) {
         Ok(result_tuple) => result_tuple,
         Err(e) => {

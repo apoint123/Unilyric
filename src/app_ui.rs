@@ -1,22 +1,29 @@
-// 导入 eframe::egui 模块，这是主要的GUI库
-use eframe::egui;
-use egui::{Button, ComboBox, ScrollArea, Spinner, TextEdit, Window};
-// 导入 log::LevelFilter，用于设置日志级别
-use crate::amll_lyrics_fetcher::AmllSearchField;
-use log::LevelFilter;
-// 从 app模块导入应用核心结构和状态枚举，以及元数据条目结构
-use crate::app::{
-    AmllIndexDownloadState, AmllTtmlDownloadState, EditableMetadataEntry, KrcDownloadState,
-    NeteaseDownloadState, QqMusicDownloadState, UniLyricApp,
-};
-// 从 types 模块导入 LrcContentType（用于区分翻译/罗马音LRC）和 LyricFormat（歌词格式枚举）
-use crate::types::{LrcContentType, LyricFormat};
-// 导入 rand::Rng，用于生成随机数 (例如为元数据条目生成唯一ID)
-use rand::Rng;
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
-// 定义一些UI布局相关的常量
-const TITLE_ALIGNMENT_OFFSET: f32 = 6.0; // 标题文本的对齐偏移量
-const BUTTON_STRIP_SPACING: f32 = 4.0; // 按钮条中按钮之间的间距
+use crate::amll_connector::{
+    AMLLConnectorConfig, ConnectorCommand, WebsocketStatus, amll_connector_manager,
+};
+use crate::amll_lyrics_fetcher::AmllSearchField;
+use crate::app_definition::UniLyricApp;
+
+use crate::types::{
+    AmllIndexDownloadState, AmllTtmlDownloadState, AutoSearchSource, AutoSearchStatus,
+    CanonicalMetadataKey, DisplayLrcLine, EditableMetadataEntry, KrcDownloadState, LrcContentType,
+    LyricFormat, NeteaseDownloadState, ProcessedLyricsSourceData, QqMusicDownloadState,
+    SourceConfigTuple,
+};
+
+use eframe::egui::{
+    self, Align, Button, Color32, ComboBox, Layout, ScrollArea, Spinner, TextEdit, Window,
+};
+use egui::TextWrapMode;
+use log::LevelFilter;
+use rand::Rng;
+use std::fmt::Write;
+
+const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
+const BUTTON_STRIP_SPACING: f32 = 4.0;
 
 // 为 UniLyricApp 实现UI绘制相关的方法
 impl UniLyricApp {
@@ -187,7 +194,7 @@ impl UniLyricApp {
             if source_is_lrc_for_target_restriction
                 && !matches!(
                     self.target_format,
-                    LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc
+                    LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc | LyricFormat::Ttml
                 )
             {
                 self.target_format = LyricFormat::Lrc; // 默认切换到LRC自身
@@ -221,11 +228,14 @@ impl UniLyricApp {
                         if source_is_lrc_for_target_restriction {
                             if !matches!(
                                 *fmt_option,
-                                LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc
+                                LyricFormat::Lqe
+                                    | LyricFormat::Spl
+                                    | LyricFormat::Lrc
+                                    | LyricFormat::Ttml
                             ) {
                                 enabled = false;
                                 hover_text_for_disabled =
-                                    Some("LRC源格式只能输出为LQE, SPL, 或 LRC".to_string());
+                                    Some("LRC源格式只能输出为LQE, SPL, TTML 或 LRC".to_string());
                             }
                         }
                         // 规则2: 如果源是逐行歌词，目标不能是严格的逐字歌词
@@ -271,6 +281,21 @@ impl UniLyricApp {
 
             // --- 格式更改后的处理逻辑 ---
             if source_format_changed_this_frame || target_format_changed_this_frame {
+                {
+                    let mut app_settings_guard = self.app_settings.lock().unwrap();
+                    app_settings_guard.last_source_format = self.source_format;
+                    app_settings_guard.last_target_format = self.target_format;
+                    if let Err(e) = app_settings_guard.save() {
+                        log::error!("[UniLyricApp] 自动保存源/目标格式到设置失败: {}", e);
+                    } else {
+                        log::trace!(
+                            "[UniLyricApp] 已自动保存源格式 ({:?}) 和目标格式 ({:?}) 到设置。",
+                            self.source_format,
+                            self.target_format
+                        );
+                    }
+                }
+
                 // 再次检查并自动切换目标格式的逻辑 (作为保险)
                 if (Self::source_format_is_line_timed(self.source_format)
                     || (matches!(
@@ -279,262 +304,320 @@ impl UniLyricApp {
                     ) && self.source_is_line_timed))
                     && truly_word_based_formats_requiring_syllables.contains(&self.target_format)
                     && self.source_format != LyricFormat::Lrc
-                // 如果源是LRC，则不执行这个自动切换，因为上面已经限制了目标
                 {
                     log::info!(
                         "[Unilyric] 源格式为逐行（非LRC），但目标格式为逐字，已自动切换为LRC"
                     );
-                    self.target_format = LyricFormat::Lrc; // 逐行源默认转LRC
+                    self.target_format = LyricFormat::Lrc;
                 }
 
-                if source_format_changed_this_frame {
-                    // 如果是源格式改变
-                    log::info!("[UniLyricApp] 源格式已更改为 {:?}.", self.source_format);
-                    // 如果输入框有文本，或者新选择的源格式是LRC（LRC可能直接作为输入内容），则触发转换
-                    if !self.input_text.is_empty() || self.source_format == LyricFormat::Lrc {
-                        self.handle_convert(); // 重新转换
-                    } else {
-                        self.clear_derived_data(); // 清理已解析的数据
-                        self.generate_target_format_output(); // 尝试基于现有状态生成输出 (可能为空)
-                    }
-                } else if target_format_changed_this_frame {
-                    // 仅目标格式改变
-                    log::info!(
-                        "[UniLyricApp] 目标格式已更改为 {:?}. 重新生成输出。",
+                if !self.input_text.trim().is_empty() {
+                    log::trace!(
+                        "[UniLyric Toolbar] 格式更改 (源: {:?}, 目标: {:?})，输入非空，调用 handle_convert。",
+                        self.source_format,
                         self.target_format
                     );
-                    self.output_text.clear(); // 清空旧输出
-                    self.generate_target_format_output(); // 生成新格式的输出
+                    self.handle_convert();
+                } else {
+                    log::trace!(
+                        "[UniLyric Toolbar] 格式更改 (源: {:?}, 目标: {:?})，输入为空，清理并尝试生成空输出。",
+                        self.source_format,
+                        self.target_format
+                    );
+                    self.clear_derived_data();
+                    self.output_text.clear();
+                    if self.target_format == LyricFormat::Lrc
+                        && self.metadata_store.lock().unwrap().is_empty()
+                        && self.parsed_ttml_paragraphs.is_none()
+                    {
+                        // 如果目标是LRC，且没有元数据和歌词内容，输出就是空的
+                        // self.output_text 已经被 clear()
+                    } else {
+                        // 对于其他格式或LRC有元数据的情况，尝试生成
+                        self.generate_target_format_output();
+                    }
                 }
             }
-            // --- 格式更改处理结束 ---
 
             // --- 工具栏右侧按钮 ---
-            ui_bar.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui_right| {
-                    if ui_right.button("元数据").clicked() {
-                        self.show_metadata_panel = true;
-                    } // 打开元数据编辑面板
-                    let log_button_text = "查看日志";
-                    // 切换日志面板的显示状态，如果点击后变为显示，则清除新日志提示
-                    if ui_right
-                        .toggle_value(&mut self.show_bottom_log_panel, log_button_text)
-                        .clicked()
-                        && self.show_bottom_log_panel
-                    {
+            ui_bar.with_layout(Layout::right_to_left(Align::Center), |ui_right| {
+                ui_right.menu_button("视图", |view_menu| {
+                    view_menu.checkbox(&mut self.show_markers_panel, "标记面板");
+                    view_menu.checkbox(&mut self.show_translation_lrc_panel, "翻译LRC面板");
+                    view_menu.checkbox(&mut self.show_romanization_lrc_panel, "罗马音LRC面板");
+                    view_menu.separator();
+
+                    let amll_connector_feature_enabled = self.media_connector_config.lock().unwrap().enabled;
+
+                    view_menu.add_enabled_ui(amll_connector_feature_enabled, |ui_enabled_check| {
+                        ui_enabled_check.checkbox(&mut self.show_amll_connector_sidebar, "AMLL Connector侧边栏");
+                    }).response.on_disabled_hover_text("请在设置中启用 AMLL Connector 功能");
+                    view_menu.separator();
+                    view_menu.checkbox(&mut self.show_bottom_log_panel, "日志面板");
+                     if self.show_bottom_log_panel && self.new_trigger_log_exists {
                         self.new_trigger_log_exists = false;
                     }
-                    // 文本自动换行复选框
-                    if ui_right.checkbox(&mut self.wrap_text, "自动换行").changed() {
-                        // 可以在这里触发UI重绘或重新布局，如果需要的话
-                    }
-                    // 设置按钮
-                    if ui_right.button("设置").clicked() {
-                        // 打开设置窗口前，将当前应用的设置复制到临时编辑变量中
-                        self.temp_edit_settings = self.app_settings.lock().unwrap().clone();
-                        self.show_settings_window = true;
-                    }
-                },
-            );
+                });
+                ui_right.add_space(BUTTON_STRIP_SPACING);
+                if ui_right.button("元数据").clicked() { self.show_metadata_panel = true; }
+                ui_right.add_space(BUTTON_STRIP_SPACING);
+                if ui_right.checkbox(&mut self.wrap_text, "自动换行").changed() { /* UI重绘会自动处理 */ }
+                ui_right.add_space(BUTTON_STRIP_SPACING);
+                if ui_right.button("设置").clicked() { 
+                    self.temp_edit_settings = self.app_settings.lock().unwrap().clone();
+                    self.show_settings_window = true;
+                }
+            });
         });
     }
 
     /// 绘制应用设置窗口。
     pub fn draw_settings_window(&mut self, ctx: &egui::Context) {
-        let mut is_settings_window_open = self.show_settings_window; // 控制窗口的打开/关闭状态
+        let mut is_settings_window_open = self.show_settings_window;
 
-        // 创建一个模态窗口
         egui::Window::new("应用程序设置")
-            .open(&mut is_settings_window_open) // 绑定到可变状态，允许通过标题栏关闭
-            .resizable(true) // 允许调整窗口大小
-            .default_width(400.0) // 默认宽度
-            .scroll([false, true]) // 垂直方向可滚动
+            .open(&mut is_settings_window_open)
+            .resizable(true)
+            .default_width(500.0)
+            .scroll([false, true])
             .show(ctx, |ui| {
-                // 窗口内容构建闭包
-                // let mut settings_have_changed_in_ui = false; // 跟踪UI中是否有更改 (当前未使用此变量的返回值)
-
-                // 使用 Grid 布局来对齐标签和控件
-                egui::Grid::new("settings_grid")
-                    .num_columns(2) // 两列布局
-                    .spacing([40.0, 4.0]) // 列间距和行间距
-                    .striped(true) // 条纹背景
+                 egui::Grid::new("log_settings_grid") 
+                    .num_columns(2)
+                    .spacing([40.0, 4.0])
+                    .striped(true)
                     .show(ui, |grid_ui| {
-                        grid_ui.heading("日志设置"); // 分组标题
-                        grid_ui.end_row(); // 结束当前行
+                        grid_ui.heading("日志设置");
+                        grid_ui.end_row();
 
                         grid_ui.label("启用文件日志:");
-                        // 复选框，绑定到临时设置变量
-                        /*settings_have_changed_in_ui |=*/
-                        grid_ui
-                            .checkbox(
-                                &mut self.temp_edit_settings.log_settings.enable_file_log,
-                                "",
-                            )
-                            .changed();
+                        grid_ui.checkbox(&mut self.temp_edit_settings.log_settings.enable_file_log, "");
                         grid_ui.end_row();
 
                         grid_ui.label("文件日志级别:");
-                        // 下拉框选择文件日志级别
-                        /*settings_have_changed_in_ui |=*/
-                        egui::ComboBox::from_id_salt("file_log_level_combo")
-                            .selected_text(format!(
-                                "{:?}",
-                                self.temp_edit_settings.log_settings.file_log_level
-                            ))
+                        ComboBox::from_id_salt("file_log_level_combo_settings")
+                            .selected_text(format!("{:?}", self.temp_edit_settings.log_settings.file_log_level))
                             .show_ui(grid_ui, |ui_combo| {
-                                let mut changed_in_combo = false;
-                                // 为每个日志级别添加一个可选条目
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Off,
-                                        "Off",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Error,
-                                        "Error",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Warn,
-                                        "Warn",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Info,
-                                        "Info",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Debug,
-                                        "Debug",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.file_log_level,
-                                        LevelFilter::Trace,
-                                        "Trace",
-                                    )
-                                    .changed();
-                                changed_in_combo
-                            })
-                            .inner
-                            .unwrap_or(false);
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Off, "Off");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Error, "Error");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Warn, "Warn");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Info, "Info");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Debug, "Debug");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.file_log_level, LevelFilter::Trace, "Trace");
+                            });
                         grid_ui.end_row();
 
                         grid_ui.label("控制台日志级别:");
-                        /*settings_have_changed_in_ui |=*/
-                        egui::ComboBox::from_id_salt("console_log_level_combo")
-                            .selected_text(format!(
-                                "{:?}",
-                                self.temp_edit_settings.log_settings.console_log_level
-                            ))
+                        ComboBox::from_id_salt("console_log_level_combo_settings")
+                            .selected_text(format!("{:?}", self.temp_edit_settings.log_settings.console_log_level))
                             .show_ui(grid_ui, |ui_combo| {
-                                let mut changed_in_combo = false;
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Off,
-                                        "Off",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Error,
-                                        "Error",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Warn,
-                                        "Warn",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Info,
-                                        "Info",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Debug,
-                                        "Debug",
-                                    )
-                                    .changed();
-                                changed_in_combo |= ui_combo
-                                    .selectable_value(
-                                        &mut self.temp_edit_settings.log_settings.console_log_level,
-                                        LevelFilter::Trace,
-                                        "Trace",
-                                    )
-                                    .changed();
-                                changed_in_combo
-                            })
-                            .inner
-                            .unwrap_or(false);
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Off, "Off");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Error, "Error");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Warn, "Warn");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Info, "Info");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Debug, "Debug");
+                                ui_combo.selectable_value(&mut self.temp_edit_settings.log_settings.console_log_level, LevelFilter::Trace, "Trace");
+                            });
                         grid_ui.end_row();
-
-                        // --- 在这里可以添加其他应用设置的UI编辑逻辑 ---
-                        // 例如:
-                        // grid_ui.heading("常规设置");
-                        // grid_ui.end_row();
-                        // grid_ui.label("默认输出格式:");
-                        // grid_ui.text_edit_singleline(&mut self.temp_edit_settings.default_output_format.get_or_insert_with(String::new));
-                        // grid_ui.end_row();
-                    }); // Grid 结束
-
-                ui.add_space(15.0); // 添加一些垂直间距
-                ui.separator(); // 分割线
+                    });
                 ui.add_space(10.0);
 
-                // 窗口底部的按钮 (保存并应用 / 取消)
+                egui::Grid::new("amll_connector_settings_grid")
+                    .num_columns(2)
+                    .spacing([40.0, 4.0])
+                    .striped(true)
+                    .show(ui, |grid_ui| {
+                        grid_ui.heading("AMLL Connector 设置");
+                        grid_ui.end_row();
+
+                        grid_ui.label("启用 AMLL Connector 功能:");
+                        grid_ui.checkbox(&mut self.temp_edit_settings.amll_connector_enabled, "")
+                        .on_hover_text("转发 SMTC 信息到 AMLL Player，让 AMLL Player 也支持其他音乐软件");
+                        grid_ui.end_row();
+
+                        grid_ui.label("WebSocket URL:");
+                        grid_ui.add(
+                            TextEdit::singleline(&mut self.temp_edit_settings.amll_connector_websocket_url)
+                                .hint_text("ws://localhost:11444")
+                                .desired_width(f32::INFINITY)
+                        ).on_hover_text("需点击“保存并应用”");
+                        grid_ui.end_row();
+
+                        grid_ui.label("将音频数据发送到 AMLL Player");
+                        grid_ui.checkbox(&mut self.temp_edit_settings.send_audio_data_to_player, "");
+                        grid_ui.end_row();
+
+
+                        grid_ui.heading("SMTC 偏移");
+                        grid_ui.end_row();
+
+                        grid_ui.label("时间轴偏移量 (毫秒):");
+                        grid_ui.add(
+                            egui::DragValue::new(&mut self.temp_edit_settings.smtc_time_offset_ms)
+                                .speed(10.0)
+                                .suffix(" ms"),
+                        );
+                        grid_ui.end_row();
+                    });
+
+                ui.add_space(10.0);
+                ui.strong("自动歌词搜索顺序:");
+
+                let current_order = &mut self.temp_edit_settings.auto_search_source_order;
+                let num_sources = current_order.len();
+
+                for i in 0..num_sources {
+                    ui.horizontal(|row_ui| {
+                        row_ui.label(format!("{}. {}", i + 1, current_order[i].display_name()));
+
+                        row_ui.with_layout(Layout::right_to_left(Align::Center), |btn_ui| {
+                            // 向下按钮
+                            if btn_ui.add_enabled(i < num_sources - 1, Button::new("🔽")).clicked() {
+                                current_order.swap(i, i + 1);
+                            }
+                            // 向上按钮
+                            if btn_ui.add_enabled(i > 0, Button::new("🔼")).clicked() {
+                                current_order.swap(i, i - 1);
+                            }
+                        });
+                    });
+                    if i < num_sources - 1 {
+                        ui.separator();
+                    }
+                }
+                ui.add_space(10.0);
+
+                ui.checkbox(&mut self.temp_edit_settings.always_search_all_sources, "始终自动搜索所有源");
+
+                ui.add_space(10.0);
+
+                ui.separator();
+                ui.add_space(10.0);
+                ui.strong("自动删除元数据行设置");
+                ui.checkbox(&mut self.temp_edit_settings.enable_online_lyric_stripping, "基于关键词的移除");
+
+                // 关键词移除的详细配置 (只有当总开关启用时才显示)
+                ui.add_enabled_ui(self.temp_edit_settings.enable_online_lyric_stripping, |enabled_ui| {
+                    enabled_ui.collapsing("关键词移除规则设置", |rule_ui| { // 使用可折叠区域
+                        rule_ui.add_space(5.0);
+                        rule_ui.label("要移除的开头关键词（冒号已自动添加）：");
+
+                        let mut keywords_multiline_edit = self.temp_edit_settings.stripping_keywords.join("\n");
+                        egui::ScrollArea::vertical().id_salt("stripping_keywords_scroll_area").max_height(80.0).show(rule_ui, |scroll_ui| {
+                            if scroll_ui.add(
+                                TextEdit::multiline(&mut keywords_multiline_edit)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("例如：\n作曲\n作词\n编曲")
+                            ).changed() {
+                                self.temp_edit_settings.stripping_keywords = keywords_multiline_edit
+                                    .lines()
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                            }
+                        });
+                        rule_ui.checkbox(&mut self.temp_edit_settings.stripping_keyword_case_sensitive, "区分大小写");
+
+                    });
+                });
+                ui.add_space(5.0);
+
+                ui.checkbox(&mut self.temp_edit_settings.enable_ttml_regex_stripping, "基于正则表达式的移除")
+                    .on_hover_text("如果某一行的内容匹配任何一个正则表达式，该行将被移除。");
+
+                ui.add_enabled_ui(self.temp_edit_settings.enable_ttml_regex_stripping, |enabled_regex_ui| {
+                     enabled_regex_ui.collapsing("正则表达式移除规则设置", |regex_rule_ui| { // 使用可折叠区域
+                        regex_rule_ui.add_space(5.0);
+                        regex_rule_ui.label("要移除的行匹配的正则表达式（每行一个）：");
+                        let mut regexes_multiline_edit = self.temp_edit_settings.ttml_stripping_regexes.join("\n");
+                        egui::ScrollArea::vertical().id_salt("stripping_regexes_scroll_area").max_height(80.0).show(regex_rule_ui, |scroll_ui| {
+                            if scroll_ui.add(
+                                TextEdit::multiline(&mut regexes_multiline_edit)
+                                    .desired_width(f32::INFINITY)
+                            ).changed() {
+                                self.temp_edit_settings.ttml_stripping_regexes = regexes_multiline_edit
+                                    .lines()
+                                    .map(|s| s.trim().to_string())
+                                    .filter(|s| !s.is_empty())
+                                    .collect();
+                            }
+                        });
+                    });
+                });
+
+                ui.separator();
+                ui.add_space(10.0);
+
                 ui.horizontal(|bottom_buttons_ui| {
-                    if bottom_buttons_ui
-                        .button("保存并应用")
-                        .on_hover_text("保存设置到文件。部分日志设置可能需要重启应用才能完全生效。")
-                        .clicked()
-                    {
+                    if bottom_buttons_ui.button("保存并应用").on_hover_text("保存设置到文件。日志和搜索顺序设置将在下次启动或下次自动搜索时生效").clicked() {
+                        let old_send_audio_data_setting = self.app_settings.lock().unwrap().send_audio_data_to_player;
+                        let new_send_audio_data_setting = self.temp_edit_settings.send_audio_data_to_player;
+
                         if self.temp_edit_settings.save().is_ok() {
-                            // 调用 AppSettings 的 save 方法
-                            // 如果保存成功，更新应用内部持有的设置实例
-                            *self.app_settings.lock().unwrap() = self.temp_edit_settings.clone();
-                            log::info!("应用设置已保存。日志设置将在下次启动时应用。");
-                            // TODO: 可以考虑添加一个对话框提示用户某些设置（如日志级别）需要重启才能完全生效
+                        let new_settings_clone = self.temp_edit_settings.clone();
+                        let mut app_settings_guard = self.app_settings.lock().unwrap();
+                        *app_settings_guard = new_settings_clone;
+                        self.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
+
+                        let new_mc_config_from_settings = AMLLConnectorConfig {
+                            enabled: app_settings_guard.amll_connector_enabled,
+                            websocket_url: app_settings_guard.amll_connector_websocket_url.clone(),
+                        };
+                        let connector_enabled_runtime = new_mc_config_from_settings.enabled;
+                        drop(app_settings_guard);
+
+                        let mut current_mc_config_guard = self.media_connector_config.lock().unwrap();
+                        let old_mc_config = current_mc_config_guard.clone();
+                        *current_mc_config_guard = new_mc_config_from_settings.clone();
+                        drop(current_mc_config_guard);
+
+                        log::debug!("[Unilyric UI] 设置已保存。新 AMLL Connector配置: {:?}", new_mc_config_from_settings);
+
+                        if new_mc_config_from_settings.enabled {
+                            amll_connector_manager::ensure_running(self);
+                            if let Some(tx) = &self.media_connector_command_tx {
+                                if old_mc_config != new_mc_config_from_settings {
+                                    log::debug!("[Unilyric UI] 发送 UpdateConfig 命令给AMLL Connector worker。");
+                                    if tx.send(crate::amll_connector::ConnectorCommand::UpdateConfig(new_mc_config_from_settings.clone())).is_err() {
+                                        log::error!("[Unilyric UI] 发送 UpdateConfig 命令给AMLL Connector worker 失败。");
+                                    }
+                                }
+                            }
+                        } else {
+                            amll_connector_manager::ensure_running(self); // 确保如果禁用了，worker会停止
+                        }
+
+                        if connector_enabled_runtime && old_send_audio_data_setting != new_send_audio_data_setting {
+                            self.audio_visualization_enabled_by_ui = new_send_audio_data_setting;
+                            if let Some(tx) = &self.media_connector_command_tx {
+                                let command = if new_send_audio_data_setting {
+                                    log::info!("[Unilyric UI] 设置更改：启动音频数据转发。");
+                                    ConnectorCommand::StartAudioVisualization
+                                } else {
+                                    log::info!("[Unilyric UI] 设置更改：停止音频数据转发。");
+                                    ConnectorCommand::StopAudioVisualization
+                                };
+                                if tx.send(command).is_err() {
+                                    log::error!("[Unilyric UI] 应用设置更改时，发送音频可视化控制命令失败。");
+                                }
+                            }
+                        }
+
+                        self.show_settings_window = false;
                         } else {
                             log::error!("保存应用设置失败。");
+                            self.show_settings_window = false;
                         }
-                        self.show_settings_window = false; // 关闭设置窗口
                     }
                     if bottom_buttons_ui.button("取消").clicked() {
-                        // 不保存更改，直接关闭窗口
-                        // temp_edit_settings 中的更改将被丢弃，下次打开时会重新从 app_settings 加载
                         self.show_settings_window = false;
                     }
                 });
             });
 
-        // 如果窗口通过标题栏的关闭按钮或其他方式关闭，也更新 show_settings_window 状态
         if !is_settings_window_open {
             self.show_settings_window = false;
         }
     }
-
     /// 绘制元数据编辑器窗口的内容。
     ///
     /// # Arguments
@@ -577,7 +660,7 @@ impl UniLyricApp {
                         .add_sized(
                             [row_ui.available_width() * 0.3, 0.0], // 占据可用宽度的30%
                             egui::TextEdit::singleline(&mut entry.key)
-                                .id_source(item_id.with("key_edit")) // 控件ID
+                                .id_salt(item_id.with("key_edit")) // 控件ID
                                 .hint_text("元数据键"), // 输入提示
                         )
                         .changed()
@@ -592,7 +675,7 @@ impl UniLyricApp {
                     if row_ui
                         .add(
                             egui::TextEdit::singleline(&mut entry.value)
-                                .id_source(item_id.with("value_edit"))
+                                .id_salt(item_id.with("value_edit"))
                                 .hint_text("元数据值"),
                         )
                         .changed()
@@ -726,12 +809,10 @@ impl UniLyricApp {
 
     /// 绘制主歌词输入面板的内容。
     pub fn draw_input_panel_contents(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(TITLE_ALIGNMENT_OFFSET); // 标题对齐
+        ui.add_space(TITLE_ALIGNMENT_OFFSET);
         ui.horizontal(|title_ui| {
-            // 标题和右侧按钮在同一行
             title_ui.heading("输入歌词");
             title_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |btn_ui| {
-                // 清空按钮：当输入或输出非空时可用
                 if btn_ui
                     .add_enabled(
                         !self.input_text.is_empty() || !self.output_text.is_empty(),
@@ -739,25 +820,21 @@ impl UniLyricApp {
                     )
                     .clicked()
                 {
-                    self.clear_all_data(); // 清理所有数据
+                    self.clear_all_data();
                 }
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
-                // 复制按钮：当输入非空时可用
                 if btn_ui
                     .add_enabled(!self.input_text.is_empty(), egui::Button::new("复制"))
                     .clicked()
                 {
-                    btn_ui.ctx().copy_text(self.input_text.clone()); // 复制输入框内容到剪贴板
+                    btn_ui.ctx().copy_text(self.input_text.clone());
                 }
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
-                // 粘贴按钮
                 if btn_ui.button("粘贴").clicked() {
                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                        // 尝试访问系统剪贴板
                         if let Ok(text) = clipboard.get_text() {
-                            // 获取剪贴板文本
-                            self.input_text = text; // 更新输入框内容
-                            self.handle_convert(); // 触发转换
+                            self.input_text = text;
+                            self.handle_convert();
                         } else {
                             log::error!("无法从剪贴板获取文本");
                         }
@@ -767,22 +844,19 @@ impl UniLyricApp {
                 }
             });
         });
-        ui.separator(); // 分割线
+        ui.separator();
 
-        // 使用可滚动的多行文本编辑框作为输入区域
         egui::ScrollArea::vertical()
-            .id_salt("input_scroll_always_vertical") // 唯一ID
-            .auto_shrink([false, false]) // 不自动缩小
+            .id_salt("input_scroll_vertical_only")
+            .auto_shrink([false, false])
             .show(ui, |s_ui| {
                 let text_edit_widget = egui::TextEdit::multiline(&mut self.input_text)
-                    .hint_text("在此处粘贴或拖放主歌词文件") // 输入提示
-                    .font(egui::TextStyle::Monospace) // 使用等宽字体
-                    .interactive(!self.conversion_in_progress) // 如果正在转换，则禁用编辑
-                    .desired_width(f32::INFINITY) // 占据所有可用宽度
-                    .desired_rows(8); // 期望的初始行数 (可滚动)
+                    .hint_text("在此处粘贴或拖放主歌词文件")
+                    .font(egui::TextStyle::Monospace)
+                    .interactive(!self.conversion_in_progress)
+                    .desired_width(f32::INFINITY);
 
-                let response = s_ui.add(text_edit_widget); // 添加文本编辑框到UI
-                // 如果文本内容发生改变且当前没有转换在进行，则触发转换
+                let response = s_ui.add(text_edit_widget);
                 if response.changed() && !self.conversion_in_progress {
                     self.handle_convert();
                 }
@@ -791,130 +865,24 @@ impl UniLyricApp {
 
     /// 绘制翻译LRC面板的内容。
     pub fn draw_translation_lrc_panel_contents(&mut self, ui: &mut egui::Ui) {
-        let mut clear_action_triggered = false; // 标记是否点击了清除按钮
-        let title = "翻译 (LRC)";
-        // 使用 display_translation_lrc_output 作为显示内容，这个字段会在LRC加载或转换后更新
-        let text_content_for_display = self.display_translation_lrc_output.clone();
-        let lrc_is_currently_loaded = self.loaded_translation_lrc.is_some(); // 判断是否有已加载的翻译LRC数据
-
-        ui.add_space(TITLE_ALIGNMENT_OFFSET);
-        ui.label(egui::RichText::new(title).heading()); // 面板标题
-        ui.separator();
-
-        // 顶部的按钮条
-        ui.horizontal(|button_strip_ui| {
-            // 导入按钮：当主歌词已加载且无转换进行时可用
-            let main_lyrics_loaded =
-                self.parsed_ttml_paragraphs.is_some() && !self.input_text.is_empty();
-            let import_enabled = main_lyrics_loaded && !self.conversion_in_progress;
-            let import_button_widget = egui::Button::new("导入");
-            let mut import_button_response =
-                button_strip_ui.add_enabled(import_enabled, import_button_widget);
-            if !import_enabled {
-                import_button_response =
-                    import_button_response.on_disabled_hover_text("请先加载歌词文件");
-            }
-            if import_button_response.clicked() {
-                crate::io::handle_open_lrc_file(self, LrcContentType::Translation); // 打开文件对话框加载翻译LRC
-            }
-
-            // 右对齐的按钮 (清除、复制)
-            button_strip_ui.allocate_ui_with_layout(
-                button_strip_ui.available_size_before_wrap(),
-                egui::Layout::right_to_left(egui::Align::Center), // 右对齐布局
-                |right_aligned_buttons_ui| {
-                    // 清除按钮：当有已加载的翻译LRC时可用
-                    if right_aligned_buttons_ui
-                        .add_enabled(lrc_is_currently_loaded, egui::Button::new("清除"))
-                        .clicked()
-                    {
-                        clear_action_triggered = true;
-                    }
-                    right_aligned_buttons_ui.add_space(BUTTON_STRIP_SPACING);
-                    // 复制按钮：当显示内容非空时可用
-                    if right_aligned_buttons_ui
-                        .add_enabled(
-                            !text_content_for_display.is_empty(),
-                            egui::Button::new("复制"),
-                        )
-                        .clicked()
-                    {
-                        right_aligned_buttons_ui
-                            .ctx()
-                            .copy_text(text_content_for_display.clone());
-                    }
-                },
-            );
-        });
-
-        // 根据是否启用文本换行选择不同的滚动区域类型
-        let scroll_area = if self.wrap_text {
-            egui::ScrollArea::vertical() // 仅垂直滚动
-        } else {
-            egui::ScrollArea::both().auto_shrink([false, true]) // 水平和垂直滚动，水平不自动缩小
-        };
-
-        scroll_area
-            .id_salt("translation_lrc_scroll_area") // 唯一ID
-            .auto_shrink([false, false])
-            .show(ui, |s_ui_content| {
-                if text_content_for_display.is_empty() {
-                    // 如果没有内容显示
-                    s_ui_content.centered_and_justified(|center_ui| {
-                        // 居中显示提示文本
-                        let hint_text = format!(
-                            "通过上方“导入”按钮或“文件”菜单加载 {}",
-                            title.split('(').next().unwrap_or("内容").trim()
-                        );
-                        center_ui.label(egui::RichText::new(hint_text).weak().italics());
-                    });
-                } else {
-                    // 显示LRC文本内容
-                    let rich_text = egui::RichText::new(text_content_for_display.as_str())
-                        .monospace()
-                        .size(13.0);
-                    let mut label_widget = egui::Label::new(rich_text).selectable(true); // 允许选择文本
-                    if self.wrap_text {
-                        label_widget = label_widget.wrap();
-                    }
-                    // 根据设置启用/禁用换行
-                    else {
-                        label_widget = label_widget.extend();
-                    }
-                    s_ui_content.add(label_widget);
-                }
-                // 确保滚动区域至少有其声明的大小
-                s_ui_content.allocate_space(s_ui_content.available_size_before_wrap());
-            });
-
-        // 如果点击了清除按钮
-        if clear_action_triggered {
-            self.loaded_translation_lrc = None; // 清除已加载的翻译数据
-            self.display_translation_lrc_output.clear(); // 清空显示内容
-            log::info!("已清除加载的翻译 LRC。");
-            // 如果主歌词仍然存在，触发一次转换以更新（移除翻译后的）输出
-            if self.parsed_ttml_paragraphs.is_some() {
-                self.handle_convert();
-            }
-        }
-    }
-
-    /// 绘制罗马音LRC面板的内容。
-    /// (逻辑与 draw_translation_lrc_panel_contents 非常相似，只是处理的是罗马音相关的数据)
-    pub fn draw_romanization_lrc_panel_contents(&mut self, ui: &mut egui::Ui) {
         let mut clear_action_triggered = false;
-        let title = "罗马音 (LRC)";
-        let text_content_for_display = self.display_romanization_lrc_output.clone();
-        let lrc_is_currently_loaded = self.loaded_romanization_lrc.is_some();
+        let mut import_action_triggered = false;
+        let mut text_edited_this_frame = false;
+
+        let title = "翻译 (LRC)";
+        let lrc_is_currently_considered_active = self.loaded_translation_lrc.is_some()
+            || !self.display_translation_lrc_output.trim().is_empty();
 
         ui.add_space(TITLE_ALIGNMENT_OFFSET);
         ui.label(egui::RichText::new(title).heading());
         ui.separator();
 
         ui.horizontal(|button_strip_ui| {
-            let main_lyrics_loaded =
-                self.parsed_ttml_paragraphs.is_some() && !self.input_text.is_empty();
-            let import_enabled = main_lyrics_loaded && !self.conversion_in_progress;
+            let main_lyrics_exist_for_merge = self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty());
+            let import_enabled = main_lyrics_exist_for_merge && !self.conversion_in_progress;
             let import_button_widget = egui::Button::new("导入");
             let mut import_button_response =
                 button_strip_ui.add_enabled(import_enabled, import_button_widget);
@@ -923,7 +891,7 @@ impl UniLyricApp {
                     import_button_response.on_disabled_hover_text("请先加载主歌词文件");
             }
             if import_button_response.clicked() {
-                crate::io::handle_open_lrc_file(self, LrcContentType::Romanization); // 加载罗马音LRC
+                import_action_triggered = true;
             }
 
             button_strip_ui.allocate_ui_with_layout(
@@ -931,7 +899,10 @@ impl UniLyricApp {
                 egui::Layout::right_to_left(egui::Align::Center),
                 |right_aligned_buttons_ui| {
                     if right_aligned_buttons_ui
-                        .add_enabled(lrc_is_currently_loaded, egui::Button::new("清除"))
+                        .add_enabled(
+                            lrc_is_currently_considered_active,
+                            egui::Button::new("清除"),
+                        )
                         .clicked()
                     {
                         clear_action_triggered = true;
@@ -939,105 +910,377 @@ impl UniLyricApp {
                     right_aligned_buttons_ui.add_space(BUTTON_STRIP_SPACING);
                     if right_aligned_buttons_ui
                         .add_enabled(
-                            !text_content_for_display.is_empty(),
+                            !self.display_translation_lrc_output.is_empty(),
                             egui::Button::new("复制"),
                         )
                         .clicked()
                     {
                         right_aligned_buttons_ui
                             .ctx()
-                            .copy_text(text_content_for_display.clone());
+                            .copy_text(self.display_translation_lrc_output.clone());
                     }
                 },
             );
         });
-        let scroll_area = if self.wrap_text {
-            egui::ScrollArea::vertical()
-        } else {
-            egui::ScrollArea::both().auto_shrink([false, true])
-        };
 
-        scroll_area
-            .id_salt("romanization_lrc_scroll_area")
+        // TextEdit 总是使用垂直滚动条
+        egui::ScrollArea::vertical()
+            .id_salt("translation_lrc_scroll_vertical")
             .auto_shrink([false, false])
             .show(ui, |s_ui_content| {
-                if text_content_for_display.is_empty() {
-                    s_ui_content.centered_and_justified(|center_ui| {
-                        let hint_text = format!(
-                            "通过上方“导入”按钮或“文件”菜单加载 {}",
-                            title.split('(').next().unwrap_or("内容").trim()
-                        );
-                        center_ui.label(egui::RichText::new(hint_text).weak().italics());
-                    });
-                } else {
-                    let rich_text = egui::RichText::new(text_content_for_display.as_str())
-                        .monospace()
-                        .size(13.0);
-                    let mut label_widget = egui::Label::new(rich_text).selectable(true);
-                    if self.wrap_text {
-                        label_widget = label_widget.wrap();
-                    } else {
-                        label_widget = label_widget.extend();
-                    }
-                    s_ui_content.add(label_widget);
+                let text_edit_widget =
+                    egui::TextEdit::multiline(&mut self.display_translation_lrc_output)
+                        .hint_text("在此处粘贴翻译LRC内容")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(10);
+
+                let response = s_ui_content.add(text_edit_widget);
+                if response.changed() {
+                    text_edited_this_frame = true;
                 }
                 s_ui_content.allocate_space(s_ui_content.available_size_before_wrap());
             });
 
+        if import_action_triggered {
+            crate::io::handle_open_lrc_file(self, LrcContentType::Translation);
+            let mut reconstructed_display_text = String::new();
+            if let Some(display_lines) = &self.loaded_translation_lrc {
+                for line_entry in display_lines {
+                    match line_entry {
+                        DisplayLrcLine::Parsed(lrc_line) => {
+                            let _ = writeln!(
+                                reconstructed_display_text,
+                                "{}{}",
+                                crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
+                                lrc_line.text
+                            );
+                        }
+                        DisplayLrcLine::Raw { original_text } => {
+                            let _ = writeln!(reconstructed_display_text, "{}", original_text);
+                        }
+                    }
+                }
+            }
+            self.display_translation_lrc_output = reconstructed_display_text
+                .trim_end_matches('\n')
+                .to_string();
+            if !self.display_translation_lrc_output.is_empty() {
+                self.display_translation_lrc_output.push('\n');
+            }
+
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                self.handle_convert();
+            }
+        }
+
+        if clear_action_triggered {
+            self.loaded_translation_lrc = None;
+            self.display_translation_lrc_output.clear();
+            log::info!("已清除翻译 LRC (通过UI按钮)。");
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                self.handle_convert();
+            }
+        }
+
+        if text_edited_this_frame {
+            match crate::lrc_parser::parse_lrc_text_to_lines(&self.display_translation_lrc_output) {
+                Ok((parsed_display_lines, _bilingual_translations, _parsed_meta)) => {
+                    // 接收三个值
+                    self.loaded_translation_lrc = Some(parsed_display_lines.clone());
+                    let mut reconstructed_text = String::new();
+                    for line_entry in parsed_display_lines {
+                        match line_entry {
+                            DisplayLrcLine::Parsed(lrc_line) => {
+                                let _ = writeln!(
+                                    reconstructed_text,
+                                    "{}{}",
+                                    crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
+                                    lrc_line.text
+                                );
+                            }
+                            DisplayLrcLine::Raw { original_text } => {
+                                let _ = writeln!(reconstructed_text, "{}", original_text);
+                            }
+                        }
+                    }
+                    self.display_translation_lrc_output =
+                        reconstructed_text.trim_end_matches('\n').to_string();
+                    if !self.display_translation_lrc_output.is_empty() {
+                        self.display_translation_lrc_output.push('\n');
+                    }
+                    log::debug!(
+                        "[UI Edit] 翻译LRC文本已编辑. Parsed into: {:?}. Triggering convert.",
+                        self.loaded_translation_lrc
+                    );
+                }
+                Err(e) => {
+                    self.loaded_translation_lrc = None;
+                    log::warn!(
+                        "[UI Edit] 编辑的翻译LRC文本解析器返回错误: {}. 关联的LRC数据已清除.",
+                        e
+                    );
+                    self.toasts.add(egui_toast::Toast {
+                        text: format!("翻译LRC内容解析错误: {}", e).into(),
+                        kind: egui_toast::ToastKind::Error,
+                        options: egui_toast::ToastOptions::default()
+                            .duration_in_seconds(4.0)
+                            .show_icon(true),
+                        style: Default::default(),
+                    });
+                }
+            }
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                log::debug!("[UI Edit] 翻译LRC编辑后，触发 handle_convert");
+                self.handle_convert();
+            }
+        }
+    }
+
+    /// 绘制罗马音LRC面板的内容。
+    pub fn draw_romanization_lrc_panel_contents(&mut self, ui: &mut egui::Ui) {
+        let mut clear_action_triggered = false;
+        let mut import_action_triggered = false;
+        let mut text_edited_this_frame = false;
+
+        let title = "罗马音 (LRC)";
+        let lrc_is_currently_considered_active = self.loaded_romanization_lrc.is_some()
+            || !self.display_romanization_lrc_output.trim().is_empty();
+
+        ui.add_space(TITLE_ALIGNMENT_OFFSET);
+        ui.label(egui::RichText::new(title).heading());
+        ui.separator();
+
+        ui.horizontal(|button_strip_ui| {
+            let main_lyrics_exist_for_merge = self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty());
+            let import_enabled = main_lyrics_exist_for_merge && !self.conversion_in_progress;
+            let import_button_widget = egui::Button::new("导入");
+            let mut import_button_response =
+                button_strip_ui.add_enabled(import_enabled, import_button_widget);
+            if !import_enabled {
+                import_button_response =
+                    import_button_response.on_disabled_hover_text("请先加载主歌词文件");
+            }
+            if import_button_response.clicked() {
+                import_action_triggered = true;
+            }
+
+            button_strip_ui.allocate_ui_with_layout(
+                button_strip_ui.available_size_before_wrap(),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |right_aligned_buttons_ui| {
+                    if right_aligned_buttons_ui
+                        .add_enabled(
+                            lrc_is_currently_considered_active,
+                            egui::Button::new("清除"),
+                        )
+                        .clicked()
+                    {
+                        clear_action_triggered = true;
+                    }
+                    right_aligned_buttons_ui.add_space(BUTTON_STRIP_SPACING);
+                    if right_aligned_buttons_ui
+                        .add_enabled(
+                            !self.display_romanization_lrc_output.is_empty(),
+                            egui::Button::new("复制"),
+                        )
+                        .clicked()
+                    {
+                        right_aligned_buttons_ui
+                            .ctx()
+                            .copy_text(self.display_romanization_lrc_output.clone());
+                    }
+                },
+            );
+        });
+
+        // TextEdit 总是使用垂直滚动条
+        egui::ScrollArea::vertical()
+            .id_salt("romanization_lrc_scroll_vertical_v4") // 更新 ID
+            .auto_shrink([false, false])
+            .show(ui, |s_ui_content| {
+                let text_edit_widget =
+                    egui::TextEdit::multiline(&mut self.display_romanization_lrc_output)
+                        .hint_text("在此处粘贴罗马音LRC内容")
+                        .font(egui::TextStyle::Monospace)
+                        .desired_width(f32::INFINITY)
+                        .desired_rows(10);
+
+                let response = s_ui_content.add(text_edit_widget);
+                if response.changed() {
+                    text_edited_this_frame = true;
+                }
+                s_ui_content.allocate_space(s_ui_content.available_size_before_wrap());
+            });
+
+        if import_action_triggered {
+            crate::io::handle_open_lrc_file(self, LrcContentType::Romanization);
+            let mut reconstructed_display_text = String::new();
+            if let Some(display_lines) = &self.loaded_romanization_lrc {
+                for line_entry in display_lines {
+                    match line_entry {
+                        DisplayLrcLine::Parsed(lrc_line) => {
+                            let _ = writeln!(
+                                reconstructed_display_text,
+                                "{}{}",
+                                crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
+                                lrc_line.text
+                            );
+                        }
+                        DisplayLrcLine::Raw { original_text } => {
+                            let _ = writeln!(reconstructed_display_text, "{}", original_text);
+                        }
+                    }
+                }
+            }
+            self.display_romanization_lrc_output = reconstructed_display_text
+                .trim_end_matches('\n')
+                .to_string();
+            if !self.display_romanization_lrc_output.is_empty() {
+                self.display_romanization_lrc_output.push('\n');
+            }
+
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                self.handle_convert();
+            }
+        }
+
         if clear_action_triggered {
             self.loaded_romanization_lrc = None;
             self.display_romanization_lrc_output.clear();
-            log::info!("已清除加载的罗马音 LRC。");
-            if self.parsed_ttml_paragraphs.is_some() {
+            log::info!("已清除罗马音 LRC (通过UI按钮)。");
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                self.handle_convert();
+            }
+        }
+
+        if text_edited_this_frame {
+            match crate::lrc_parser::parse_lrc_text_to_lines(&self.display_romanization_lrc_output)
+            {
+                Ok((parsed_display_lines, _bilingual_translations, _parsed_meta)) => {
+                    self.loaded_romanization_lrc = Some(parsed_display_lines.clone());
+
+                    let mut reconstructed_text = String::new();
+                    for line_entry in parsed_display_lines {
+                        match line_entry {
+                            DisplayLrcLine::Parsed(lrc_line) => {
+                                let _ = writeln!(
+                                    reconstructed_text,
+                                    "{}{}",
+                                    crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
+                                    lrc_line.text
+                                );
+                            }
+                            DisplayLrcLine::Raw { original_text } => {
+                                let _ = writeln!(reconstructed_text, "{}", original_text);
+                            }
+                        }
+                    }
+                    self.display_romanization_lrc_output =
+                        reconstructed_text.trim_end_matches('\n').to_string();
+                    if !self.display_romanization_lrc_output.is_empty() {
+                        self.display_romanization_lrc_output.push('\n');
+                    }
+
+                    log::debug!(
+                        "[UI Edit] 罗马音LRC文本已编辑. Parsed into: {:?}. Triggering convert.",
+                        self.loaded_romanization_lrc
+                    );
+                }
+                Err(e) => {
+                    self.loaded_romanization_lrc = None;
+                    log::warn!(
+                        "[UI Edit] 编辑的罗马音LRC文本解析器返回错误: {}. 关联的LRC数据已清除.",
+                        e
+                    );
+                    self.toasts.add(egui_toast::Toast {
+                        text: format!("罗马音LRC内容解析错误: {}", e).into(),
+                        kind: egui_toast::ToastKind::Error,
+                        options: egui_toast::ToastOptions::default()
+                            .duration_in_seconds(4.0)
+                            .show_icon(true),
+                        style: Default::default(),
+                    });
+                }
+            }
+            if self
+                .parsed_ttml_paragraphs
+                .as_ref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                log::debug!("[UI Edit] 罗马音LRC编辑后，触发 handle_convert");
                 self.handle_convert();
             }
         }
     }
 
     /// 绘制标记信息面板的内容 (通常用于显示 ASS 文件中的 Comment 行标记)。
-    pub fn draw_markers_panel_contents(&mut self, ui: &mut egui::Ui, wrap_text: bool) {
+    pub fn draw_markers_panel_contents(&mut self, ui: &mut egui::Ui, wrap_text_arg: bool) {
         ui.add_space(TITLE_ALIGNMENT_OFFSET);
-        ui.heading("标记"); // 面板标题
+        ui.heading("标记");
         ui.separator();
-        // 将标记信息 (行号, 文本) 格式化为多行字符串
-        let markers_text = self
+        let markers_text_content = self
             .current_markers
             .iter()
             .map(|(ln, txt)| format!("ASS 行 {}: {}", ln, txt))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let scroll_area = if wrap_text {
-            // 根据设置选择滚动条类型
-            egui::ScrollArea::vertical()
+        let scroll_area = if wrap_text_arg {
+            // 使用传入的参数
+            egui::ScrollArea::vertical().id_salt("markers_panel_scroll_vertical_v4")
         } else {
-            egui::ScrollArea::both().auto_shrink([false, true])
+            egui::ScrollArea::both()
+                .id_salt("markers_panel_scroll_both_v4")
+                .auto_shrink([false, false])
         };
 
-        scroll_area
-            .id_salt("markers_panel")
-            .auto_shrink([false, false])
-            .show(ui, |s_ui| {
-                if markers_text.is_empty() {
-                    // 如果没有标记信息
-                    s_ui.centered_and_justified(|center_ui| {
-                        center_ui.label(egui::RichText::new("无标记信息").weak().italics());
-                    });
-                } else {
-                    // 显示标记文本
-                    let rich_text = egui::RichText::new(markers_text.as_str())
+        scroll_area.auto_shrink([false, false]).show(ui, |s_ui| {
+            if markers_text_content.is_empty() {
+                s_ui.centered_and_justified(|center_ui| {
+                    center_ui.label(egui::RichText::new("无标记信息").weak().italics());
+                });
+            } else {
+                let mut label_widget = egui::Label::new(
+                    egui::RichText::new(markers_text_content.as_str())
                         .monospace()
-                        .size(13.0);
-                    let mut label_widget = egui::Label::new(rich_text).selectable(true);
-                    if wrap_text {
-                        label_widget = label_widget.wrap();
-                    } else {
-                        label_widget = label_widget.extend();
-                    }
-                    s_ui.add(label_widget);
+                        .size(13.0),
+                )
+                .selectable(true);
+
+                if wrap_text_arg {
+                    // 使用传入的参数
+                    label_widget = label_widget.wrap();
+                } else {
+                    label_widget = label_widget.extend();
                 }
-                s_ui.allocate_space(s_ui.available_size_before_wrap());
-            });
+                s_ui.add(label_widget);
+            }
+            s_ui.allocate_space(s_ui.available_size_before_wrap());
+        });
     }
 
     /// 绘制 QQ 音乐歌词下载的模态窗口。
@@ -1071,7 +1314,7 @@ impl UniLyricApp {
                             && response.ctx.input(|i| i.key_pressed(egui::Key::Enter))
                             && !self.qqmusic_query.trim().is_empty()
                         {
-                            let download_status_locked = self.download_state.lock().unwrap();
+                            let download_status_locked = self.qq_download_state.lock().unwrap();
                             if !matches!(*download_status_locked, QqMusicDownloadState::Downloading)
                             {
                                 // 避免重复触发
@@ -1083,7 +1326,7 @@ impl UniLyricApp {
                     });
 
                     // 根据下载状态显示加载动画或按钮
-                    let download_status_locked = self.download_state.lock().unwrap();
+                    let download_status_locked = self.qq_download_state.lock().unwrap();
                     let is_downloading =
                         matches!(&*download_status_locked, QqMusicDownloadState::Downloading);
 
@@ -1318,7 +1561,7 @@ impl UniLyricApp {
         }
 
         let mut is_window_open = self.show_amll_download_window;
-        Window::new("从 AMLL TTML Database 获取歌词")
+        let _ = Window::new("从 AMLL TTML Database 获取歌词")
             .open(&mut is_window_open)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .resizable(true)
@@ -1326,44 +1569,112 @@ impl UniLyricApp {
             .min_height(600.0)
             .min_width(400.0)
             .show(ctx, |ui| {
-                let index_state = self.amll_index_download_state.lock().unwrap().clone();
-                match index_state {
+                let index_state_clone = self.amll_index_download_state.lock().unwrap().clone();
+
+                // 按钮文本和操作逻辑根据状态变化
+                let mut button_text = "加载/刷新索引".to_string();
+                let mut hover_text = "检查更新并加载本地或远程索引".to_string();
+                let mut force_refresh_on_click = false;
+                let mut check_update_on_click = false;
+
+                match &index_state_clone {
                     AmllIndexDownloadState::Idle => {
-                        if ui.button("加载/刷新歌词索引").clicked() {
-                            self.trigger_amll_index_download(false);
-                        }
+                        ui.weak("状态: 未初始化/未知");
+                        button_text = "检查更新并加载索引".to_string();
+                        check_update_on_click = true; // Idle 时优先检查更新
                     }
-                    AmllIndexDownloadState::Downloading => {
+                    AmllIndexDownloadState::CheckingForUpdate => {
                         ui.horizontal(|h_ui| {
                             h_ui.add(Spinner::new());
-                            h_ui.label("正在下载索引文件...");
+                            h_ui.label("正在检查更新...");
+                        });
+                        // 检查时禁用按钮或不显示
+                    }
+                    AmllIndexDownloadState::UpdateAvailable(remote_head) => {
+                        ui.colored_label(
+                            Color32::GOLD,
+                            format!(
+                                "有可用更新 (新 HEAD: {})",
+                                remote_head.chars().take(7).collect::<String>()
+                            ),
+                        );
+                        button_text = "下载更新".to_string();
+                        hover_text = format!(
+                            "下载版本 {}",
+                            remote_head.chars().take(7).collect::<String>()
+                        );
+                    }
+                    AmllIndexDownloadState::Downloading(Some(downloading_head)) => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.add(Spinner::new());
+                            h_ui.label(format!(
+                                "正在下载索引 (HEAD: {})...",
+                                downloading_head.chars().take(7).collect::<String>()
+                            ));
                         });
                     }
-                    AmllIndexDownloadState::Success => {
-                        let index_len = self.amll_index.lock().unwrap().len();
-                        ui.label(format!("索引已加载 ({} 条记录)。", index_len));
-                        if ui.button("重新加载索引").clicked() {
-                            self.trigger_amll_index_download(true);
-                        }
+                    AmllIndexDownloadState::Downloading(None) => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.add(Spinner::new());
+                            h_ui.label("正在下载索引 (获取最新 HEAD)...");
+                        });
                     }
-                    AmllIndexDownloadState::Error(ref err_msg) => {
+                    AmllIndexDownloadState::Success(loaded_head) => {
+                        let index_len = self.amll_index.lock().unwrap().len();
+                        ui.colored_label(Color32::GREEN, format!("索引已加载 ({} 条)", index_len));
+                        ui.label(format!(
+                            "当前版本 HEAD: {}",
+                            loaded_head.chars().take(7).collect::<String>()
+                        ));
+
+                        // 提供两个按钮：检查更新 和 强制刷新
+                        if ui.button("检查是否有新版本").clicked() {
+                            check_update_on_click = true;
+                        }
+                        ui.add_space(5.0);
+                        button_text = "强制刷新本地索引".to_string();
+                        hover_text = "忽略本地缓存和版本检查，直接下载最新索引".to_string();
+                        force_refresh_on_click = true;
+                    }
+                    AmllIndexDownloadState::Error(err_msg) => {
                         ui.colored_label(
                             ui.style().visuals.error_fg_color,
-                            format!("索引加载失败: {}", err_msg),
+                            format!("操作失败: {}", err_msg),
                         );
-                        if ui.button("重试").clicked() {
-                            self.trigger_amll_index_download(true);
+                        button_text = "重试加载/检查更新".to_string();
+                        check_update_on_click = true; // 出错后重试也应该先检查
+                    }
+                }
+
+                // 统一处理按钮点击
+                if !matches!(
+                    index_state_clone,
+                    AmllIndexDownloadState::CheckingForUpdate
+                        | AmllIndexDownloadState::Downloading(_)
+                ) && !button_text.is_empty()
+                {
+                    // 只有在有按钮文本时才显示
+                    if ui.button(&button_text).on_hover_text(&hover_text).clicked() {
+                        if check_update_on_click {
+                            self.check_for_amll_index_update();
+                        } else {
+                            // 包括 force_refresh_on_click 和 UpdateAvailable 的情况
+                            self.trigger_amll_index_download(force_refresh_on_click);
                         }
                     }
                 }
+
                 ui.add_space(10.0);
 
-                if index_state == AmllIndexDownloadState::Success {
-                    ui.strong("搜索歌词:");
-                    ui.separator();
-                    ui.horizontal(|h_ui| {
+                // 搜索部分 (只有在索引成功加载后才应完全可用)
+                let search_enabled =
+                    matches!(index_state_clone, AmllIndexDownloadState::Success(_));
+                ui.add_enabled_ui(search_enabled, |enabled_ui| {
+                    enabled_ui.strong("搜索歌词:");
+                    enabled_ui.separator();
+                    enabled_ui.horizontal(|h_ui| {
                         h_ui.label("搜索字段:");
-                        ComboBox::from_id_salt("amll_search_field_combo")
+                        ComboBox::from_id_salt("amll_search_field_combo_modal") // 确保 ID 唯一
                             .selected_text(self.amll_selected_search_field.display_name())
                             .show_ui(h_ui, |combo_ui| {
                                 for field_option in AmllSearchField::all_fields() {
@@ -1376,7 +1687,7 @@ impl UniLyricApp {
                             });
                     });
 
-                    ui.horizontal(|h_ui| {
+                    enabled_ui.horizontal(|h_ui| {
                         h_ui.label("搜索词:");
                         let query_input = TextEdit::singleline(&mut self.amll_search_query)
                             .hint_text("输入搜索内容...")
@@ -1385,7 +1696,8 @@ impl UniLyricApp {
 
                         if query_response.lost_focus()
                             && h_ui.input(|i: &egui::InputState| i.key_pressed(egui::Key::Enter))
-                            || query_response.changed()
+                            || query_response.changed() && search_enabled
+                        // 确保仅在启用时响应变化
                         {
                             if !self.amll_search_query.trim().is_empty() {
                                 self.amll_search_results.lock().unwrap().clear();
@@ -1397,104 +1709,134 @@ impl UniLyricApp {
                             }
                         }
                     });
-                    if ui.button("搜索").clicked() && !self.amll_search_query.trim().is_empty() {
+                    if enabled_ui.button("搜索").clicked()
+                        && !self.amll_search_query.trim().is_empty()
+                    {
                         self.amll_search_results.lock().unwrap().clear();
                         *self.amll_ttml_download_state.lock().unwrap() =
                             AmllTtmlDownloadState::Idle;
                         self.trigger_amll_lyrics_search_and_download(None);
                     }
+                });
 
-                    ui.add_space(10.0);
+                ui.add_space(10.0);
 
-                    let ttml_dl_state = self.amll_ttml_download_state.lock().unwrap().clone();
-                    match ttml_dl_state {
-                        AmllTtmlDownloadState::SearchingIndex => {
-                            ui.horizontal(|h_ui| {
-                                h_ui.add(Spinner::new());
-                                h_ui.label("正在搜索索引...");
-                            });
-                        }
-                        AmllTtmlDownloadState::DownloadingTtml => {
-                            ui.horizontal(|h_ui| {
-                                h_ui.add(Spinner::new());
-                                h_ui.label("正在下载 TTML 文件...");
-                            });
-                        }
-                        AmllTtmlDownloadState::Error(ref err_msg) => {
-                            ui.colored_label(
-                                ui.style().visuals.error_fg_color,
-                                format!("操作失败: {}", err_msg),
-                            );
-                        }
-                        _ => {}
+                let ttml_dl_state = self.amll_ttml_download_state.lock().unwrap().clone();
+                match ttml_dl_state {
+                    AmllTtmlDownloadState::SearchingIndex => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.add(Spinner::new());
+                            h_ui.label("正在搜索索引...");
+                        });
                     }
-                    ui.strong("搜索结果:");
-                    let search_results_count = self.amll_search_results.lock().unwrap().len();
-                    if !self.amll_search_query.trim().is_empty()
-                        && ttml_dl_state == AmllTtmlDownloadState::Idle
-                    {
-                        ui.label(format!("找到 {} 条结果。", search_results_count));
+                    AmllTtmlDownloadState::DownloadingTtml => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.add(Spinner::new());
+                            h_ui.label("正在下载 TTML 文件...");
+                        });
                     }
-                    ui.separator();
-                    ScrollArea::vertical()
-                        .auto_shrink([false, true])
-                        .max_height(200.0)
-                        .show(ui, |scroll_ui| {
-                            let search_results_vec = {
-                                let search_results_lock = self.amll_search_results.lock().unwrap();
-                                search_results_lock.clone()
-                            };
-                            if search_results_vec.is_empty() {
-                                if !self.amll_search_query.trim().is_empty()
-                                    && ttml_dl_state == AmllTtmlDownloadState::Idle
-                                {
-                                } else if self.amll_search_query.trim().is_empty() {
-                                    scroll_ui.label("请输入关键字以搜索");
-                                }
-                            } else {
-                                for (idx, entry) in search_results_vec.iter().enumerate() {
-                                    let mut display_song_name = "未知歌曲".to_string();
-                                    let mut display_artists = "未知艺术家".to_string();
-                                    for (key, values) in &entry.metadata {
-                                        if key == AmllSearchField::MusicName.to_key_string()
-                                            && !values.is_empty()
-                                        {
-                                            display_song_name = values.join("/");
-                                        } else if key == AmllSearchField::Artists.to_key_string()
-                                            && !values.is_empty()
-                                        {
-                                            display_artists = values.join("/");
-                                        }
-                                    }
-                                    let display_text =
-                                        format!("{} - {}", display_song_name, display_artists);
-
-                                    if scroll_ui
-                                        .selectable_label(false, display_text)
-                                        .on_hover_text(entry.raw_lyric_file.to_string())
-                                        .clicked()
+                    AmllTtmlDownloadState::Error(ref err_msg) => {
+                        ui.colored_label(
+                            ui.style().visuals.error_fg_color,
+                            format!("TTML操作失败: {}", err_msg),
+                        );
+                    }
+                    _ => {}
+                }
+                ui.strong("搜索结果:");
+                let search_results_count = self.amll_search_results.lock().unwrap().len();
+                if !self.amll_search_query.trim().is_empty()
+                    && ttml_dl_state == AmllTtmlDownloadState::Idle
+                    && search_enabled
+                {
+                    ui.label(format!("找到 {} 条结果。", search_results_count));
+                }
+                ui.separator();
+                ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .max_height(200.0)
+                    .show(ui, |scroll_ui| {
+                        if !search_enabled {
+                            scroll_ui.weak("请先成功加载索引以启用搜索功能。");
+                            return;
+                        }
+                        let search_results_vec = {
+                            let search_results_lock = self.amll_search_results.lock().unwrap();
+                            search_results_lock.clone()
+                        };
+                        if search_results_vec.is_empty() {
+                            if !self.amll_search_query.trim().is_empty()
+                                && ttml_dl_state == AmllTtmlDownloadState::Idle
+                            {
+                            } else if self.amll_search_query.trim().is_empty() {
+                                scroll_ui.label("请输入关键字以搜索");
+                            }
+                        } else {
+                            for (idx, entry) in search_results_vec.iter().enumerate() {
+                                let mut display_song_name = "未知歌曲".to_string();
+                                let mut display_artists = "未知艺术家".to_string();
+                                for (key, values) in &entry.metadata {
+                                    if key == AmllSearchField::MusicName.to_key_string()
+                                        && !values.is_empty()
                                     {
-                                        self.trigger_amll_lyrics_search_and_download(Some(
-                                            entry.clone(),
-                                        ));
+                                        display_song_name = values.join("/");
+                                    } else if key == AmllSearchField::Artists.to_key_string()
+                                        && !values.is_empty()
+                                    {
+                                        display_artists = values.join("/");
                                     }
-                                    if idx < search_results_vec.len() - 1 {
-                                        scroll_ui.separator();
-                                    }
+                                }
+                                let display_text =
+                                    format!("{} - {}", display_song_name, display_artists);
+
+                                if scroll_ui
+                                    .selectable_label(false, display_text)
+                                    .on_hover_text(entry.raw_lyric_file.to_string())
+                                    .clicked()
+                                {
+                                    self.trigger_amll_lyrics_search_and_download(Some(
+                                        entry.clone(),
+                                    ));
+                                }
+                                if idx < search_results_vec.len() - 1 {
+                                    scroll_ui.separator();
                                 }
                             }
-                        });
-                } else if index_state != AmllIndexDownloadState::Downloading {
-                    ui.label("请先加载歌词索引。");
-                }
-                ui.add_space(10.0);
+                        }
+                    });
             });
 
+        // 处理窗口关闭逻辑
         if !is_window_open {
             self.show_amll_download_window = false;
             let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
             if matches!(*ttml_dl_state_lock, AmllTtmlDownloadState::Error(_)) {
                 *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
+            }
+            // 当窗口关闭时，如果状态是 CheckingForUpdate 或 UpdateAvailable，可能需要重置为 Idle 或上一个稳定状态
+            let mut index_dl_state_lock = self.amll_index_download_state.lock().unwrap();
+            if matches!(
+                *index_dl_state_lock,
+                AmllIndexDownloadState::CheckingForUpdate
+                    | AmllIndexDownloadState::UpdateAvailable(_)
+            ) {
+                // 尝试恢复到基于缓存 HEAD 的 Success 状态，如果不可能则 Idle
+                if let Some(ref cache_p) = self.amll_index_cache_path {
+                    if let Ok(Some(cached_head)) =
+                        crate::amll_lyrics_fetcher::amll_fetcher::load_cached_index_head(cache_p)
+                    {
+                        if !self.amll_index.lock().unwrap().is_empty() {
+                            // 确保索引内容也已加载
+                            *index_dl_state_lock = AmllIndexDownloadState::Success(cached_head);
+                        } else {
+                            *index_dl_state_lock = AmllIndexDownloadState::Idle;
+                        }
+                    } else {
+                        *index_dl_state_lock = AmllIndexDownloadState::Idle;
+                    }
+                } else {
+                    *index_dl_state_lock = AmllIndexDownloadState::Idle;
+                }
             }
         }
     }
@@ -1502,54 +1844,623 @@ impl UniLyricApp {
     /// 绘制输出结果面板的内容。
     pub fn draw_output_panel_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|title_ui| {
-            // 标题和右侧按钮在同一行
             title_ui.heading("输出结果");
             title_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |btn_ui| {
-                // 复制按钮：当输出文本非空且无转换进行时可用
+                let send_to_player_enabled: bool;
+                {
+                    let connector_config_guard = self.media_connector_config.lock().unwrap();
+                    send_to_player_enabled = connector_config_guard.enabled
+                        && !self.output_text.is_empty()
+                        && !self.conversion_in_progress;
+                }
+
+                let send_button = Button::new("发送到AMLL Player");
+                if btn_ui
+                    .add_enabled(send_to_player_enabled, send_button)
+                    .clicked()
+                {
+                    if let Some(tx) = &self.media_connector_command_tx {
+                        if tx
+                            .send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
+                                self.output_text.clone(),
+                            ))
+                            .is_err()
+                        {
+                            log::error!("[Unilyric UI] 发送 TTML 歌词失败。");
+                        } else {
+                            log::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
+                        }
+                    }
+                }
+                btn_ui.add_space(BUTTON_STRIP_SPACING);
+
+                let can_upload_to_db: bool;
+                {
+                    let store_guard = self.metadata_store.lock().unwrap();
+                    let artists_exist_ui = store_guard
+                        .get_multiple_values(&CanonicalMetadataKey::Artist)
+                        .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
+                    let titles_exist_ui = store_guard
+                        .get_multiple_values(&CanonicalMetadataKey::Title)
+                        .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
+
+                    can_upload_to_db = !self.output_text.is_empty()
+                        && self.target_format == LyricFormat::Ttml
+                        && artists_exist_ui
+                        && titles_exist_ui
+                        && !self.ttml_db_upload_in_progress;
+                }
+
+                let upload_button_widget = Button::new("上传到 AMLL-DB");
+                let upload_button_response = btn_ui
+                    .add_enabled(can_upload_to_db, upload_button_widget)
+                    .on_hover_text("将当前TTML歌词上传到dpaste并打开amll-ttml-db的Issue");
+
+                if upload_button_response.clicked() {
+                    self.trigger_ttml_db_upload();
+                }
+                btn_ui.add_space(BUTTON_STRIP_SPACING);
+
                 if btn_ui
                     .add_enabled(
                         !self.output_text.is_empty() && !self.conversion_in_progress,
-                        egui::Button::new("复制"),
+                        Button::new("复制"),
                     )
                     .clicked()
                 {
-                    btn_ui.ctx().copy_text(self.output_text.clone()); // 复制输出内容到剪贴板
+                    btn_ui.ctx().copy_text(self.output_text.clone());
+                    self.toasts.add(egui_toast::Toast {
+                        text: "输出内容已复制到剪贴板".into(),
+                        kind: egui_toast::ToastKind::Success,
+                        options: egui_toast::ToastOptions::default().duration_in_seconds(2.0),
+                        style: Default::default(),
+                    });
                 }
             });
         });
-        ui.separator(); // 分割线
+        ui.separator();
 
-        // 根据是否启用文本换行选择不同的滚动区域类型
+        if self.ttml_db_upload_in_progress {
+            ui.horizontal(|h_ui| {
+                h_ui.add(Spinner::new());
+                h_ui.label(egui::RichText::new("正在处理请求...").weak());
+            });
+            ui.add_space(2.0);
+        } else if let Some(paste_url) = &self.ttml_db_last_paste_url {
+            ui.horizontal(|h_ui| {
+                h_ui.label("上次dpaste链接:");
+                h_ui.style_mut().wrap_mode = Some(TextWrapMode::Truncate);
+                h_ui.hyperlink_to(paste_url, paste_url.clone())
+                    .on_hover_text("点击在浏览器中打开链接");
+                if h_ui
+                    .button("📋")
+                    .on_hover_text("复制上次的dpaste链接")
+                    .clicked()
+                {
+                    h_ui.ctx().copy_text(paste_url.clone());
+                    self.toasts.add(egui_toast::Toast {
+                        text: "链接已复制!".into(),
+                        kind: egui_toast::ToastKind::Success,
+                        options: egui_toast::ToastOptions::default().duration_in_seconds(2.0),
+                        style: Default::default(),
+                    });
+                }
+            });
+            ui.add_space(2.0);
+        }
+
         let scroll_area = if self.wrap_text {
-            egui::ScrollArea::vertical().id_salt("output_scroll_vertical_label")
+            ScrollArea::vertical().id_salt("output_scroll_vertical_label")
         } else {
-            egui::ScrollArea::both().id_salt("output_scroll_both_label")
+            ScrollArea::both()
+                .id_salt("output_scroll_both_label_v6")
+                .auto_shrink([false, false])
         };
 
         scroll_area.auto_shrink([false, false]).show(ui, |s_ui| {
             if self.conversion_in_progress {
-                // 如果正在转换，显示加载动画
                 s_ui.centered_and_justified(|c_ui| {
                     c_ui.spinner();
                 });
             } else {
-                // 显示输出文本
-                // 使用 Label 显示输出文本，允许选择，使用等宽字体
                 let mut label_widget = egui::Label::new(
                     egui::RichText::new(&self.output_text)
                         .monospace()
-                        .size(13.0), // 稍小字体
-                );
+                        .size(13.0),
+                )
+                .selectable(true);
 
                 if self.wrap_text {
                     label_widget = label_widget.wrap();
-                }
-                // 根据设置启用/禁用换行
-                else {
+                } else {
                     label_widget = label_widget.extend();
                 }
                 s_ui.add(label_widget);
             }
         });
+    }
+
+    pub fn draw_amll_connector_sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(TITLE_ALIGNMENT_OFFSET);
+        ui.heading("AMLL Connector");
+        ui.separator();
+
+        ui.strong("WebSocket 连接:");
+
+        let current_status = self.media_connector_status.lock().unwrap().clone();
+        let websocket_url_display: String;
+        {
+            let config_guard_display = self.media_connector_config.lock().unwrap();
+            websocket_url_display = config_guard_display.websocket_url.clone();
+        }
+
+        ui.label(format!("目标 URL: {}", websocket_url_display));
+
+        match current_status {
+            WebsocketStatus::断开 => {
+                if ui.button("连接到 AMLL Player").clicked() {
+                    {
+                        let mut config_guard = self.media_connector_config.lock().unwrap();
+                        if !config_guard.enabled {
+                            log::debug!(
+                                "[Unilyric UI] AMLL Connector 功能原为禁用，现设置为启用。"
+                            );
+                            config_guard.enabled = true;
+                        }
+                    }
+                    amll_connector_manager::ensure_running(self);
+                    let current_config_for_command =
+                        self.media_connector_config.lock().unwrap().clone();
+                    if let Some(tx) = &self.media_connector_command_tx {
+                        log::debug!(
+                            "[Unilyric UI] 发送 UpdateConfig 命令以触发连接尝试: {:?}",
+                            current_config_for_command
+                        );
+                        if tx
+                            .send(ConnectorCommand::UpdateConfig(current_config_for_command))
+                            .is_err()
+                        {
+                            log::error!("[Unilyric UI] 发送启用/连接的 UpdateConfig 命令失败。");
+                        }
+                    } else {
+                        log::error!(
+                            "[Unilyric UI] 连接按钮：调用 ensure_running 后，media_connector_command_tx 仍然不可用！"
+                        );
+                    }
+                }
+                ui.weak("状态: 未连接");
+            }
+            WebsocketStatus::连接中 => {
+                ui.horizontal(|h_ui| {
+                    h_ui.add(Spinner::new());
+                    h_ui.label("正在连接...");
+                });
+            }
+            WebsocketStatus::已连接 => {
+                if ui.button("断开连接").clicked() {
+                    if let Some(tx) = &self.media_connector_command_tx {
+                        if tx.send(ConnectorCommand::DisconnectWebsocket).is_err() {
+                            log::error!("[Unilyric UI] 发送 DisconnectWebsocket 命令失败。");
+                        }
+                    } else {
+                        log::warn!(
+                            "[Unilyric UI] 断开连接按钮：media_connector_command_tx 不可用。"
+                        );
+                    }
+                }
+                ui.colored_label(Color32::GREEN, "状态: 已连接");
+            }
+            WebsocketStatus::错误(err_msg_ref) => {
+                if ui.button("重试连接").clicked() {
+                    {
+                        let mut config_guard = self.media_connector_config.lock().unwrap();
+                        if !config_guard.enabled {
+                            config_guard.enabled = true;
+                        }
+                    }
+                    amll_connector_manager::ensure_running(self);
+                    let current_config_for_command =
+                        self.media_connector_config.lock().unwrap().clone();
+                    if let Some(tx) = &self.media_connector_command_tx {
+                        log::debug!(
+                            "[Unilyric UI] 发送 UpdateConfig 命令以触发重试连接: {:?}",
+                            current_config_for_command
+                        );
+                        if tx
+                            .send(ConnectorCommand::UpdateConfig(current_config_for_command))
+                            .is_err()
+                        {
+                            log::error!("[Unilyric UI] 错误后重试：发送 UpdateConfig 命令失败。");
+                        }
+                    } else {
+                        log::error!(
+                            "[Unilyric UI] 重试连接按钮：调用 ensure_running 后，media_connector_command_tx 仍然不可用！"
+                        );
+                    }
+                }
+                ui.colored_label(Color32::RED, "状态: 错误");
+                ui.small(err_msg_ref);
+            }
+        }
+
+        ui.separator();
+
+        // --- SMTC 源选择 UI ---
+        ui.strong("SMTC 源应用:");
+        {
+            let available_sessions_guard = self.available_smtc_sessions.lock().unwrap();
+            let mut selected_session_id_guard = self.selected_smtc_session_id.lock().unwrap();
+
+            let mut selected_id_for_combo: Option<String> = selected_session_id_guard.clone();
+
+            let combo_label_text = match selected_id_for_combo.as_ref() {
+                Some(id) => available_sessions_guard
+                    .iter()
+                    .find(|s| &s.session_id == id)
+                    .map_or_else(
+                        || format!("自动 (选择 '{}' 已失效)", id),
+                        |s_info| s_info.display_name.clone(),
+                    ),
+                None => "自动 (系统默认)".to_string(),
+            };
+
+            let combo_changed_smtc =
+                egui::ComboBox::from_id_salt("smtc_source_selector_v3_fixed_scoped")
+                    .selected_text(combo_label_text)
+                    .show_ui(ui, |combo_ui| {
+                        let mut changed_in_combo = false;
+                        if combo_ui
+                            .selectable_label(selected_id_for_combo.is_none(), "自动 (系统默认)")
+                            .clicked()
+                            && selected_id_for_combo.is_some()
+                        {
+                            selected_id_for_combo = None;
+                            changed_in_combo = true;
+                        }
+                        for session_info in available_sessions_guard.iter() {
+                            if combo_ui
+                                .selectable_label(
+                                    selected_id_for_combo.as_ref()
+                                        == Some(&session_info.session_id),
+                                    &session_info.display_name,
+                                )
+                                .clicked()
+                                && selected_id_for_combo.as_ref() != Some(&session_info.session_id)
+                            {
+                                selected_id_for_combo = Some(session_info.session_id.clone());
+                                changed_in_combo = true;
+                            }
+                        }
+                        changed_in_combo
+                    })
+                    .inner
+                    .unwrap_or(false);
+
+            if combo_changed_smtc {
+                *selected_session_id_guard = selected_id_for_combo.clone();
+                let session_to_send = selected_id_for_combo.unwrap_or_default();
+
+                *self.last_requested_volume_for_session.lock().unwrap() = None;
+                *self.current_smtc_volume.lock().unwrap() = None;
+
+                if let Some(tx) = &self.media_connector_command_tx {
+                    if tx
+                        .send(ConnectorCommand::SelectSmtcSession(session_to_send))
+                        .is_err()
+                    {
+                        log::error!("[Unilyric UI] 发送 SelectSmtcSession 命令失败。");
+                    }
+                }
+            }
+        }
+        ui.separator();
+
+        // --- SMTC 当前监听信息 ---
+        ui.strong("当前监听 (SMTC):");
+        match self.current_media_info.try_lock() {
+            Ok(media_info_guard) => {
+                if let Some(info) = &*media_info_guard {
+                    ui.label(format!("歌曲: {}", info.title.as_deref().unwrap_or("未知")));
+                    ui.label(format!(
+                        "艺术家: {}",
+                        info.artist.as_deref().unwrap_or("未知")
+                    ));
+                    ui.label(format!(
+                        "专辑: {}",
+                        info.album_title.as_deref().unwrap_or("未知")
+                    ));
+                    if let Some(playing) = info.is_playing {
+                        ui.label(if playing {
+                            "状态: 播放中"
+                        } else {
+                            "状态: 已暂停"
+                        });
+                    }
+                    ui.strong("时间轴偏移:");
+                    ui.horizontal(|h_ui| {
+                        h_ui.label("偏移量:");
+                        let mut current_offset = self.smtc_time_offset_ms;
+                        let response = h_ui.add(
+                            egui::DragValue::new(&mut current_offset)
+                                .speed(10.0)
+                                .suffix(" ms"),
+                        );
+                        if response.changed() {
+                            self.smtc_time_offset_ms = current_offset;
+                            let mut settings = self.app_settings.lock().unwrap();
+                            if settings.smtc_time_offset_ms != self.smtc_time_offset_ms {
+                                settings.smtc_time_offset_ms = self.smtc_time_offset_ms;
+                                if settings.save().is_err() {
+                                    log::error!("[Unilyric UI] 侧边栏偏移量持久化到设置失败。");
+                                }
+                            }
+                        }
+                    });
+                    if let Some(cover_bytes) = &info.cover_data {
+                        if !cover_bytes.is_empty() {
+                            let image_id_cow: std::borrow::Cow<'static, str> =
+                                info.cover_data_hash.map_or_else(
+                                    || {
+                                        let mut hasher =
+                                            std::collections::hash_map::DefaultHasher::new();
+                                        cover_bytes[..std::cmp::min(cover_bytes.len(), 16)]
+                                            .hash(&mut hasher);
+                                        format!("smtc_cover_data_partial_hash_{}", hasher.finish())
+                                            .into()
+                                    },
+                                    |hash| format!("smtc_cover_hash_{}", hash).into(),
+                                );
+                            let image_source = egui::ImageSource::Bytes {
+                                uri: image_id_cow,
+                                bytes: cover_bytes.clone().into(),
+                            };
+                            ui.add_sized(
+                                egui::vec2(200.0, 200.0),
+                                egui::Image::new(image_source)
+                                    .max_size(egui::vec2(200.0, 200.0))
+                                    .maintain_aspect_ratio(true)
+                                    .bg_fill(Color32::TRANSPARENT),
+                            );
+                        }
+                    }
+                } else {
+                    ui.weak("无SMTC信息 / 未选择特定源");
+                }
+            }
+            Err(_) => {
+                ui.weak("SMTC信息读取中...");
+            }
+        }
+        ui.separator();
+
+        ui.strong("本地歌词:");
+        let can_save_to_local = !self.output_text.is_empty()
+            && self
+                .current_media_info
+                .try_lock()
+                .is_ok_and(|g| g.is_some())
+            && self.last_auto_fetch_source_format.is_some();
+
+        let save_button_widget = Button::new("💾 保存输出框歌词到本地");
+        let mut response = ui.add_enabled(can_save_to_local, save_button_widget);
+        if !can_save_to_local {
+            response = response.on_hover_text("需先搜索到歌词才能缓存");
+        }
+        if response.clicked() {
+            self.save_current_lyrics_to_local_cache();
+        }
+        ui.separator();
+
+        ui.strong("自动歌词搜索状态:");
+        let sources_config: Vec<SourceConfigTuple> = vec![
+            (
+                AutoSearchSource::LocalCache,
+                Arc::clone(&self.local_cache_auto_search_status),
+                None,
+            ),
+            (
+                AutoSearchSource::QqMusic,
+                Arc::clone(&self.qqmusic_auto_search_status), // 克隆 Arc
+                Some(Arc::clone(&self.last_qq_search_result)), // 克隆 Arc
+            ),
+            (
+                AutoSearchSource::Kugou,
+                Arc::clone(&self.kugou_auto_search_status), // 克隆 Arc
+                Some(Arc::clone(&self.last_kugou_search_result)), // 克隆 Arc
+            ),
+            (
+                AutoSearchSource::Netease,
+                Arc::clone(&self.netease_auto_search_status), // 克隆 Arc
+                Some(Arc::clone(&self.last_netease_search_result)), // 克隆 Arc
+            ),
+            (
+                AutoSearchSource::AmllDb,
+                Arc::clone(&self.amll_db_auto_search_status), // 克隆 Arc
+                Some(Arc::clone(&self.last_amll_db_search_result)), // 克隆 Arc
+            ),
+        ];
+        let mut action_load_lyrics: Option<(ProcessedLyricsSourceData, AutoSearchSource)> = None;
+        for (source_enum, status_arc, opt_result_arc) in sources_config {
+            ui.horizontal(|item_ui| {
+                item_ui.label(format!("{}:", source_enum.display_name()));
+                let status = status_arc.lock().unwrap().clone();
+                item_ui.with_layout(Layout::right_to_left(Align::Center), |right_aligned_ui| {
+                    let mut show_load_button = false;
+                    let mut data_for_load_action_this_iteration: Option<ProcessedLyricsSourceData> =
+                        None;
+                    if source_enum != AutoSearchSource::LocalCache {
+                        if let AutoSearchStatus::Success(_) = status {
+                            if let Some(result_arc) = &opt_result_arc {
+                                if let Some(ref stored_data) = *result_arc.lock().unwrap() {
+                                    show_load_button = true;
+                                    data_for_load_action_this_iteration = Some(stored_data.clone());
+                                }
+                            }
+                        }
+                    }
+                    if show_load_button {
+                        if right_aligned_ui
+                            .button("载入")
+                            .on_hover_text(format!(
+                                "使用 {} 找到的歌词",
+                                source_enum.display_name()
+                            ))
+                            .clicked()
+                        {
+                            if let Some(data) = data_for_load_action_this_iteration {
+                                action_load_lyrics = Some((data, source_enum));
+                            }
+                        }
+                        right_aligned_ui.add_space(4.0);
+                    }
+                    if source_enum != AutoSearchSource::LocalCache
+                        && matches!(
+                            status,
+                            AutoSearchStatus::NotFound | AutoSearchStatus::Error(_)
+                        )
+                        && right_aligned_ui.button("重搜").clicked()
+                    {
+                        crate::app_fetch_core::trigger_manual_refetch_for_source(self, source_enum);
+                    }
+                    let status_display_text = match status {
+                        AutoSearchStatus::NotAttempted => "未尝试".to_string(),
+                        AutoSearchStatus::Searching => "正在搜索...".to_string(),
+                        AutoSearchStatus::Success(_) => "已找到".to_string(),
+                        AutoSearchStatus::NotFound => "未找到".to_string(),
+                        AutoSearchStatus::Error(_) => "错误".to_string(),
+                    };
+                    if matches!(status, AutoSearchStatus::Error(_)) {
+                        right_aligned_ui.colored_label(
+                            right_aligned_ui.visuals().error_fg_color,
+                            status_display_text,
+                        );
+                    } else {
+                        right_aligned_ui.label(status_display_text);
+                    }
+                });
+            });
+        }
+        if let Some((data, source)) = action_load_lyrics {
+            self.load_lyrics_from_stored_result(data, source);
+        }
+
+        ui.strong("AMLL 歌词库索引:");
+        let index_status_clone = self.amll_index_download_state.lock().unwrap().clone();
+
+        let mut show_check_button = false;
+        let mut check_button_text = String::new(); // 初始化为空
+        let mut check_button_hover = String::new(); // 初始化为空
+
+        let mut show_force_refresh_button = false;
+        let force_refresh_button_text = "手动下载索引".to_string();
+        let force_refresh_button_hover = "忽略本地缓存和版本检查，直接下载最新索引".to_string();
+
+        let mut show_download_update_button = false;
+        let mut download_update_button_text = String::new();
+        let mut download_update_button_hover = String::new();
+
+        match &index_status_clone {
+            AmllIndexDownloadState::Idle => {
+                ui.weak("状态: 未初始化/未知");
+                check_button_text = "检查更新并加载索引".to_string();
+                check_button_hover = "检查索引是否有新版本，或加载本地缓存".to_string();
+                show_check_button = true;
+            }
+            AmllIndexDownloadState::CheckingForUpdate => {
+                ui.horizontal(|h_ui| {
+                    h_ui.add(Spinner::new());
+                    h_ui.label("检查更新中...");
+                });
+                // 正在检查时不显示任何操作按钮
+            }
+            AmllIndexDownloadState::UpdateAvailable(remote_head) => {
+                ui.colored_label(
+                    Color32::GOLD,
+                    format!(
+                        "有可用更新 (新 HEAD: {})",
+                        remote_head.chars().take(7).collect::<String>()
+                    ),
+                );
+                download_update_button_text = "下载更新".to_string();
+                download_update_button_hover = format!(
+                    "下载版本 {}",
+                    remote_head.chars().take(7).collect::<String>()
+                );
+                show_download_update_button = true;
+                show_force_refresh_button = true;
+            }
+            AmllIndexDownloadState::Downloading(Some(downloading_head)) => {
+                ui.horizontal(|h_ui| {
+                    h_ui.add(Spinner::new());
+                    h_ui.label(format!(
+                        "下载中 ({})...",
+                        downloading_head.chars().take(7).collect::<String>()
+                    ));
+                });
+            }
+            AmllIndexDownloadState::Downloading(None) => {
+                ui.horizontal(|h_ui| {
+                    h_ui.add(Spinner::new());
+                    h_ui.label("下载中 (最新)...");
+                });
+            }
+            AmllIndexDownloadState::Success(loaded_head) => {
+                let index_len = self.amll_index.lock().unwrap().len();
+                ui.colored_label(Color32::GREEN, format!("已加载 ({} 条)", index_len));
+                ui.label(format!(
+                    "当前版本: {}",
+                    loaded_head.chars().take(7).collect::<String>()
+                ));
+                check_button_text = "检查是否有新版本".to_string(); // 成功后，按钮变为检查更新
+                check_button_hover = "检查索引是否有新版本".to_string();
+                show_check_button = true;
+                show_force_refresh_button = true; // 成功加载后，也允许强制刷新
+            }
+            AmllIndexDownloadState::Error(err_msg) => {
+                ui.colored_label(ui.visuals().error_fg_color, "错误");
+                ui.small(err_msg);
+                check_button_text = "重试".to_string();
+                check_button_hover = "再次尝试检查索引更新".to_string();
+                show_check_button = true;
+                show_force_refresh_button = true;
+            }
+        }
+
+        // 按钮的绘制逻辑
+        if show_check_button
+            && !check_button_text.is_empty()
+            && ui
+                .button(&check_button_text)
+                .on_hover_text(&check_button_hover)
+                .clicked()
+        {
+            // "检查更新"、"检查更新并加载索引"、"重试检查更新" 都触发 check_for_amll_index_update
+            self.check_for_amll_index_update();
+        }
+
+        if show_download_update_button
+            && !download_update_button_text.is_empty()
+            && ui
+                .button(&download_update_button_text)
+                .on_hover_text(&download_update_button_hover)
+                .clicked()
+        {
+            // 这个按钮只在 UpdateAvailable 状态下出现，所以总是下载特定更新
+            self.trigger_amll_index_download(false);
+        }
+
+        if show_force_refresh_button {
+            // 确保与上一个按钮有间隔，除非上一个按钮没显示
+            if show_check_button || show_download_update_button {
+                ui.add_space(BUTTON_STRIP_SPACING); // 假设 BUTTON_STRIP_SPACING 已定义
+            }
+            if ui
+                .button(&force_refresh_button_text)
+                .on_hover_text(&force_refresh_button_hover)
+                .clicked()
+            {
+                self.trigger_amll_index_download(true);
+            }
+        }
     }
 }

@@ -1,3 +1,4 @@
+use regex::Regex;
 // 导入 reqwest::Client 用于发送 HTTP 请求
 use reqwest::Client;
 // 导入 serde 的 Deserialize 和 Serialize 特征，用于数据的序列化和反序列化
@@ -357,139 +358,136 @@ pub async fn get_lyrics_by_id(
 }
 
 /// 从解密后的 QRC 信息 XML 字符串中提取特定 LyricType 的 LyricContent。
+/// 此版本使用正则表达式提取 LyricContent 的值，以避免因内容中未转义引号导致的 XML 解析错误，
+/// 然后逐行处理提取出的内容，保留以 '[' 开头的行。
 ///
-/// QQ音乐返回的解密后歌词数据（尤其是主歌词和罗马音）通常是一个XML片段，
-/// 例如：<Lyric_1 LyricType="1" LyricContent="[QRC文本内容]"/>
-/// 此函数负责解析这个XML，并提取指定 LyricType 对应的 LyricContent 属性值。
-///
-/// # Arguments
-/// * `xml_string`: &str - 包含QRC信息的XML字符串。
+/// # 参数
+/// * `xml_string`: &str - 包含QRC信息的完整XML字符串。
 /// * `target_lyric_type_str`: &str - 目标歌词类型的字符串标识，例如 "1" 代表主QRC。
 ///
-/// # Returns
-/// `Result<String, ConvertError>` - 成功时返回提取到的歌词内容字符串，失败则返回错误。
+/// # 返回
+/// `Result<String, crate::types::ConvertError>` - 成功时返回提取到的歌词内容字符串，否则返回错误或空字符串。
 fn extract_lyric_content_from_qrcinfos_xml(
+    // 你可以将函数名改回原来的，或使用此新名称
     xml_string: &str,
     target_lyric_type_str: &str,
-) -> Result<String, ConvertError> {
-    // 检查输入的XML字符串是否为空或仅包含空白字符
+) -> Result<String, crate::types::ConvertError> {
+    // 确保这里的 ConvertError 路径正确
+    // 检查输入XML是否为空或仅包含空白字符
     if xml_string.trim().is_empty() {
-        log::warn!("[QQMusicAPI - extract] 输入的XML内容为空，直接返回空字符串。");
+        log::warn!("[QQMusicAPI - 提取] 输入的XML内容为空，直接返回空字符串。");
         return Ok(String::new());
     }
 
-    // 初始化XML读取器
-    let mut reader = Reader::from_str(xml_string);
-    // 配置读取器：自动去除文本节点两端的空白字符
-    reader.config_mut().trim_text_start = true;
-    reader.config_mut().trim_text_end = true;
+    // 调试日志：记录尝试提取的歌词类型和XML片段（截断以避免日志过长）
+    log::trace!(
+        "[QQMusicAPI - 提取] 尝试使用正则表达式提取 LyricType '{}' 的内容，XML片段: '{}'",
+        target_lyric_type_str,
+        if xml_string.len() > 300 {
+            format!("{}...", &xml_string[..300])
+        } else {
+            xml_string.to_string()
+        }
+    );
 
-    let mut buf = Vec::new(); // 用于读取XML事件的缓冲区
-    let mut found_content = String::new(); // 用于存储最终找到的歌词内容
+    // 构建正则表达式:
+    // - 匹配 <Lyric_数字 LyricType="目标类型"[其他属性]LyricContent="实际QRC内容"[其他属性]/>
+    //   - <Lyric_\d+\s+                    : 匹配 <Lyric_ 后跟一个或多个数字和一个或多个空格
+    //   - LyricType\s*=\s*"{}"             : 匹配 LyricType 属性，其值为 target_lyric_type_str。
+    //                                       允许等号和引号周围有空格。目标类型字符串会经过 regex::escape 转义。
+    //   - [^>]*?                           : 非贪婪匹配 LyricType 和 LyricContent 之间的任何其他属性或字符（直到遇到 LyricContent 或标签结束）。
+    //   - LyricContent\s*=\s*"((?:.|\s)*?)" : 匹配 LyricContent 属性，并捕获引号内的所有内容（捕获组1）。
+    //                                       ((?:.|\s)*?) 表示非贪婪匹配任何字符（包括换行符）。
+    //   - \s*/>                            : 匹配标签的自闭合部分，允许前面的空格。
+    let regex_pattern = format!(
+        r#"<Lyric_\d+\s+LyricType\s*=\s*"{}"[^>]*?LyricContent\s*=\s*"((?:.|\s)*?)"\s*/>"#,
+        regex::escape(target_lyric_type_str) // 转义目标类型字符串，以防包含正则特殊字符
+    );
 
-    // 循环处理XML事件，直到文件末尾(Eof)或发生错误
-    loop {
-        match reader.read_event_into(&mut buf) {
-            // 处理开始标签 <Lyric_...> 或空标签 <Lyric_.../>
-            Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
-                // 仅处理以 "Lyric_" 开头的标签，这是QQ音乐内部QRC XML的特征
-                if e.name().as_ref().starts_with(b"Lyric_") {
-                    let mut current_lyric_type: Option<String> = None; // 存储当前标签的LyricType属性值
-                    let mut current_lyric_content_raw_bytes: Option<Vec<u8>> = None; // 存储LyricContent属性的原始字节
+    // 编译正则表达式
+    let re = match Regex::new(&regex_pattern) {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!(
+                "[QQMusicAPI - 提取] 正则表达式编译失败，模式: '{}'，错误: {}",
+                regex_pattern,
+                e
+            );
+            // 返回内部错误，指示正则表达式构建问题
+            return Err(crate::types::ConvertError::Internal(format!(
+                "正则表达式编译失败: {}",
+                e
+            )));
+        }
+    };
 
-                    // 遍历当前标签的所有属性
-                    for attr_result in e.attributes() {
-                        match attr_result {
-                            Ok(attr) => {
-                                match attr.key.as_ref() {
-                                    // 如果属性名是 "LyricType"
-                                    b"LyricType" => {
-                                        // 对 LyricType 属性值进行标准的解码和XML反转义
-                                        // 因为 LyricType 通常是简单的数字或标识符，标准处理即可
-                                        match attr.decode_and_unescape_value(reader.decoder()) {
-                                            Ok(value_cow) => {
-                                                current_lyric_type = Some(value_cow.into_owned())
-                                            }
-                                            Err(err) => {
-                                                log::error!(
-                                                    "[QQMusicAPI - extract] 解码LyricType属性值失败: {}",
-                                                    err
-                                                );
-                                                return Err(ConvertError::Xml(err));
-                                            }
-                                        }
-                                    }
-                                    // 如果属性名是 "LyricContent"
-                                    b"LyricContent" => {
-                                        // 直接获取 LyricContent 属性的原始字节值 (Vec<u8>)
-                                        // 这是为了避免 quick_xml 对其进行XML实体反转义，
-                                        // 因为我们知道其内容是纯QRC文本，其中 '&' 等字符应被视为普通字符。
-                                        current_lyric_content_raw_bytes =
-                                            Some(attr.value.into_owned());
-                                    }
-                                    // 忽略其他属性
-                                    _ => {}
-                                }
+    // 在XML字符串中执行正则匹配
+    match re.captures(xml_string) {
+        Some(caps) => {
+            // 正则表达式成功匹配
+            // 尝试获取第一个捕获组 (即 LyricContent 的值)
+            match caps.get(1) {
+                Some(qrc_content_match) => {
+                    let qrc_data = qrc_content_match.as_str();
+                    log::trace!(
+                        "[QQMusicAPI - 提取] 正则表达式成功捕获 LyricType '{}' 的QRC数据块。长度: {}",
+                        target_lyric_type_str,
+                        qrc_data.len()
+                    );
+
+                    // 逐行处理捕获到的QRC数据，提取以 '[' 开头的行
+                    let extracted_lines: Vec<String> = qrc_data
+                        .lines() // 按行分割
+                        .filter(|line| line.trim_start().starts_with('[')) // 筛选以 '[' 开头的行 (去除行首空格后判断)
+                        .map(String::from) // 将 &str 转换为 String
+                        .collect(); // 收集结果到 Vec<String>
+
+                    if !extracted_lines.is_empty() {
+                        let final_content = extracted_lines.join("\n"); // 将提取的行用换行符重新组合
+                        log::info!(
+                            "[QQMusicAPI - 提取] 成功提取并过滤 LyricType '{}' 的QRC内容。输出长度: {}",
+                            target_lyric_type_str,
+                            final_content.len()
+                        );
+                        Ok(final_content) // 返回处理后的歌词内容
+                    } else {
+                        log::warn!(
+                            "[QQMusicAPI - 提取] 正则匹配并捕获到LyricContent，但在QRC数据中未找到以 '[' 开头的有效行。LyricType: '{}'。捕获的QRC数据片段: '{}'",
+                            target_lyric_type_str,
+                            if qrc_data.len() > 200 {
+                                // 截断显示的QRC数据
+                                format!("{}...", &qrc_data[..200])
+                            } else {
+                                qrc_data.to_string()
                             }
-                            Err(err) => {
-                                log::error!("[QQMusicAPI - extract] 读取属性失败: {}", err);
-                                return Err(ConvertError::Xml(quick_xml::Error::InvalidAttr(err)));
-                            }
-                        }
-                    }
-
-                    // 检查是否同时获取到了 LyricType 和 LyricContent
-                    if let (Some(lyric_type_val), Some(lyric_content_bytes_val)) =
-                        (current_lyric_type, current_lyric_content_raw_bytes)
-                    {
-                        // 如果当前标签的 LyricType 与目标类型匹配
-                        if lyric_type_val == target_lyric_type_str {
-                            // 将 LyricContent 的原始字节尝试转换为UTF-8字符串
-                            // QRC歌词内容通常是UTF-8编码。
-                            match String::from_utf8(lyric_content_bytes_val) {
-                                Ok(s) => {
-                                    // 成功转换为字符串，这就是我们需要的QRC歌词内容
-                                    found_content = s;
-                                    log::debug!(
-                                        "[QQMusicAPI - extract] 成功提取到 LyricType '{}' 的内容。",
-                                        target_lyric_type_str
-                                    );
-                                }
-                                Err(utf8_err) => {
-                                    // 字节序列不是有效的UTF-8
-                                    log::error!(
-                                        "[QQMusicAPI - extract] LyricContent 属性值不是有效的UTF-8: {}",
-                                        utf8_err
-                                    );
-                                    return Err(ConvertError::Internal(format!(
-                                        "LyricContent UTF-8 conversion error: {}",
-                                        utf8_err
-                                    )));
-                                }
-                            }
-                            // 既然已找到目标内容，可以跳出最外层的loop
-                            break;
-                        }
+                        );
+                        Ok(String::new()) // 未找到有效歌词行，返回空字符串
                     }
                 }
+                None => {
+                    // 这种情况理论上不应发生：如果 re.captures 返回 Some，则捕获组1也应该存在。
+                    // 若发生，可能表示正则表达式逻辑本身或XML结构有预料之外的细微变化。
+                    log::error!(
+                        "[QQMusicAPI - 提取] 正则表达式匹配成功，但捕获组1 (LyricContent) 未捕获到任何内容。LyricType: '{}'。",
+                        target_lyric_type_str
+                    );
+                    Ok(String::new()) // 捕获组问题，返回空字符串
+                }
             }
-            // 到达XML文件末尾，正常退出循环
-            Ok(Event::Eof) => {
-                log::debug!("[QQMusicAPI - extract] 已到达XML末尾。");
-                break;
-            }
-            // XML解析过程中发生错误
-            Err(e) => {
-                log::error!("[QQMusicAPI - extract] XML解析错误: {}", e);
-                return Err(ConvertError::Xml(e));
-            }
-            // 忽略其他类型的XML事件 (如文本节点、注释、结束标签等)
-            _ => (),
         }
-        // 清空缓冲区，为下一次 read_event_into 调用做准备
-        buf.clear();
+        None => {
+            // 正则表达式未在XML中找到匹配项
+            log::warn!(
+                "[QQMusicAPI - 提取] 正则表达式模式未在XML中匹配到 LyricType '{}' 的内容。XML片段: '{}'",
+                target_lyric_type_str,
+                if xml_string.len() > 300 {
+                    // 截断显示的XML片段
+                    format!("{}...", &xml_string[..300])
+                } else {
+                    xml_string.to_string()
+                }
+            );
+            Ok(String::new()) // 未匹配，返回空字符串
+        }
     }
-
-    // 返回找到的歌词内容 (如果未找到匹配的 LyricType，则返回初始的空字符串)
-    Ok(found_content)
 }

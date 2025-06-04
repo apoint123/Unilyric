@@ -1,6 +1,7 @@
-use crate::app::UniLyricApp;
+use crate::app_definition::UniLyricApp;
 use crate::lrc_parser;
-use crate::types::{CanonicalMetadataKey, LrcContentType, LyricFormat};
+use crate::types::{CanonicalMetadataKey, DisplayLrcLine, LrcContentType, LyricFormat};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
@@ -40,7 +41,7 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
                         LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc
                     )
                 {
-                    log::info!("[UniLyricApp] 源格式为LRC，目标格式自动切换为LQE。");
+                    log::info!("[UniLyric] 源格式为LRC，目标格式自动切换为LQE。");
                     app.target_format = LyricFormat::Lqe;
                 }
                 app.handle_convert();
@@ -92,7 +93,7 @@ pub fn handle_save_file(app: &mut UniLyricApp) {
 
     let dialog = rfd::FileDialog::new()
         .add_filter(
-            format!("{} 文件 (*.{})", app.target_format.to_string(), target_ext).as_str(),
+            format!("{} 文件 (*.{})", app.target_format, target_ext).as_str(),
             &[target_ext],
         )
         .set_file_name(&default_filename)
@@ -146,12 +147,21 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, lrc_type: LrcContentType) {
 
 fn load_lrc_file_from_path(app: &mut UniLyricApp, path: PathBuf, lrc_type: LrcContentType) {
     let source_desc = path.display().to_string();
-    match std::fs::read_to_string(&path) {
+    match fs::read_to_string(&path) {
         Ok(content) => {
+            app.last_opened_file_path = Some(path);
             load_lrc_from_content(app, content, lrc_type, &source_desc);
         }
         Err(e) => {
             log::error!("[Unilyric] 读取LRC文件 '{}' 失败: {}", source_desc, e);
+            app.toasts.add(egui_toast::Toast {
+                text: format!("读取LRC文件失败: {}", e).into(),
+                kind: egui_toast::ToastKind::Error,
+                options: egui_toast::ToastOptions::default()
+                    .duration_in_seconds(3.0)
+                    .show_icon(true),
+                style: Default::default(),
+            });
         }
     }
 }
@@ -163,48 +173,53 @@ fn load_lrc_from_content(
     source_description: &str,
 ) {
     match lrc_parser::parse_lrc_text_to_lines(&content) {
-        Ok((lines, lrc_meta)) => {
+        Ok((lines, _bilingual_translations, lrc_meta)) => {
+            // 忽略 _bilingual_translations
             let log_type_str = match lrc_type {
                 LrcContentType::Translation => "翻译",
                 LrcContentType::Romanization => "罗马音",
             };
             let num_lines = lines.len();
 
+            // 将解析后的 DisplayLrcLine 转换为用于UI显示的纯文本字符串
+            let lrc_text_for_display = lines
+                .iter()
+                .map(|line_entry| match line_entry {
+                    DisplayLrcLine::Parsed(lrc_line) => {
+                        format!(
+                            "{}{}",
+                            crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
+                            lrc_line.text
+                        )
+                    }
+                    DisplayLrcLine::Raw { original_text } => original_text.clone(),
+                })
+                .collect::<Vec<String>>()
+                .join("\n");
+
             if !lrc_meta.is_empty() {
                 let mut store = app.metadata_store.lock().unwrap();
                 for item in &lrc_meta {
-                    // item 是 &AssMetadata { key: String, value: String }
-                    // 使用 .parse() 并正确处理 Result
                     match item.key.parse::<CanonicalMetadataKey>() {
                         Ok(c_key_from_lrc) => {
-                            // c_key_from_lrc 是 CanonicalMetadataKey
-                            // 现在 c_key_from_lrc 是解构后的 CanonicalMetadataKey，可以安全使用
-                            let should_add = store
-                                .get_multiple_values(&c_key_from_lrc) // 传递 &CanonicalMetadataKey
-                                .is_none_or(|vals| {
-                                    vals.is_empty() || vals.iter().all(|v| v.is_empty())
-                                });
+                            let should_add =
+                                store
+                                    .get_multiple_values(&c_key_from_lrc)
+                                    .is_none_or(|vals| {
+                                        vals.is_empty() || vals.iter().all(|v| v.is_empty())
+                                    });
 
                             if should_add {
                                 if lrc_type == LrcContentType::Translation
                                     && matches!(c_key_from_lrc, CanonicalMetadataKey::Language)
-                                // 现在 c_key_from_lrc 是 CanonicalMetadataKey
                                 {
                                     if let Err(e) =
                                         store.add("translation_language", item.value.clone())
                                     {
-                                        log::info!(
-                                            "Failed to add translation_language from LRC: {}",
-                                            e
-                                        );
+                                        log::info!("从LRC加载翻译语言失败: {}", e);
                                     }
                                 } else if let Err(e) = store.add(&item.key, item.value.clone()) {
-                                    // 使用原始 item.key 字符串给 store.add
-                                    log::info!(
-                                        "Failed to add metadata key {} from LRC: {}",
-                                        item.key,
-                                        e
-                                    );
+                                    log::info!("未能从LRC添加元数据键 {}：{}", item.key, e);
                                 }
                             } else {
                                 log::info!(
@@ -232,8 +247,25 @@ fn load_lrc_from_content(
             }
 
             match lrc_type {
-                LrcContentType::Translation => app.loaded_translation_lrc = Some(lines),
-                LrcContentType::Romanization => app.loaded_romanization_lrc = Some(lines),
+                LrcContentType::Translation => {
+                    app.loaded_translation_lrc = Some(lines);
+                    // 更新UI显示文本
+                    app.display_translation_lrc_output = if lrc_text_for_display.trim().is_empty() {
+                        String::new()
+                    } else {
+                        lrc_text_for_display.trim_end_matches('\n').to_string() + "\n"
+                    };
+                }
+                LrcContentType::Romanization => {
+                    app.loaded_romanization_lrc = Some(lines);
+                    // 更新UI显示文本
+                    app.display_romanization_lrc_output = if lrc_text_for_display.trim().is_empty()
+                    {
+                        String::new()
+                    } else {
+                        lrc_text_for_display.trim_end_matches('\n').to_string() + "\n"
+                    };
+                }
             }
             log::info!(
                 "[Unilyric] 已从 '{}' 加载 {} LRC ({} 行)。",
@@ -242,21 +274,20 @@ fn load_lrc_from_content(
                 num_lines
             );
 
-            // 在所有LRC数据（包括元数据）处理完毕后，重建UI的元数据列表
             app.rebuild_editable_metadata_from_store();
 
-            // 如果主歌词段落已存在，或者即使不存在但目标格式是LQE（可能仅依赖LRC和元数据）
-            // 则触发合并和可能的重新转换
             if app.parsed_ttml_paragraphs.is_some() || app.target_format == LyricFormat::Lqe {
                 log::info!(
                     "[UniLyricApp load_lrc_from_content] 主段落存在或目标为LQE，触发 handle_convert。"
                 );
                 app.handle_convert();
             } else {
-                // 如果没有主歌词，但加载了LRC，至少更新一下LRC显示面板
                 log::info!("[UniLyricApp load_lrc_from_content] 无主段落，仅更新LRC预览。");
-                app.merge_lrc_into_paragraphs(); // 这个函数会使用 loaded_translation_lrc/loaded_romanization_lrc
-                app.generate_target_format_output(); // 更新LRC面板显示
+                // 即使没有主段落，也应该尝试合并（虽然可能没什么可合并的），并生成输出
+                // 以便LRC面板的内容能反映到可能的LQE输出中（如果目标是LQE）
+                // 或者至少确保如果目标是LRC，输出是基于加载的LRC。
+                // 考虑到 handle_convert 内部会处理 loaded_xxx_lrc，这里直接调用它更统一。
+                app.handle_convert();
             }
         }
         Err(e) => {
@@ -265,6 +296,14 @@ fn load_lrc_from_content(
                 source_description,
                 e
             );
+            app.toasts.add(egui_toast::Toast {
+                text: format!("LRC文件解析失败: {}", e).into(),
+                kind: egui_toast::ToastKind::Error,
+                options: egui_toast::ToastOptions::default()
+                    .duration_in_seconds(3.0)
+                    .show_icon(true),
+                style: Default::default(),
+            });
         }
     }
 }
