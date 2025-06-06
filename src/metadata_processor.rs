@@ -289,20 +289,19 @@ impl MetadataStore {
             all_agent_ids_to_process.insert(agent_id_from_para.clone());
         }
 
-        let mut v1_agent_id: Option<String> = None;
-        let mut other_agent_ids: Vec<String> = Vec::new();
+        let mut sorted_agent_ids: Vec<String> = all_agent_ids_to_process.into_iter().collect();
 
-        for agent_id in all_agent_ids_to_process {
-            if agent_id == "v1" {
-                v1_agent_id = Some(agent_id);
-            } else {
-                other_agent_ids.push(agent_id);
+        sorted_agent_ids.sort_unstable_by(|a, b| {
+            let a_num = a.strip_prefix('v').and_then(|s| s.parse::<u32>().ok());
+            let b_num = b.strip_prefix('v').and_then(|s| s.parse::<u32>().ok());
+
+            match (a_num, b_num) {
+                (Some(num_a), Some(num_b)) => num_a.cmp(&num_b),
+                _ => a.cmp(b),
             }
-        }
+        });
 
-        other_agent_ids.sort_unstable();
-
-        for agent_id_str in &other_agent_ids {
+        for agent_id_str in &sorted_agent_ids {
             let agent_name_from_store: Option<String> = agent_id_str
                 .parse::<CanonicalMetadataKey>()
                 .ok()
@@ -333,42 +332,6 @@ impl MetadataStore {
                 let mut agent_tag_xml = BytesStart::new("ttm:agent");
                 agent_tag_xml.push_attribute(("type", "person"));
                 agent_tag_xml.push_attribute(("xml:id", agent_id_str.as_str()));
-                writer.write_event(Event::Start(agent_tag_xml))?;
-                writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
-            }
-        }
-
-        if let Some(agent_id_v1_str) = &v1_agent_id {
-            let agent_name_from_store: Option<String> = agent_id_v1_str
-                .parse::<CanonicalMetadataKey>()
-                .ok()
-                .and_then(|ck| store.get_single_value(&ck).cloned());
-
-            if let Some(name) = agent_name_from_store {
-                if !name.trim().is_empty() {
-                    let mut agent_tag_xml = BytesStart::new("ttm:agent");
-                    agent_tag_xml.push_attribute(("type", "person"));
-                    agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
-                    writer.write_event(Event::Start(agent_tag_xml))?;
-
-                    let mut name_tag_xml = BytesStart::new("ttm:name");
-                    name_tag_xml.push_attribute(("type", "full"));
-                    writer.write_event(Event::Start(name_tag_xml))?;
-                    writer.write_event(Event::Text(BytesText::new(name.trim())))?;
-                    writer.write_event(Event::End(BytesEnd::new("ttm:name")))?;
-
-                    writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
-                } else {
-                    let mut agent_tag_xml = BytesStart::new("ttm:agent");
-                    agent_tag_xml.push_attribute(("type", "person"));
-                    agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
-                    writer.write_event(Event::Start(agent_tag_xml))?;
-                    writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
-                }
-            } else {
-                let mut agent_tag_xml = BytesStart::new("ttm:agent");
-                agent_tag_xml.push_attribute(("type", "person"));
-                agent_tag_xml.push_attribute(("xml:id", agent_id_v1_str.as_str()));
                 writer.write_event(Event::Start(agent_tag_xml))?;
                 writer.write_event(Event::End(BytesEnd::new("ttm:agent")))?;
             }
@@ -440,11 +403,9 @@ impl MetadataStore {
         }
 
         let mut processed_agent_ids_for_amll_dedup = HashSet::new();
-        if let Some(v1_id) = &v1_agent_id {
-            processed_agent_ids_for_amll_dedup.insert(v1_id.clone());
-        }
-        for other_id in &other_agent_ids {
-            processed_agent_ids_for_amll_dedup.insert(other_id.clone());
+        // 使用排序后的 sorted_agent_ids 来构建去重集合
+        for agent_id in &sorted_agent_ids {
+            processed_agent_ids_for_amll_dedup.insert(agent_id.clone());
         }
 
         for (canonical_key_from_store, values_vec) in store.iter_all() {

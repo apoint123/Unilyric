@@ -1,7 +1,7 @@
-use quick_xml::events::Event;
-use quick_xml::Reader;
-use log::{error, info};
 use crate::types::{AssMetadata, BackgroundSection, ConvertError, TtmlParagraph, TtmlSyllable};
+use log::{error, info};
+use quick_xml::Reader;
+use quick_xml::events::Event;
 
 /// 定义一个类型别名，用于表示 TTML 解析函数的返回结果。
 /// 这是一个包含元组的 Result，元组中包含：
@@ -308,9 +308,7 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             .attributes()
                             .flatten()
                             .find(|attr| attr.key.as_ref() == b"xml:id")
-                            .and_then(|attr| {
-                                attr.decode_and_unescape_value(reader.decoder()).ok()
-                            })
+                            .and_then(|attr| attr.decode_and_unescape_value(reader.decoder()).ok())
                             .map(|cow| cow.into_owned());
                     }
                     "name" if in_agent_tag && full_name_bytes.as_ref() == b"ttm:name" => {
@@ -539,8 +537,8 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         {
                             match span_type {
                                 SpanContentType::Translation => {
-                                    let (text, _lang) =
-                                        current_p_translation_line_mode.get_or_insert_with(|| {
+                                    let (text, _lang) = current_p_translation_line_mode
+                                        .get_or_insert_with(|| {
                                             (String::new(), lang_code_opt.clone())
                                         });
                                     text.push_str(text_str);
@@ -568,19 +566,16 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             }
                             if !text_str.is_empty() && text_str.chars().all(char::is_whitespace) {
                                 if let Some(para) = current_paragraph_word_mode.as_mut() {
-                                    let target_syllables =
-                                        if last_ended_syllable_span_info
-                                            == LastEndedSyllableSpanInfo::MainSyllable
-                                        {
-                                            &mut para.main_syllables
-                                        } else if let Some(bg) =
-                                            para.background_section.as_mut()
-                                        {
-                                            &mut bg.syllables
-                                        } else {
-                                            // 如果背景部分不存在，则忽略
-                                            continue;
-                                        };
+                                    let target_syllables = if last_ended_syllable_span_info
+                                        == LastEndedSyllableSpanInfo::MainSyllable
+                                    {
+                                        &mut para.main_syllables
+                                    } else if let Some(bg) = para.background_section.as_mut() {
+                                        &mut bg.syllables
+                                    } else {
+                                        // 如果背景部分不存在，则忽略
+                                        continue;
+                                    };
                                     if let Some(last_syl) = target_syllables.last_mut() {
                                         last_syl.ends_with_space = true;
                                     }
@@ -698,15 +693,19 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                                     {
                                                         (" ".to_string(), false)
                                                     } else {
-                                                        let trimmed = raw_accumulated_text.trim_end();
+                                                        let trimmed =
+                                                            raw_accumulated_text.trim_end();
                                                         (
                                                             trimmed.to_string(),
-                                                            raw_accumulated_text.len() > trimmed.len(),
+                                                            raw_accumulated_text.len()
+                                                                > trimmed.len(),
                                                         )
                                                     };
 
                                                 if !core_text_str.is_empty()
-                                                    || ((core_text_str.is_empty() || core_text_str == " ") && end_ms > start_ms)
+                                                    || ((core_text_str.is_empty()
+                                                        || core_text_str == " ")
+                                                        && end_ms > start_ms)
                                                 {
                                                     let syllable = TtmlSyllable {
                                                         text: core_text_str,
@@ -720,7 +719,11 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                                             last_ended_syllable_span_info = LastEndedSyllableSpanInfo::MainSyllable;
                                                         }
                                                         TextTargetContext::Background => {
-                                                            let bg_sec = para.background_section.get_or_insert_with(Default::default);
+                                                            let bg_sec = para
+                                                                .background_section
+                                                                .get_or_insert_with(
+                                                                    Default::default,
+                                                                );
                                                             bg_sec.syllables.push(syllable);
                                                             last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
                                                         }
@@ -728,30 +731,48 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                                 }
                                             }
                                         }
-                                        SpanContentType::Translation | SpanContentType::Romanization => {
+                                        SpanContentType::Translation
+                                        | SpanContentType::Romanization => {
                                             let (normalized_text, was_changed) =
                                                 normalize_whitespace_and_check_changes(
                                                     &raw_accumulated_text,
                                                 );
-                                            if was_changed && !detected_formatted_ttml_or_normalized_text {
+                                            if was_changed
+                                                && !detected_formatted_ttml_or_normalized_text
+                                            {
                                                 detected_formatted_ttml_or_normalized_text = true;
                                             }
                                             if !normalized_text.is_empty() {
                                                 // 分别处理主歌词和背景歌词的上下文
                                                 match context {
                                                     TextTargetContext::Main => {
-                                                        if span_type == SpanContentType::Translation {
-                                                            para.translation = Some((normalized_text, lang_attr_opt));
-                                                        } else { // Romanization
-                                                            para.romanization = Some(normalized_text);
+                                                        if span_type == SpanContentType::Translation
+                                                        {
+                                                            para.translation = Some((
+                                                                normalized_text,
+                                                                lang_attr_opt,
+                                                            ));
+                                                        } else {
+                                                            // Romanization
+                                                            para.romanization =
+                                                                Some(normalized_text);
                                                         }
                                                     }
                                                     TextTargetContext::Background => {
-                                                        if let Some(bg_sec) = para.background_section.as_mut() {
-                                                            if span_type == SpanContentType::Translation {
-                                                                bg_sec.translation = Some((normalized_text, lang_attr_opt));
-                                                            } else { // Romanization
-                                                                bg_sec.romanization = Some(normalized_text);
+                                                        if let Some(bg_sec) =
+                                                            para.background_section.as_mut()
+                                                        {
+                                                            if span_type
+                                                                == SpanContentType::Translation
+                                                            {
+                                                                bg_sec.translation = Some((
+                                                                    normalized_text,
+                                                                    lang_attr_opt,
+                                                                ));
+                                                            } else {
+                                                                // Romanization
+                                                                bg_sec.romanization =
+                                                                    Some(normalized_text);
                                                             }
                                                         }
                                                     }
