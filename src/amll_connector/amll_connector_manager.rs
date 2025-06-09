@@ -230,7 +230,7 @@ pub fn trigger_amll_index_update_check(
                     }
                 }
 
-                if Some(remote_head.clone()) == cached_head_on_disk {
+                if cached_head_on_disk.as_ref() == Some(&remote_head) {
                     info!("[AMLL_Manager check_update_task] 远程 HEAD ({}) 与缓存 HEAD 相同。索引已是最新。", remote_head.chars().take(7).collect::<String>());
                     // 即使 HEAD 相同，如果之前的状态不是 Success(remote_head)，也更新它
                     if !matches!(*state_lock, AmllIndexDownloadState::Success(ref s) if *s == remote_head) {
@@ -252,29 +252,31 @@ pub fn trigger_amll_index_update_check(
     });
 }
 
+pub struct AmllIndexDownloadParams {
+    pub http_client: Client,
+    pub amll_db_repo_url_base: String,
+    pub amll_index_data: Arc<Mutex<Vec<AmllIndexEntry>>>,
+    pub amll_index_download_state: Arc<Mutex<AmllIndexDownloadState>>,
+    pub amll_index_cache_path: Option<PathBuf>,
+    pub tokio_runtime: Arc<Runtime>,
+}
+
 /// 触发 AMLL 索引的异步下载和解析。
 ///
 /// UniLyricApp 会进行前置检查并设置初始的 Downloading 状态。
 /// 此函数负责获取最终的 HEAD SHA (如果需要) 并执行下载。
 pub fn trigger_amll_index_download_async(
-    http_client: Client,
-    amll_db_repo_url_base: String,
-    amll_index_data: Arc<Mutex<Vec<AmllIndexEntry>>>, // 用于更新索引数据
-    amll_index_download_state: Arc<Mutex<AmllIndexDownloadState>>, // 用于更新下载状态
-    amll_index_cache_path: Option<PathBuf>,
-    tokio_runtime: Arc<Runtime>,
+    params: AmllIndexDownloadParams,
     force_network_refresh: bool,
-    // 从 UniLyricApp 传递过来的，如果之前检查到 UpdateAvailable，则这是那个 head。
-    // 如果是 Idle/Error 状态触发下载，或者 force_network_refresh 为 true，这个可能是 None。
     initial_head_candidate: Option<String>,
 ) {
-    tokio_runtime.spawn(async move {
+    params.tokio_runtime.spawn(async move {
         let final_head_sha_to_use: String;
 
         // 1. 确定最终要使用的 HEAD SHA
         if force_network_refresh {
             trace!("[AMLL_Manager dl_task] 强制刷新模式：获取最新的远程 HEAD SHA...");
-            match amll_lyrics_fetcher::amll_fetcher::fetch_remote_index_head(&http_client).await {
+            match amll_lyrics_fetcher::amll_fetcher::fetch_remote_index_head(&params.http_client).await {
                 Ok(head) => {
                     info!("[AMLL_Manager dl_task] (强制刷新) 成功获取最新 HEAD: {}", head.chars().take(7).collect::<String>());
                     final_head_sha_to_use = head;
@@ -283,7 +285,7 @@ pub fn trigger_amll_index_download_async(
                     error!("[AMLL_Manager dl_task] (强制刷新) 获取远程 HEAD 失败: {}. 将尝试使用 'unknown' 作为 HEAD 进行下载。", e);
                     final_head_sha_to_use = "unknown".to_string();
                     // 更新下载状态以反映正在尝试下载的版本（即使是 "unknown"）
-                    let mut state_lock = amll_index_download_state.lock().unwrap();
+                    let mut state_lock = params.amll_index_download_state.lock().unwrap();
                     *state_lock = AmllIndexDownloadState::Downloading(Some(final_head_sha_to_use.clone()));
                     // 不在此处返回，继续尝试下载
                 }
@@ -295,14 +297,14 @@ pub fn trigger_amll_index_download_async(
         } else {
             // 非强制刷新，且调用者未提供 HEAD (例如从 Idle 或 Error 状态触发)
             trace!("[AMLL_Manager dl_task] (非强制，无预设 HEAD) 获取最新的远程 HEAD SHA...");
-            match amll_lyrics_fetcher::amll_fetcher::fetch_remote_index_head(&http_client).await {
+            match amll_lyrics_fetcher::amll_fetcher::fetch_remote_index_head(&params.http_client).await {
                 Ok(head) => {
                     info!("[AMLL_Manager dl_task] (非强制) 成功获取最新 HEAD: {}", head.chars().take(7).collect::<String>());
                     final_head_sha_to_use = head;
                 }
                 Err(e) => {
                     error!("[AMLL_Manager dl_task] (非强制) 获取远程 HEAD 失败: {}", e);
-                    let mut state_lock = amll_index_download_state.lock().unwrap();
+                    let mut state_lock = params.amll_index_download_state.lock().unwrap();
                     *state_lock = AmllIndexDownloadState::Error(format!("获取远程 HEAD 失败: {}", e));
                     return; // 获取 HEAD 失败，则不继续下载
                 }
@@ -312,7 +314,7 @@ pub fn trigger_amll_index_download_async(
         // 2. 确保下载状态反映了正在下载的 HEAD 版本
         // (UniLyricApp 可能已经设置了 Downloading(initial_head_candidate)，这里确保它与 final_head_sha_to_use 一致)
         {
-            let mut state_lock = amll_index_download_state.lock().unwrap();
+            let mut state_lock = params.amll_index_download_state.lock().unwrap();
             if !matches!(*state_lock, AmllIndexDownloadState::Downloading(Some(ref s)) if *s == final_head_sha_to_use) {
                 *state_lock = AmllIndexDownloadState::Downloading(Some(final_head_sha_to_use.clone()));
             }
@@ -323,162 +325,172 @@ pub fn trigger_amll_index_download_async(
             final_head_sha_to_use.chars().take(7).collect::<String>()
         );
 
-        let cache_p_for_network_save = match amll_index_cache_path {
-            Some(p) => p,
-            None => {
-                error!("[AMLL_Manager dl_task] 缓存路径未设置，无法保存下载的索引。");
-                let mut state_lock = amll_index_download_state.lock().unwrap();
-                *state_lock = AmllIndexDownloadState::Error("缓存路径未设置".to_string());
-                return;
-            }
+        let Some(cache_p_for_network_save) = params.amll_index_cache_path else {
+            error!("[AMLL_Manager dl_task] 缓存路径未设置，无法保存下载的索引。");
+            let mut state_lock = params.amll_index_download_state.lock().unwrap();
+            *state_lock = AmllIndexDownloadState::Error("缓存路径未设置".to_string());
+            return;
         };
 
         // 3. 执行下载和解析
         match amll_lyrics_fetcher::amll_fetcher::download_and_parse_index(
-            &http_client,
-            &amll_db_repo_url_base,
+            &params.http_client,
+            &params.amll_db_repo_url_base,
             &cache_p_for_network_save,
             final_head_sha_to_use.clone(), // 用于写入 .head 文件的 SHA
         )
         .await
         {
             Ok(parsed_entries) => {
-                let mut index_data_lock = amll_index_data.lock().unwrap();
+                let mut index_data_lock = params.amll_index_data.lock().unwrap();
                 *index_data_lock = parsed_entries;
                 drop(index_data_lock);
 
-                let mut state_lock = amll_index_download_state.lock().unwrap();
+                let mut state_lock = params.amll_index_download_state.lock().unwrap();
                 *state_lock = AmllIndexDownloadState::Success(final_head_sha_to_use);
                 info!("[AMLL_Manager dl_task] AMLL 索引文件下载并解析成功。");
             }
             Err(e) => {
                 error!("[AMLL_Manager dl_task] AMLL 索引文件下载或解析失败: {}", e);
-                let mut state_lock = amll_index_download_state.lock().unwrap();
+                let mut state_lock = params.amll_index_download_state.lock().unwrap();
                 *state_lock = AmllIndexDownloadState::Error(format!("索引下载/解析失败: {}", e));
             }
         }
     });
 }
 
+/// 代表 `handle_amll_lyrics_search_or_download_async` 函数可以执行的操作。
+pub enum AmllLyricsAction {
+    /// 下载指定的单个歌词条目。
+    Download(AmllIndexEntry),
+    /// 在索引中搜索歌词。
+    Search {
+        /// 用户的搜索查询字符串。
+        query: String,
+        /// 搜索的目标字段（如标题、艺术家等）。
+        field: AmllSearchField,
+        /// 持有完整索引数据的 Arc<Mutex>，用于执行搜索。
+        index_data: Arc<Mutex<Vec<AmllIndexEntry>>>,
+        /// 用于存放和更新搜索结果的 Arc<Mutex>。
+        search_results: Arc<Mutex<Vec<AmllIndexEntry>>>,
+    },
+}
+
 /// 异步处理 AMLL TTML 歌词的搜索或下载。
 ///
-/// - 如果 `entry_to_download` 是 `Some`, 则直接下载该条目。
-/// - 如果 `entry_to_download` 是 `None`, 则使用 `search_query` 和 `search_field` 在 `amll_index_data` 中搜索，
-///   并将结果存入 `amll_search_results_output`。
+/// # 参数
+///
+/// * `http_client` - 用于发起网络请求的 `reqwest::Client`。
+/// * `amll_db_repo_url_base` - AMLL 数据库仓库的基础 URL。
+/// * `amll_ttml_download_state` - 用于向 UI 反映当前 TTML 操作状态的共享状态。
+/// * `tokio_runtime` - 用于生成异步任务的 Tokio 运行时。
+/// * `action` - 定义了具体要执行的操作，是 `AmllLyricsAction::Download` 或 `AmllLyricsAction::Search`。
 pub fn handle_amll_lyrics_search_or_download_async(
     http_client: Client,
     amll_db_repo_url_base: String,
     amll_ttml_download_state: Arc<Mutex<AmllTtmlDownloadState>>,
     tokio_runtime: Arc<Runtime>,
-    entry_to_download: Option<AmllIndexEntry>,
-    // 仅当 entry_to_download 为 None (即执行搜索时) 才使用以下参数
-    search_query: Option<String>,
-    search_field: Option<AmllSearchField>,
-    amll_index_data: Option<Arc<Mutex<Vec<AmllIndexEntry>>>>, // 用于搜索
-    amll_search_results_output: Option<Arc<Mutex<Vec<AmllIndexEntry>>>>, // 存储搜索结果
+    action: AmllLyricsAction,
 ) {
-    if let Some(entry) = entry_to_download {
-        // --- 情况1: 直接下载选定的条目 ---
-        debug!(
-            "[AMLL_Manager] 准备下载选定的 AMLL TTML Database 文件 '{}'",
-            entry.raw_lyric_file
-        );
-        // 在异步任务开始前，立即更新状态为 DownloadingTtml
-        {
-            let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::DownloadingTtml;
-        }
-
-        tokio_runtime.spawn(async move {
-            match amll_lyrics_fetcher::amll_fetcher::download_ttml_from_entry(
-                &http_client,
-                &amll_db_repo_url_base,
-                &entry,
-            )
-            .await
-            {
-                Ok(fetched_lyrics) => {
-                    let mut state_lock = amll_ttml_download_state.lock().unwrap();
-                    *state_lock = AmllTtmlDownloadState::Success(fetched_lyrics);
-                    info!(
-                        "[AMLL_Manager] AMLL TTML 文件下载成功: {}",
-                        entry.raw_lyric_file
-                    );
-                }
-                Err(e) => {
-                    error!("[AMLL_Manager] AMLL TTML 文件下载失败: {}", e);
-                    let mut state_lock = amll_ttml_download_state.lock().unwrap();
-                    *state_lock = AmllTtmlDownloadState::Error(e.to_string());
-                }
-            }
-        });
-    } else if let (Some(query_str), Some(field), Some(index_arc), Some(results_arc)) = (
-        search_query,
-        search_field,
-        amll_index_data,
-        amll_search_results_output,
-    ) {
-        // --- 情况2: 执行搜索 ---
-        let query = query_str.trim();
-        if query.is_empty() {
-            info!("[AMLL_Manager] AMLL TTML Database 搜索查询为空，清空搜索结果。");
-            if let Ok(mut results_lock) = results_arc.lock() {
-                results_lock.clear();
-            }
-            if let Ok(mut ttml_dl_state_lock) = amll_ttml_download_state.lock() {
-                *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
-            }
-            return;
-        }
-
-        // 设置状态为正在搜索
-        {
-            let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::SearchingIndex;
-        }
-
-        // 搜索是同步的（因为它操作内存中的索引），但我们仍然可以在这里处理状态更新
-        // 或者，如果搜索本身可能耗时，也可以考虑将其放入 tokio::task::spawn_blocking
-        // 但通常对于内存中的Vec搜索，这是快速的。
-        debug!(
-            "[AMLL_Manager] 开始在 AMLL 索引中搜索: '{}' (字段: {:?})",
-            query, field
-        );
-        let search_results_vec = {
-            // 限制 index_data_lock 的作用域
-            let index_data_lock = index_arc.lock().unwrap();
-            amll_lyrics_fetcher::amll_fetcher::search_lyrics_in_index(
-                query,
-                &field,
-                &index_data_lock,
-            )
-        };
-
-        {
-            // 限制 results_display_lock 的作用域
-            let mut results_display_lock = results_arc.lock().unwrap();
-            *results_display_lock = search_results_vec;
-            info!(
-                "[AMLL_Manager] AMLL 索引搜索完成，找到 {} 个结果。",
-                results_display_lock.len()
+    // 根据 action 的类型分派任务
+    match action {
+        // --- 情况1: 执行下载操作 ---
+        AmllLyricsAction::Download(entry) => {
+            debug!(
+                "[AMLL_Manager] 准备下载选定的 AMLL TTML Database 文件 '{}'",
+                entry.raw_lyric_file
             );
+
+            // 在异步任务开始前，立即更新状态为 DownloadingTtml
+            {
+                let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
+                *ttml_dl_state_lock = AmllTtmlDownloadState::DownloadingTtml;
+            }
+
+            // 生成一个异步任务来执行网络下载
+            tokio_runtime.spawn(async move {
+                match amll_lyrics_fetcher::amll_fetcher::download_ttml_from_entry(
+                    &http_client,
+                    &amll_db_repo_url_base,
+                    &entry,
+                )
+                .await
+                {
+                    Ok(fetched_lyrics) => {
+                        // 下载成功，更新状态为 Success 并附带歌词内容
+                        let mut state_lock = amll_ttml_download_state.lock().unwrap();
+                        *state_lock = AmllTtmlDownloadState::Success(fetched_lyrics);
+                        info!(
+                            "[AMLL_Manager] AMLL TTML 文件下载成功: {}",
+                            entry.raw_lyric_file
+                        );
+                    }
+                    Err(e) => {
+                        // 下载失败，更新状态为 Error 并附带错误信息
+                        error!("[AMLL_Manager] AMLL TTML 文件下载失败: {}", e);
+                        let mut state_lock = amll_ttml_download_state.lock().unwrap();
+                        *state_lock = AmllTtmlDownloadState::Error(e.to_string());
+                    }
+                }
+            });
         }
 
-        // 搜索完成后，将状态设置回 Idle，等待用户选择或进行下一次操作
-        {
-            let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
-            *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
-        }
-    } else {
-        warn!(
-            "[AMLL_Manager] 调用 handle_amll_lyrics_search_or_download_async 参数不足，无法执行操作。"
-        );
-        // 确保状态不会卡住
-        if let Ok(mut ttml_dl_state_lock) = amll_ttml_download_state.lock() {
-            if matches!(
-                *ttml_dl_state_lock,
-                AmllTtmlDownloadState::DownloadingTtml | AmllTtmlDownloadState::SearchingIndex
-            ) {
+        // --- 情况2: 执行搜索操作 ---
+        AmllLyricsAction::Search {
+            query,
+            field,
+            index_data,
+            search_results,
+        } => {
+            let query_str = query.trim();
+            if query_str.is_empty() {
+                info!("[AMLL_Manager] AMLL TTML Database 搜索查询为空，清空搜索结果。");
+                // 清空UI上显示的搜索结果
+                if let Ok(mut results_lock) = search_results.lock() {
+                    results_lock.clear();
+                }
+                // 将状态重置为空闲
+                if let Ok(mut ttml_dl_state_lock) = amll_ttml_download_state.lock() {
+                    *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
+                }
+                return;
+            }
+
+            // 设置状态为正在搜索
+            {
+                let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
+                *ttml_dl_state_lock = AmllTtmlDownloadState::SearchingIndex;
+            }
+
+            debug!(
+                "[AMLL_Manager] 开始在 AMLL 索引中搜索: '{}' (字段: {:?})",
+                query_str, field
+            );
+            
+            // 搜索是在内存中进行的，通常很快，所以直接在这里执行。
+            let search_results_vec = {
+                // 限制 index_data_lock 的作用域，使其在搜索后立即被释放
+                let index_data_lock = index_data.lock().unwrap();
+                amll_lyrics_fetcher::amll_fetcher::search_lyrics_in_index(
+                    query_str,
+                    &field,
+                    &index_data_lock,
+                )
+            };
+
+            // 更新用于UI展示的搜索结果列表
+            {
+                let mut results_display_lock = search_results.lock().unwrap();
+                *results_display_lock = search_results_vec;
+                info!(
+                    "[AMLL_Manager] AMLL 索引搜索完成，找到 {} 个结果。",
+                    results_display_lock.len()
+                );
+            }
+
+            // 搜索完成后，将状态设置回 Idle，等待用户选择条目进行下载或进行下一次操作
+            {
+                let mut ttml_dl_state_lock = amll_ttml_download_state.lock().unwrap();
                 *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
             }
         }

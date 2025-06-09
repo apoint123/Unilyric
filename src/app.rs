@@ -552,16 +552,20 @@ impl UniLyricApp {
         drop(current_state_guard); // 释放锁
 
         // 调用管理器中的函数执行异步下载
+        let params = amll_connector_manager::AmllIndexDownloadParams {
+            http_client: self.http_client.clone(),
+            amll_db_repo_url_base: self.amll_db_repo_url_base.clone(),
+            amll_index_data: Arc::clone(&self.amll_index),
+            amll_index_download_state: Arc::clone(&self.amll_index_download_state),
+            amll_index_cache_path: self.amll_index_cache_path.clone(),
+            tokio_runtime: Arc::clone(&self.tokio_runtime),
+        };
+
         amll_connector_manager::trigger_amll_index_download_async(
-            self.http_client.clone(),
-            self.amll_db_repo_url_base.clone(),
-            Arc::clone(&self.amll_index),
-            Arc::clone(&self.amll_index_download_state),
-            self.amll_index_cache_path.clone(),
-            Arc::clone(&self.tokio_runtime),
+            params,
             force_network_refresh,
-            initial_head_candidate_for_async, // 传递初始HEAD候选
-        );
+            initial_head_candidate_for_async,
+        );    
     }
 
     /// 触发 AMLL 歌词的搜索和下载。
@@ -621,17 +625,37 @@ impl UniLyricApp {
             None // 下载特定条目时不直接更新搜索结果列表
         };
 
-        // 调用异步处理函数，该函数内部会区分是搜索还是下载特定条目
+        let action = if let Some(entry) = selected_entry_to_download {
+            // --- 情况1: 如果提供了要下载的特定条目 ---
+            // 创建一个 Download 动作
+            amll_connector_manager::AmllLyricsAction::Download(entry)
+        } else if let (Some(query), Some(field), Some(index_data), Some(search_results)) = (
+            query_for_search,
+            field_for_search,
+            index_data_for_search,
+            search_results_for_search,
+        ) {
+            // --- 情况2: 如果提供了所有搜索所需的参数 ---
+            // 创建一个 Search 动作
+            amll_connector_manager::AmllLyricsAction::Search {
+                query,
+                field,
+                index_data,
+                search_results,
+            }
+        } else {
+            // 如果参数不足以执行任何操作，则直接返回或记录警告
+            log::error!("[UnilyricApp] handle_amll_lyrics_search_or_download_async 参数不足，无法确定操作。");
+            return;
+        };
+
+        // 然后，使用创建好的 action 来调用新签名的函数
         amll_connector_manager::handle_amll_lyrics_search_or_download_async(
             self.http_client.clone(),
             self.amll_db_repo_url_base.clone(),
-            Arc::clone(&self.amll_ttml_download_state), // 用于更新TTML下载状态
+            Arc::clone(&self.amll_ttml_download_state),
             Arc::clone(&self.tokio_runtime),
-            selected_entry_to_download, // 要下载的特定条目 (Option)
-            query_for_search,           // 搜索查询 (Option)
-            field_for_search,           // 搜索字段 (Option)
-            index_data_for_search,      // 索引数据 (Option)
-            search_results_for_search,  // 搜索结果容器 (Option)
+            action, // 将构建好的 action 作为最后一个参数传入
         );
     }
 
@@ -2341,10 +2365,8 @@ impl UniLyricApp {
                         .filter(|s| !s.is_empty()) // 过滤空值
                         .collect::<Vec<&str>>()
                         .join("/");
-                    if !combined_value.is_empty() {
-                        if writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err() {
-                            log::error!("[生成LRC头部] 写入 {} 标签失败。", lrc_tag_name);
-                        }
+                    if !combined_value.is_empty() && writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err() {
+                        log::error!("[生成LRC头部] 写入 {} 标签失败。", lrc_tag_name);
                     }
                 }
             }

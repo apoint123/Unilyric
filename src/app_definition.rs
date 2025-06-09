@@ -37,15 +37,10 @@ use crate::types::{
     AmllTtmlDownloadState,
     AutoFetchResult,
     AutoSearchStatus,
-    BatchConversionConfig,
-    BatchFileId,
-    BatchLoadedFile,
-    BatchTaskUpdate,
     CanonicalMetadataKey,
     EditableMetadataEntry,
     KrcDownloadState,
     LocalLyricCacheEntry,
-    LyricFileTypeDragSource,
     LyricFormat,
     MarkerInfo,
     NeteaseDownloadState,
@@ -210,21 +205,6 @@ pub struct UniLyricApp {
     pub ttml_db_last_paste_url: Option<String>, // 上次成功上传到paste服务后获取的URL
     pub ttml_db_upload_action_rx: StdReceiver<TtmlDbUploadUserAction>, // 接收TTML DB上传操作结果的通道
     pub ttml_db_upload_action_tx: StdSender<TtmlDbUploadUserAction>, // 发送TTML DB上传操作命令的通道
-
-    // --- 批量转换模式相关 ---
-    pub is_batch_mode: bool,                      // 当前是否处于批量转换模式
-    pub main_lyric_files: Vec<BatchLoadedFile>,   // 批量转换的主歌词文件列表
-    pub translation_files: Vec<BatchLoadedFile>,  // 批量转换的翻译歌词文件列表
-    pub romanization_files: Vec<BatchLoadedFile>, // 批量转换的罗马音歌词文件列表
-    pub batch_configs: Arc<Mutex<Vec<BatchConversionConfig>>>, // 批量转换配置列表 (多线程安全)
-    pub batch_conversion_update_tx: StdSender<BatchTaskUpdate>, // 发送批量转换任务更新的通道
-    pub batch_conversion_update_rx: StdReceiver<BatchTaskUpdate>, // 接收批量转换任务更新的通道
-    pub conversion_in_progress_count: Arc<Mutex<usize>>, // 当前正在进行的批量转换任务数量 (多线程安全)
-    pub batch_output_directory: Option<PathBuf>,         // 批量转换的输出目录
-    pub batch_default_target_format: LyricFormat,        // 批量转换的默认目标格式
-    pub dragged_item: Option<(LyricFileTypeDragSource, BatchFileId)>, // 当前拖拽的批量文件项
-    pub show_batch_panel: bool,                          // 是否显示批量转换面板
-    pub settings: AppSettings, // 持有一份设置的副本，方便在初始化后某些地方直接访问（需要注意与Arc<Mutex<AppSettings>>的同步）
 }
 
 impl UniLyricApp {
@@ -516,9 +496,6 @@ impl UniLyricApp {
         // --- 初始化WebSocket服务器相关通道 ---
         let (ws_cmd_tx, ws_cmd_rx) = tokio_mpsc::channel(32); // Tokio mpsc通道，缓冲区大小32
 
-        // --- 初始化批量转换相关通道 ---
-        let (batch_update_tx, batch_update_rx) = std_channel::<BatchTaskUpdate>();
-
         // --- 构建 UniLyricApp 实例 ---
         let mut app = Self {
             // --- UI相关的文本输入输出区域 ---
@@ -677,27 +654,6 @@ impl UniLyricApp {
             ttml_db_upload_action_tx: upload_action_tx, // TTML DB上传操作发送端
 
             shutdown_initiated: false, // 应用关闭流程是否已启动
-
-            // --- 批量转换模式 ---
-            is_batch_mode: false,
-            main_lyric_files: Vec::new(),
-            translation_files: Vec::new(),
-            romanization_files: Vec::new(),
-            batch_configs: Arc::new(Mutex::new(Vec::new())),
-            batch_conversion_update_tx: batch_update_tx, // 批量转换更新发送端
-            batch_conversion_update_rx: batch_update_rx, // 批量转换更新接收端
-            conversion_in_progress_count: Arc::new(Mutex::new(0)), // 进行中的转换任务计数
-            batch_output_directory: settings
-                .batch_output_directory
-                .clone() // 从设置恢复批量输出目录
-                .or_else(|| utils::get_app_data_dir().map(|dir| dir.join("batch_output"))), // 如果未设置，则使用默认路径
-            batch_default_target_format: settings
-                .batch_default_target_format // 从设置恢复批量默认目标格式
-                .unwrap_or(settings.last_target_format), // 如果未设置，则使用上次的目标格式
-            dragged_item: None,      // 当前拖拽项
-            show_batch_panel: false, // 是否显示批量转换面板
-
-            settings: settings.clone(), // 保存一份设置的副本
         };
 
         // --- 启动WebSocket服务器 (如果启用) ---
