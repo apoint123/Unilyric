@@ -11,7 +11,7 @@ https://github.com/WXRIW/Lyricify-Lyrics-Helper
 
 请注意，本项目包含使用不同开源许可证许可的子组件：
 
-* **`ws-protocol/`**: 此目录及其内容根据 [GNU Affero General Public License v3.0 (AGPL-3.0)](src/ws-protocol/LICENCE) 发布。
+* **`ws-protocol/`**: 此目录及其内容根据 [GNU Affero General Public License v3.0 (AGPL-3.0)](src/ws-protocol/LICENSE) 发布。
 * **`kugou_lyrics_fetcher/`**: 此目录及其内容根据 [Apache License 2.0](src/kugou_lyrics_fetcher/LICENSE) 发布。
 * **`netease_lyrics_fetcher/`**: 此目录及其内容根据 [Apache License 2.0](src/netease_lyrics_fetcher/LICENSE) 发布。
 * **`qq_lyrics_fetcher/`**: 此目录及其内容根据 [Apache License 2.0](src/qq_lyrics_fetcher/LICENSE) 发布。
