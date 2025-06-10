@@ -565,7 +565,7 @@ impl UniLyricApp {
             params,
             force_network_refresh,
             initial_head_candidate_for_async,
-        );    
+        );
     }
 
     /// 触发 AMLL 歌词的搜索和下载。
@@ -645,7 +645,9 @@ impl UniLyricApp {
             }
         } else {
             // 如果参数不足以执行任何操作，则直接返回或记录警告
-            log::error!("[UnilyricApp] handle_amll_lyrics_search_or_download_async 参数不足，无法确定操作。");
+            log::error!(
+                "[UnilyricApp] handle_amll_lyrics_search_or_download_async 参数不足，无法确定操作。"
+            );
             return;
         };
 
@@ -2084,125 +2086,17 @@ impl UniLyricApp {
             }
         }
 
-        // 步骤 5: 如果主歌词段落存在，且翻译/罗马音LRC未手动加载，则尝试从主歌词段落生成它们
-        if self.parsed_ttml_paragraphs.is_some() {
-            let paragraphs_ref = self.parsed_ttml_paragraphs.as_ref().unwrap(); // 获取段落的不可变引用
-            if !paragraphs_ref.is_empty() {
-                let store_for_header_gen_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁 (用于生成LRC头部)
-
-                // 生成翻译LRC (如果未手动加载)
-                if self.loaded_translation_lrc.is_none() {
-                    let header = self.generate_specific_lrc_header_from_store(
-                        LrcContentType::Translation, // 指定为翻译类型
-                        &store_for_header_gen_guard,
-                    );
-                    match crate::lrc_generator::generate_lrc_from_paragraphs(
-                        paragraphs_ref,
-                        LrcContentType::Translation, // 从段落的翻译部分生成
-                    ) {
-                        Ok(lrc_text_body) => {
-                            // 只有当生成的LRC体或头部非空时才更新
-                            if !lrc_text_body.trim().is_empty() || !header.trim().is_empty() {
-                                let full_lrc_content = header + &lrc_text_body;
-                                self.display_translation_lrc_output =
-                                    if full_lrc_content.trim().is_empty() {
-                                        String::new()
-                                    } else {
-                                        full_lrc_content.trim_end_matches('\n').to_string() + "\n"
-                                    };
-                                // 尝试解析刚生成的LRC，以填充 loaded_translation_lrc
-                                match crate::lrc_parser::parse_lrc_text_to_lines(
-                                    &self.display_translation_lrc_output,
-                                ) {
-                                    Ok((display_lines, _bilingual_translations, _meta)) => {
-                                        self.loaded_translation_lrc = Some(display_lines);
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[HandleConvert] 解析自动生成的翻译LRC失败: {}",
-                                            e
-                                        );
-                                        self.loaded_translation_lrc = None;
-                                        self.display_translation_lrc_output.clear(); // 解析失败则清空
-                                    }
-                                }
-                            } else {
-                                // 如果生成内容为空，则清空
-                                self.display_translation_lrc_output.clear();
-                                self.loaded_translation_lrc = None;
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("[HandleConvert] 生成翻译LRC失败: {}", e);
-                            self.display_translation_lrc_output.clear();
-                            self.loaded_translation_lrc = None;
-                        }
-                    }
-                }
-
-                // 生成罗马音LRC (如果未手动加载)
-                if self.loaded_romanization_lrc.is_none() {
-                    let header = self.generate_specific_lrc_header_from_store(
-                        LrcContentType::Romanization, // 指定为罗马音类型
-                        &store_for_header_gen_guard,
-                    );
-                    match crate::lrc_generator::generate_lrc_from_paragraphs(
-                        paragraphs_ref,
-                        LrcContentType::Romanization, // 从段落的罗马音部分生成 (如果TTML支持)
-                                                      // 注意：当前TTML结构可能没有直接的罗马音字段，
-                                                      // 此处可能需要调整逻辑，或依赖于翻译字段被用作罗马音的情况。
-                                                      // 假设 generate_lrc_from_paragraphs 能处理这种情况。
-                    ) {
-                        Ok(lrc_text_body) => {
-                            if !lrc_text_body.trim().is_empty() || !header.trim().is_empty() {
-                                let full_lrc_content = header + &lrc_text_body;
-                                self.display_romanization_lrc_output =
-                                    if full_lrc_content.trim().is_empty() {
-                                        String::new()
-                                    } else {
-                                        full_lrc_content.trim_end_matches('\n').to_string() + "\n"
-                                    };
-                                match crate::lrc_parser::parse_lrc_text_to_lines(
-                                    &self.display_romanization_lrc_output,
-                                ) {
-                                    Ok((display_lines, _bilingual_translations, _meta)) => {
-                                        self.loaded_romanization_lrc = Some(display_lines);
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "[HandleConvert] 解析自动生成的罗马音LRC失败: {}",
-                                            e
-                                        );
-                                        self.loaded_romanization_lrc = None;
-                                        self.display_romanization_lrc_output.clear();
-                                    }
-                                }
-                            } else {
-                                self.display_romanization_lrc_output.clear();
-                                self.loaded_romanization_lrc = None;
-                            }
-                        }
-                        Err(e) => {
-                            log::error!("[HandleConvert] 生成罗马音LRC失败: {}", e);
-                            self.display_romanization_lrc_output.clear();
-                            self.loaded_romanization_lrc = None;
-                        }
-                    }
-                }
-            } // 段落非空检查结束
-        } // 主歌词段落存在检查结束
-
-        // 步骤 6: 将手动加载的翻译LRC和罗马音LRC（如果存在）合并回主歌词段落
-        // 这一步确保即使主歌词段落中已有翻译/罗马音，手动加载的也会覆盖或补充它们。
-        {
-            let metadata_store_guard = self.metadata_store.lock().unwrap(); // 获取元数据存储锁
+        if self.loaded_translation_lrc.is_some() || self.loaded_romanization_lrc.is_some() {
+            let metadata_store_guard = self.metadata_store.lock().unwrap();
             lyrics_merger::merge_manually_loaded_lrc_into_paragraphs(
-                &mut self.parsed_ttml_paragraphs,      // 主歌词段落 (可变引用)
-                self.loaded_translation_lrc.as_ref(),  // 手动加载的翻译LRC行
-                self.loaded_romanization_lrc.as_ref(), // 手动加载的罗马音LRC行
-                &metadata_store_guard,                 // 元数据存储
+                &mut self.parsed_ttml_paragraphs,
+                self.loaded_translation_lrc.as_ref(),
+                self.loaded_romanization_lrc.as_ref(),
+                &metadata_store_guard,
             );
-        } // 元数据存储锁在此释放
+        }
+
+        self.update_lrc_side_panels_from_paragraphs();
 
         // 步骤 7: 生成最终的目标格式输出文本
         self.generate_target_format_output();
@@ -2214,6 +2108,64 @@ impl UniLyricApp {
 
         self.conversion_in_progress = false; // 标记转换结束
         log::info!("[Unilyric 处理转换] 转换流程执行完毕。");
+    }
+
+    fn update_lrc_side_panels_from_paragraphs(&mut self) {
+        let paragraphs_opt = self.parsed_ttml_paragraphs.as_ref();
+        // 如果没有段落数据，则清空预览面板并返回
+        if paragraphs_opt.is_none() || paragraphs_opt.unwrap().is_empty() {
+            self.display_translation_lrc_output.clear();
+            self.display_romanization_lrc_output.clear();
+            return;
+        }
+
+        let paragraphs_ref = paragraphs_opt.unwrap();
+        let store_guard = self.metadata_store.lock().unwrap();
+
+        // 生成翻译LRC预览
+        let trans_header =
+            self.generate_specific_lrc_header_from_store(LrcContentType::Translation, &store_guard);
+        match crate::lrc_generator::generate_lrc_from_paragraphs(
+            paragraphs_ref,
+            LrcContentType::Translation,
+        ) {
+            Ok(lrc_text_body) => {
+                let full_lrc_content = trans_header + &lrc_text_body;
+                // 只有当生成的内容不为空时才更新，避免清空已有的手动加载的预览
+                if !full_lrc_content.trim().is_empty() {
+                    self.display_translation_lrc_output =
+                        full_lrc_content.trim_end_matches('\n').to_string() + "\n";
+                } else {
+                    self.display_translation_lrc_output.clear();
+                }
+            }
+            Err(e) => {
+                log::error!("[Side Panel Update] 生成翻译LRC预览失败: {}", e);
+                self.display_translation_lrc_output.clear();
+            }
+        }
+
+        // 生成罗马音LRC预览
+        let roma_header = self
+            .generate_specific_lrc_header_from_store(LrcContentType::Romanization, &store_guard);
+        match crate::lrc_generator::generate_lrc_from_paragraphs(
+            paragraphs_ref,
+            LrcContentType::Romanization,
+        ) {
+            Ok(lrc_text_body) => {
+                let full_lrc_content = roma_header + &lrc_text_body;
+                if !full_lrc_content.trim().is_empty() {
+                    self.display_romanization_lrc_output =
+                        full_lrc_content.trim_end_matches('\n').to_string() + "\n";
+                } else {
+                    self.display_romanization_lrc_output.clear();
+                }
+            }
+            Err(e) => {
+                log::error!("生成罗马音LRC预览失败: {}", e);
+                self.display_romanization_lrc_output.clear();
+            }
+        }
     }
 
     /// 判断给定的歌词格式是否为逐行格式。
@@ -2307,31 +2259,26 @@ impl UniLyricApp {
         let mut lang_to_use: Option<String> = None; // 用于存储要写入的语言代码
 
         // 根据内容类型确定语言代码的来源
-        if content_type == LrcContentType::Translation {
-            // 如果是翻译LRC
-            // 优先从TTML段落的翻译部分获取语言代码
-            if let Some(paragraphs) = &self.parsed_ttml_paragraphs {
-                for p in paragraphs {
-                    if let Some((_text, Some(lang_code))) = &p.translation {
-                        if !lang_code.is_empty() {
-                            lang_to_use = Some(lang_code.clone());
-                            break; // 找到第一个非空语言代码即停止
-                        }
-                    }
+        match content_type {
+            LrcContentType::Translation => {
+                if let Some(paragraphs) = &self.parsed_ttml_paragraphs {
+                    lang_to_use = paragraphs.iter().find_map(|p| {
+                        p.translation
+                            .as_ref()
+                            .and_then(|(_, lang_opt)| lang_opt.clone())
+                    });
+                }
+                if lang_to_use.is_none() {
+                    lang_to_use = store
+                        .get_single_value_by_str("translation_language")
+                        .cloned();
                 }
             }
-            // 如果TTML段落中没有，则尝试从元数据存储中获取 "translation_language"
-            if lang_to_use.is_none() {
+            LrcContentType::Romanization => {
                 lang_to_use = store
-                    .get_single_value_by_str("translation_language") // 自定义键
+                    .get_single_value_by_str("romanization_language")
                     .cloned();
             }
-        }
-        // 如果上述都未找到，或者不是翻译类型，则尝试获取通用的 "language" 元数据
-        if lang_to_use.is_none() {
-            lang_to_use = store
-                .get_single_value(&crate::types::CanonicalMetadataKey::Language) // 标准语言键
-                .cloned();
         }
 
         // 如果获取到了语言代码，则写入LRC头部
@@ -2365,7 +2312,9 @@ impl UniLyricApp {
                         .filter(|s| !s.is_empty()) // 过滤空值
                         .collect::<Vec<&str>>()
                         .join("/");
-                    if !combined_value.is_empty() && writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err() {
+                    if !combined_value.is_empty()
+                        && writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err()
+                    {
                         log::error!("[生成LRC头部] 写入 {} 标签失败。", lrc_tag_name);
                     }
                 }

@@ -176,6 +176,7 @@ pub fn convert_spl_to_ttml_data(
                 romanization: None,                      // SPL不直接支持
                 background_section: None,                // SPL不直接支持
                 song_part: None,                         // SPL不直接支持
+                itunes_key: None,
             });
         } // 结束对 spl_block.start_times_ms 的循环
     } // 结束对所有 spl_blocks 的循环

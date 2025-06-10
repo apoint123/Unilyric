@@ -331,6 +331,7 @@ pub struct TtmlParagraph {
     pub translation: Option<(String, Option<String>)>, // 可选的主翻译 (翻译文本, 可选语言代码)
     pub romanization: Option<String>,                  // 可选的主罗马音
     pub song_part: Option<String>,                     // 可选的歌曲组成部分标记
+    pub itunes_key: Option<String>,                    // 用于存储 <p> 标签的 itunes:key 属性
 }
 
 //-----------------------------------------------------------------------------

@@ -30,6 +30,7 @@ pub fn convert_yrc_to_ttml_data(
                 translation: None,
                 romanization: None,
                 song_part: None,
+                itunes_key: None,
             };
             ttml_paragraphs.push(paragraph);
         } else {

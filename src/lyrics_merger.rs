@@ -390,7 +390,7 @@ pub fn merge_downloaded_secondary_lyrics(
     primary_paragraphs_opt: &mut Option<Vec<TtmlParagraph>>,
     pending_lyrics: PendingSecondaryLyrics,
     session_platform_metadata: &HashMap<String, String>,
-    metadata_store: &MetadataStore,
+    _metadata_store: &MetadataStore,
     source_format: LyricFormat,
 ) -> (Option<Vec<DisplayLrcLine>>, Option<Vec<DisplayLrcLine>>) {
     let mut independently_loaded_translation_lrc: Option<Vec<DisplayLrcLine>> = None;
@@ -418,13 +418,8 @@ pub fn merge_downloaded_secondary_lyrics(
             }
         } else if let Some(primary_paragraphs) = primary_paragraphs_opt {
             let lang_code_for_merge: Option<String> = session_platform_metadata
-                .get("language")
-                .cloned()
-                .or_else(|| {
-                    metadata_store
-                        .get_single_value(&crate::types::CanonicalMetadataKey::Language)
-                        .cloned()
-                });
+                .get("translation_language")
+                .cloned();
 
             if source_format == LyricFormat::Yrc {
                 info!("[LyricsMerger] 主歌词为YRC，正在逐行合并LRC格式的翻译...");
@@ -549,220 +544,211 @@ pub fn merge_downloaded_secondary_lyrics(
 /// 将通过“加载翻译/罗马音LRC”菜单加载的LRC行合并到当前的主歌词段落中。
 pub fn merge_manually_loaded_lrc_into_paragraphs(
     primary_paragraphs_opt: &mut Option<Vec<TtmlParagraph>>,
-    loaded_translation_lrc: Option<&Vec<DisplayLrcLine>>, // 只读访问
-    loaded_romanization_lrc: Option<&Vec<DisplayLrcLine>>, // 只读访问
-    metadata_store: &MetadataStore,                       // 只读访问
+    loaded_translation_lrc: Option<&Vec<DisplayLrcLine>>,
+    loaded_romanization_lrc: Option<&Vec<DisplayLrcLine>>,
+    metadata_store: &MetadataStore,
 ) {
+    // 如果没有主歌词段落，或段落列表为空，则直接返回，不执行任何操作。
     if primary_paragraphs_opt.is_none() {
-        debug!("[LyricsMerger MergeManually] No main paragraphs, skipping merge.");
         return;
     }
-
     let paragraphs = primary_paragraphs_opt.as_mut().unwrap();
     if paragraphs.is_empty() {
-        debug!("[LyricsMerger MergeManually] Main paragraphs list is empty, skipping merge.");
         return;
     }
 
-    const LRC_MATCH_TOLERANCE_MS: u64 = 15; // 匹配容差
+    const LRC_MATCH_TOLERANCE_MS: u64 = 15;
 
-    let specific_translation_lang_for_para: Option<String>;
-    {
-        // metadata_store 已作为参数传入
-        specific_translation_lang_for_para = metadata_store
-            .get_single_value_by_str("translation_language")
-            .cloned()
-            .or_else(|| {
-                metadata_store
-                    .get_single_value(&crate::types::CanonicalMetadataKey::Language) // 确保路径正确
-                    .cloned()
-            });
-    }
-
-    // --- 合并翻译 LRC ---
-    let mut translation_lines_for_merge: Vec<LrcLine> = Vec::new();
     if let Some(display_lines_vec) = loaded_translation_lrc {
-        translation_lines_for_merge = display_lines_vec
+        // 从 DisplayLrcLine 向量中过滤出有效的、已解析的 LrcLine。
+        let mut translation_lines_for_merge: Vec<LrcLine> = display_lines_vec
             .iter()
             .filter_map(|entry| match entry {
                 DisplayLrcLine::Parsed(lrc_line) => Some(lrc_line.clone()),
                 DisplayLrcLine::Raw { .. } => None,
             })
             .collect();
-        translation_lines_for_merge.sort_by_key(|line| line.timestamp_ms);
-    }
 
-    if !translation_lines_for_merge.is_empty() {
-        debug!(
-            "[LyricsMerger MergeManually] Merging {} parsed translation LRC lines into {} paragraphs.",
-            translation_lines_for_merge.len(),
-            paragraphs.len()
-        );
-        let mut available_lrc_lines: Vec<(&LrcLine, bool)> = translation_lines_for_merge
-            .iter()
-            .map(|line| (line, false))
-            .collect();
+        // 从元数据存储中获取翻译语言代码。
+        let specific_translation_lang_for_para: Option<String> = metadata_store
+            .get_single_value_by_str("translation_language")
+            .cloned();
 
-        for paragraph in paragraphs.iter_mut() {
-            paragraph.translation = None;
-            let para_start_ms = paragraph.p_start_ms;
-            let mut best_match_main_idx: Option<usize> = None;
-            let mut smallest_diff_main = u64::MAX;
-
-            for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                if *used {
-                    continue;
-                }
-                let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
-                if diff <= LRC_MATCH_TOLERANCE_MS {
-                    if diff < smallest_diff_main {
-                        smallest_diff_main = diff;
-                        best_match_main_idx = Some(current_lrc_idx);
-                    }
-                } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
-                    && best_match_main_idx.is_some()
-                {
-                    break;
-                }
-            }
-
-            if let Some(matched_idx) = best_match_main_idx {
-                let (matched_lrc, used_flag_ref) = &mut available_lrc_lines[matched_idx];
-                paragraph.translation = Some((
-                    matched_lrc.text.clone(),
-                    specific_translation_lang_for_para.clone(),
-                ));
-                *used_flag_ref = true;
-            }
-
-            if let Some(bg_section_mut) = paragraph.background_section.as_mut() {
-                bg_section_mut.translation = None;
-                let bg_start_ms = bg_section_mut.start_ms;
-                let mut best_match_bg_idx: Option<usize> = None;
-                let mut smallest_diff_bg = u64::MAX;
-                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                    if *used {
-                        continue;
-                    }
-                    let diff = (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
-                    if diff <= LRC_MATCH_TOLERANCE_MS {
-                        if diff < smallest_diff_bg {
-                            smallest_diff_bg = diff;
-                            best_match_bg_idx = Some(current_lrc_idx);
-                        }
-                    } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
-                        && best_match_bg_idx.is_some()
-                    {
-                        break;
-                    }
-                }
-                if let Some(matched_idx_bg) = best_match_bg_idx {
-                    let (matched_lrc_bg, used_flag_ref_bg) =
-                        &mut available_lrc_lines[matched_idx_bg];
-                    bg_section_mut.translation = Some((
-                        matched_lrc_bg.text.clone(),
-                        specific_translation_lang_for_para.clone(),
-                    ));
-                    *used_flag_ref_bg = true;
-                }
-            }
-        }
-    } else {
+        // 在合并前，先清除所有段落的现有翻译
         for paragraph in paragraphs.iter_mut() {
             paragraph.translation = None;
             if let Some(bg_section) = paragraph.background_section.as_mut() {
                 bg_section.translation = None;
             }
         }
+
+        // 只有在解析出有效的LRC行时才继续。
+        if !translation_lines_for_merge.is_empty() {
+            // 按时间戳排序，以优化匹配过程。
+            translation_lines_for_merge.sort_by_key(|line| line.timestamp_ms);
+
+            // 创建一个元组向量，用于跟踪每个LRC行是否已被使用。
+            let mut available_lrc_lines: Vec<(&LrcLine, bool)> = translation_lines_for_merge
+                .iter()
+                .map(|line| (line, false))
+                .collect();
+
+            // 遍历每一个主歌词段落，为其寻找匹配的翻译LRC行。
+            for paragraph in paragraphs.iter_mut() {
+                let para_start_ms = paragraph.p_start_ms;
+                let mut best_match_main_idx: Option<usize> = None;
+                let mut smallest_diff_main = u64::MAX;
+
+                // 遍历所有可用的LRC行，寻找时间戳最接近当前段落开始时间的行。
+                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
+                    if *used {
+                        continue;
+                    } // 如果此行已被使用，则跳过。
+                    let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
+                    if diff <= LRC_MATCH_TOLERANCE_MS {
+                        if diff < smallest_diff_main {
+                            smallest_diff_main = diff;
+                            best_match_main_idx = Some(current_lrc_idx);
+                        }
+                    } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
+                        && best_match_main_idx.is_some()
+                    {
+                        // 如果当前LRC行已超出容差范围，并且已经找到了一个最佳匹配，就可以提前终止循环。
+                        break;
+                    }
+                }
+
+                // 如果找到了最佳匹配，则应用翻译并标记该LRC行为“已使用”。
+                if let Some(matched_idx) = best_match_main_idx {
+                    let (matched_lrc, used_flag_ref) = &mut available_lrc_lines[matched_idx];
+                    paragraph.translation = Some((
+                        matched_lrc.text.clone(),
+                        specific_translation_lang_for_para.clone(),
+                    ));
+                    *used_flag_ref = true;
+                }
+
+                if let Some(bg_section_mut) = paragraph.background_section.as_mut() {
+                    let bg_start_ms = bg_section_mut.start_ms;
+                    let mut best_match_bg_idx: Option<usize> = None;
+                    let mut smallest_diff_bg = u64::MAX;
+                    for (current_lrc_idx, (lrc_line, used)) in
+                        available_lrc_lines.iter().enumerate()
+                    {
+                        if *used {
+                            continue;
+                        }
+                        let diff =
+                            (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
+                        if diff <= LRC_MATCH_TOLERANCE_MS {
+                            if diff < smallest_diff_bg {
+                                smallest_diff_bg = diff;
+                                best_match_bg_idx = Some(current_lrc_idx);
+                            }
+                        } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
+                            && best_match_bg_idx.is_some()
+                        {
+                            break;
+                        }
+                    }
+                    if let Some(matched_idx_bg) = best_match_bg_idx {
+                        let (matched_lrc_bg, used_flag_ref_bg) =
+                            &mut available_lrc_lines[matched_idx_bg];
+                        bg_section_mut.translation = Some((
+                            matched_lrc_bg.text.clone(),
+                            specific_translation_lang_for_para.clone(),
+                        ));
+                        *used_flag_ref_bg = true;
+                    }
+                }
+            }
+        }
     }
 
-    // --- 合并罗马音 LRC (逻辑与翻译LRC类似) ---
-    let mut romanization_lines_for_merge: Vec<LrcLine> = Vec::new();
+    // 这部分的逻辑与合并翻译完全相同，只是操作的字段是 `romanization`。
     if let Some(display_lines_vec) = loaded_romanization_lrc {
-        romanization_lines_for_merge = display_lines_vec
+        let mut romanization_lines_for_merge: Vec<LrcLine> = display_lines_vec
             .iter()
             .filter_map(|entry| match entry {
                 DisplayLrcLine::Parsed(lrc_line) => Some(lrc_line.clone()),
                 DisplayLrcLine::Raw { .. } => None,
             })
             .collect();
-        romanization_lines_for_merge.sort_by_key(|line| line.timestamp_ms);
-    }
 
-    if !romanization_lines_for_merge.is_empty() {
-        debug!(
-            "[LyricsMerger MergeManually] Merging {} parsed romanization LRC lines into {} paragraphs.",
-            romanization_lines_for_merge.len(),
-            paragraphs.len()
-        );
-        let mut available_lrc_lines: Vec<(&LrcLine, bool)> = romanization_lines_for_merge
-            .iter()
-            .map(|line| (line, false))
-            .collect();
-
-        for paragraph in paragraphs.iter_mut() {
-            paragraph.romanization = None;
-            let para_start_ms = paragraph.p_start_ms;
-            let mut best_match_main_idx: Option<usize> = None;
-            let mut smallest_diff_main = u64::MAX;
-
-            for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                if *used {
-                    continue;
-                }
-                let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
-                if diff <= LRC_MATCH_TOLERANCE_MS {
-                    if diff < smallest_diff_main {
-                        smallest_diff_main = diff;
-                        best_match_main_idx = Some(current_lrc_idx);
-                    }
-                } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
-                    && best_match_main_idx.is_some()
-                {
-                    break;
-                }
-            }
-
-            if let Some(matched_idx) = best_match_main_idx {
-                let (matched_lrc, used_flag_ref) = &mut available_lrc_lines[matched_idx];
-                paragraph.romanization = Some(matched_lrc.text.clone());
-                *used_flag_ref = true;
-            }
-
-            if let Some(bg_section_mut) = paragraph.background_section.as_mut() {
-                bg_section_mut.romanization = None;
-                let bg_start_ms = bg_section_mut.start_ms;
-                let mut best_match_bg_idx: Option<usize> = None;
-                let mut smallest_diff_bg = u64::MAX;
-                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
-                    if *used {
-                        continue;
-                    }
-                    let diff = (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
-                    if diff <= LRC_MATCH_TOLERANCE_MS {
-                        if diff < smallest_diff_bg {
-                            smallest_diff_bg = diff;
-                            best_match_bg_idx = Some(current_lrc_idx);
-                        }
-                    } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
-                        && best_match_bg_idx.is_some()
-                    {
-                        break;
-                    }
-                }
-                if let Some(matched_idx_bg) = best_match_bg_idx {
-                    let (matched_lrc_bg, used_flag_ref_bg) =
-                        &mut available_lrc_lines[matched_idx_bg];
-                    bg_section_mut.romanization = Some(matched_lrc_bg.text.clone());
-                    *used_flag_ref_bg = true;
-                }
-            }
-        }
-    } else {
+        // 在合并前，先清除所有段落的现有罗马音。
         for paragraph in paragraphs.iter_mut() {
             paragraph.romanization = None;
             if let Some(bg_section) = paragraph.background_section.as_mut() {
                 bg_section.romanization = None;
+            }
+        }
+
+        if !romanization_lines_for_merge.is_empty() {
+            romanization_lines_for_merge.sort_by_key(|line| line.timestamp_ms);
+
+            let mut available_lrc_lines: Vec<(&LrcLine, bool)> = romanization_lines_for_merge
+                .iter()
+                .map(|line| (line, false))
+                .collect();
+
+            for paragraph in paragraphs.iter_mut() {
+                let para_start_ms = paragraph.p_start_ms;
+                let mut best_match_main_idx: Option<usize> = None;
+                let mut smallest_diff_main = u64::MAX;
+
+                for (current_lrc_idx, (lrc_line, used)) in available_lrc_lines.iter().enumerate() {
+                    if *used {
+                        continue;
+                    }
+                    let diff = (lrc_line.timestamp_ms as i64 - para_start_ms as i64).unsigned_abs();
+                    if diff <= LRC_MATCH_TOLERANCE_MS {
+                        if diff < smallest_diff_main {
+                            smallest_diff_main = diff;
+                            best_match_main_idx = Some(current_lrc_idx);
+                        }
+                    } else if lrc_line.timestamp_ms > para_start_ms + LRC_MATCH_TOLERANCE_MS
+                        && best_match_main_idx.is_some()
+                    {
+                        break;
+                    }
+                }
+
+                if let Some(matched_idx) = best_match_main_idx {
+                    let (matched_lrc, used_flag_ref) = &mut available_lrc_lines[matched_idx];
+                    paragraph.romanization = Some(matched_lrc.text.clone());
+                    *used_flag_ref = true;
+                }
+
+                if let Some(bg_section_mut) = paragraph.background_section.as_mut() {
+                    let bg_start_ms = bg_section_mut.start_ms;
+                    let mut best_match_bg_idx: Option<usize> = None;
+                    let mut smallest_diff_bg = u64::MAX;
+                    for (current_lrc_idx, (lrc_line, used)) in
+                        available_lrc_lines.iter().enumerate()
+                    {
+                        if *used {
+                            continue;
+                        }
+                        let diff =
+                            (lrc_line.timestamp_ms as i64 - bg_start_ms as i64).unsigned_abs();
+                        if diff <= LRC_MATCH_TOLERANCE_MS {
+                            if diff < smallest_diff_bg {
+                                smallest_diff_bg = diff;
+                                best_match_bg_idx = Some(current_lrc_idx);
+                            }
+                        } else if lrc_line.timestamp_ms > bg_start_ms + LRC_MATCH_TOLERANCE_MS
+                            && best_match_bg_idx.is_some()
+                        {
+                            break;
+                        }
+                    }
+                    if let Some(matched_idx_bg) = best_match_bg_idx {
+                        let (matched_lrc_bg, used_flag_ref_bg) =
+                            &mut available_lrc_lines[matched_idx_bg];
+                        bg_section_mut.romanization = Some(matched_lrc_bg.text.clone());
+                        *used_flag_ref_bg = true;
+                    }
+                }
             }
         }
     }

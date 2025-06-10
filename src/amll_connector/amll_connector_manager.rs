@@ -466,7 +466,7 @@ pub fn handle_amll_lyrics_search_or_download_async(
                 "[AMLL_Manager] 开始在 AMLL 索引中搜索: '{}' (字段: {:?})",
                 query_str, field
             );
-            
+
             // 搜索是在内存中进行的，通常很快，所以直接在这里执行。
             let search_results_vec = {
                 // 限制 index_data_lock 的作用域，使其在搜索后立即被释放

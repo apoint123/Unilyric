@@ -67,6 +67,7 @@ pub fn convert_qrc_to_ttml_data(
                 translation: None,
                 romanization: None,
                 song_part: None,
+                itunes_key: None,
             };
             ttml_paragraphs.push(paragraph); // 将创建的段落添加到结果列表中
         } else {

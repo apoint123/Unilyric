@@ -1,22 +1,29 @@
+use crate::metadata_processor::MetadataStore;
+use crate::types::{
+    ActorRole, AssLineContent, AssLineInfo, CanonicalMetadataKey, ConvertError, ProcessedAssData,
+    TtmlParagraph,
+};
+use crate::utils::clean_parentheses_from_bg_text;
 use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Cursor, Error as IoError, ErrorKind as IoErrorKind};
 
-use crate::metadata_processor::MetadataStore;
-use crate::types::CanonicalMetadataKey;
-use crate::types::{
-    ActorRole, AssLineContent, AssLineInfo, ConvertError, ProcessedAssData, TtmlParagraph,
-};
-use crate::utils::clean_parentheses_from_bg_text;
+// --- 辅助函数区 ---
 
-/// 辅助函数: 将 quick_xml::Error 映射到 std::io::Error。
+/// 辅助函数: 将 quick_xml 库的错误转换为标准的 IO 错误。
+/// 这在 quick_xml 的写入器（Writer）的闭包中非常有用，因为这些闭包要求返回 `io::Result`。
 fn map_xml_error_to_io(e: quick_xml::Error) -> IoError {
     IoError::new(IoErrorKind::Other, e)
 }
 
-/// 辅助函数: 格式化毫秒时间为 TTML 时间字符串 (HH:MM:SS.mmm, MM:SS.mmm, 或 SS.mmm)。
+/// 辅助函数: 格式化毫秒时间为 TTML 标准的时间字符串。
+///
+/// # 示例
+/// - `3661001` -> `"1:01:01.001"`
+/// - `61001`   -> `"1:01.001"`
+/// - `1001`    -> `"1.001"`
 fn format_ttml_time(ms: u64) -> String {
     let h = ms / 3_600_000;
     let m = (ms % 3_600_000) / 60_000;
@@ -31,6 +38,42 @@ fn format_ttml_time(ms: u64) -> String {
         format!("{}.{:03}", s, fr)
     }
 }
+
+/// 辅助函数，用于写入带角色和可选语言的 span 标签。
+///
+/// # 参数
+/// * `writer` - XML 写入器。
+/// * `role` - `ttm:role` 属性的值 (例如, "x-translation", "x-roman")。
+/// * `lang` - 可选的 `xml:lang` 属性值。
+/// * `text` - 要写入的文本内容。
+fn write_optional_span(
+    writer: &mut Writer<Cursor<&mut Vec<u8>>>,
+    role: &str,
+    lang: Option<&str>,
+    text: &str,
+) -> io::Result<()> {
+    // 只有当文本内容非空时才写入 <span> 标签
+    if !text.is_empty() {
+        let mut span_builder = writer
+            .create_element("span")
+            .with_attribute(("ttm:role", role));
+
+        // 如果提供了语言代码，则添加 xml:lang 属性
+        if let Some(lang_code) = lang {
+            if !lang_code.is_empty() {
+                span_builder = span_builder.with_attribute(("xml:lang", lang_code));
+            }
+        }
+
+        span_builder
+            .write_text_content(BytesText::from_escaped(escape(text).as_ref()))
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    }
+
+    Ok(())
+}
+
+// --- 从 ASS 生成 TTML 的相关函数 ---
 
 /// 内部辅助函数：根据收集到的 ASS 行信息写入一个 TTML `<p>` 元素及其内容。
 /// 此函数处理主歌词、关联的背景歌词（包括其翻译和罗马音）、以及主翻译和主罗马音。
@@ -49,60 +92,27 @@ fn write_ttml_p_from_ass_lines(
     }) = &main_line_ass.content
     {
         // 确保传递给此函数作为 main_line_ass 的行不是背景角色。
-        // 独立的背景行应该在 write_ttml_div_from_ass_lines 中被过滤掉或特殊处理，
-        // 而不是调用此函数来为它们创建顶层 <p>。
+        // 独立的背景行应该在 write_ttml_div_from_ass_lines 中被过滤掉或特殊处理。
         if main_role == &ActorRole::Background {
-            return Ok(()); // 背景行不应独立形成 <p>，除非它是孤立的且有特殊处理逻辑
+            // 背景行不应独立形成 <p>，除非它是孤立的且有特殊处理逻辑
+            return Ok(());
         }
 
-        let has_main_syllables_content = !main_syllables.is_empty();
-        let has_associated_bg_content = associated_bg_lines.iter().any(|line| {
-            if let Some(AssLineContent::LyricLine {
-                syllables,
-                bg_translation,
-                bg_romanization,
-                role: bg_role,
-                ..
-            }) = &line.content
-            {
-                // 确保只考虑角色为Background的关联行作为背景内容
-                bg_role == &ActorRole::Background
-                    && (!syllables.is_empty()
-                        || bg_translation
-                            .as_ref()
-                            .is_some_and(|(_, text)| !text.is_empty())
-                        || bg_romanization
-                            .as_ref()
-                            .is_some_and(|text| !text.is_empty()))
-            } else {
-                false
-            }
-        });
-        let has_main_trans_content = associated_main_trans_lines.iter().any(|line| {
-            if let Some(AssLineContent::MainTranslation { text, .. }) = &line.content {
-                !text.is_empty()
-            } else {
-                false
-            }
-        });
-        let has_main_roma_content = associated_main_roma_lines.iter().any(|line| {
-            if let Some(AssLineContent::MainRomanization { text, .. }) = &line.content {
-                !text.is_empty()
-            } else {
-                false
-            }
-        });
+        // 判断是否存在任何需要渲染的内容。
+        let has_any_content = !main_syllables.is_empty()
+            || associated_bg_lines.iter().any(|line| {
+                matches!(&line.content, Some(AssLineContent::LyricLine { syllables, bg_translation, bg_romanization, .. }) if !syllables.is_empty() || bg_translation.is_some() || bg_romanization.is_some())
+            })
+            || !associated_main_trans_lines.is_empty()
+            || !associated_main_roma_lines.is_empty();
 
-        if !has_main_syllables_content
-            && !has_associated_bg_content
-            && !has_main_trans_content
-            && !has_main_roma_content
-        {
+        if !has_any_content {
             return Ok(()); // 如果没有任何内容，则不生成此段落
         }
 
         *key_counter += 1;
         let key_str = format!("L{}", *key_counter);
+        // 根据角色映射 agent 字符串
         let agent_str = match main_role {
             ActorRole::Vocal1 => "v1",
             ActorRole::Vocal2 => "v2",
@@ -110,16 +120,13 @@ fn write_ttml_p_from_ass_lines(
             ActorRole::Background => unreachable!(), // 已在上一个if中处理
         };
 
+        // 计算 <p> 标签的实际开始和结束时间
         let p_begin_str = format_ttml_time(main_line_ass.start_ms);
-        let mut p_actual_end_ms = main_line_ass.end_ms;
-        for bg_line in associated_bg_lines {
-            if let Some(AssLineContent::LyricLine { role: bg_r, .. }) = &bg_line.content {
-                if bg_r == &ActorRole::Background {
-                    // 只考虑实际背景行的结束时间
-                    p_actual_end_ms = p_actual_end_ms.max(bg_line.end_ms);
-                }
-            }
-        }
+        let p_actual_end_ms = associated_bg_lines
+            .iter()
+            .fold(main_line_ass.end_ms, |max_end, line| {
+                max_end.max(line.end_ms)
+            });
         let p_end_str = format_ttml_time(p_actual_end_ms);
 
         let mut p_attributes = vec![
@@ -135,6 +142,7 @@ fn write_ttml_p_from_ass_lines(
             .create_element("p")
             .with_attributes(p_attributes)
             .write_inner_content(|p_content_writer| -> io::Result<()> {
+                // 写入主歌词音节
                 for syl in main_syllables {
                     p_content_writer
                         .create_element("span")
@@ -146,6 +154,7 @@ fn write_ttml_p_from_ass_lines(
                     }
                 }
 
+                // 写入关联的背景声部内容
                 for bg_line_data in associated_bg_lines {
                     if let Some(AssLineContent::LyricLine {
                         role: current_bg_role,
@@ -243,36 +252,22 @@ fn write_ttml_p_from_ass_lines(
                     }
                 }
 
+                // 写入主翻译和主罗马音
                 for trans_line in associated_main_trans_lines {
                     if let Some(AssLineContent::MainTranslation { lang_code, text }) =
                         &trans_line.content
                     {
-                        if !text.is_empty() {
-                            let mut span_builder = p_content_writer
-                                .create_element("span")
-                                .with_attribute(("ttm:role", "x-translation"));
-                            if let Some(lc) = lang_code {
-                                if !lc.is_empty() {
-                                    span_builder =
-                                        span_builder.with_attribute(("xml:lang", lc.as_str()));
-                                }
-                            }
-                            span_builder.write_text_content(BytesText::from_escaped(
-                                escape(text).as_ref(),
-                            ))?;
-                        }
+                        write_optional_span(
+                            p_content_writer,
+                            "x-translation",
+                            lang_code.as_deref(),
+                            text,
+                        )?;
                     }
                 }
                 for roma_line in associated_main_roma_lines {
                     if let Some(AssLineContent::MainRomanization { text }) = &roma_line.content {
-                        if !text.is_empty() {
-                            p_content_writer
-                                .create_element("span")
-                                .with_attribute(("ttm:role", "x-roman"))
-                                .write_text_content(BytesText::from_escaped(
-                                    escape(text).as_ref(),
-                                ))?;
-                        }
+                        write_optional_span(p_content_writer, "x-roman", None, text)?;
                     }
                 }
                 Ok(())
@@ -282,7 +277,7 @@ fn write_ttml_p_from_ass_lines(
 }
 
 /// 辅助函数: 将一组 ASS 行写入 TTML 的一个 `<div>` 块中。
-/// 内部会调用 `write_ttml_p_from_ass_line_details` 来处理每个 `<p>`。
+/// 内部会调用 `write_ttml_p_from_ass_lines` 来处理每个 `<p>`。
 fn write_ttml_div_from_ass_lines(
     writer: &mut Writer<Cursor<&mut Vec<u8>>>,
     lines_in_div: &[&AssLineInfo],
@@ -293,6 +288,7 @@ fn write_ttml_div_from_ass_lines(
         return Ok(());
     }
 
+    // 计算 div 的开始和结束时间
     let div_begin_ms = lines_in_div.iter().map(|l| l.start_ms).min().unwrap_or(0);
     let div_end_ms = lines_in_div.iter().map(|l| l.end_ms).max().unwrap_or(0);
 
@@ -636,6 +632,8 @@ pub fn generate_intermediate_ttml_from_ass(
         .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {}", e)))
 }
 
+// --- 从 TtmlParagraph (内部标准格式) 生成 TTML 的相关函数 ---
+
 /// 从 TtmlParagraph 列表生成最终的 TTML 输出字符串。
 /// 这是项目中最通用的 TTML 生成函数，用于从内部标准格式生成输出。
 ///
@@ -696,9 +694,11 @@ pub fn generate_ttml_from_paragraphs(
         tt_attributes_map.insert("xmlns:amll", "http://www.example.com/ns/amll".to_string());
     }
 
+    // 属性排序，确保输出一致性
     let mut sorted_tt_attributes: Vec<(&str, String)> = tt_attributes_map.into_iter().collect();
     sorted_tt_attributes.sort_by_key(|&(key, _)| key);
 
+    // 写入 <tt> 开始标签
     let mut tt_start_event = BytesStart::new("tt");
     for (key, value) in &sorted_tt_attributes {
         tt_start_event.push_attribute((*key, value.as_str()));
@@ -813,7 +813,7 @@ pub fn generate_ttml_from_paragraphs(
         .create_element("body")
         .with_attribute(("dur", body_dur_str.as_str()))
         .write_inner_content(|body_writer| -> io::Result<()> {
-            if body_has_content {
+            if !relevant_paragraphs.is_empty() {
                 let mut line_key_counter = 0;
                 let mut current_div_song_part: Option<String> = None;
                 let mut paragraphs_for_current_div_buffer: Vec<&TtmlParagraph> = Vec::new();
@@ -859,8 +859,7 @@ pub fn generate_ttml_from_paragraphs(
         .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {}", e)))
 }
 
-/// 辅助函数: 将 TtmlParagraph 列表写入为 TTML 的 div 和 p 结构。
-/// (这是 generate_ttml_from_paragraphs 的内部辅助函数)
+/// 内部辅助函数: 将 TtmlParagraph 列表写入为 TTML 的 div 和 p 结构。
 fn write_ttml_div_from_paragraphs_internal(
     writer: &mut Writer<Cursor<&mut Vec<u8>>>,
     paragraphs_in_div: &[&TtmlParagraph], // 当前 div 内的段落

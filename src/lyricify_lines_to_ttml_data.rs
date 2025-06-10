@@ -47,6 +47,7 @@ pub fn convert_lyricify_to_ttml_data(
             translation: None,                   // LYL 格式不直接支持翻译
             romanization: None,                  // LYL 格式不直接支持罗马音
             song_part: None,                     // LYL 格式不直接支持歌曲部分标记
+            itunes_key: None,
         };
         ttml_paragraphs.push(paragraph); // 将创建的段落添加到结果列表中
     }

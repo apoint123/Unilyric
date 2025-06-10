@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use crate::types::{AssMetadata, BackgroundSection, ConvertError, TtmlParagraph, TtmlSyllable};
 use log::{error, info};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use regex::Regex;
 
 /// 定义一个类型别名，用于表示 TTML 解析函数的返回结果。
 /// 这是一个包含元组的 Result，元组中包含：
@@ -199,6 +201,43 @@ enum LastEndedSyllableSpanInfo {
     BackgroundSyllable, // 上一个结束的 span 是背景歌词音节
 }
 
+/// 提取主翻译中括号里的部分，作为背景翻译。
+///
+/// # 参数
+/// * `para` - 一个可变的 `TtmlParagraph` 引用。函数将直接修改这个段落。
+fn extract_and_apply_parenthesized_translation(
+    para: &mut TtmlParagraph,
+    main_translation_text: &str,
+    main_translation_lang: &Option<String>,
+) {
+    let re = Regex::new(r"[\s　]*[（(]([^（()）]+)[）)][\s　]*$").unwrap();
+
+    let mut final_main_text = main_translation_text.to_string();
+
+    if let Some(caps) = re.captures(main_translation_text) {
+        if let Some(bg_trans_match) = caps.get(1) {
+            let bg_trans_text = bg_trans_match.as_str().trim().to_string();
+
+            if !bg_trans_text.is_empty() {
+                let bg_sec = para.background_section.get_or_insert_with(|| {
+                    BackgroundSection {
+                        start_ms: para.p_start_ms,
+                        end_ms: para.p_end_ms,
+                        ..Default::default()
+                    }
+                });
+
+                if bg_sec.translation.is_none() {
+                    bg_sec.translation = Some((bg_trans_text, main_translation_lang.clone()));
+                    final_main_text = re.replace(main_translation_text, "").trim().to_string();
+                }
+            }
+        }
+    }
+
+    para.translation = Some((final_main_text, main_translation_lang.clone()));
+}
+
 /// 从字符串解析 TTML 内容。
 ///
 /// # 参数
@@ -221,6 +260,14 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
     let mut is_line_timing_mode = false;
     let mut detected_formatted_ttml_or_normalized_text = false;
     let mut first_translation_lang_code: Option<String> = None;
+
+    // 用于解析和存储 Apple Music 的翻译。
+    let mut am_translations: HashMap<String, (String, Option<String>)> = HashMap::new();
+    let mut in_translations_tag = false;
+    let mut in_translation_tag = false;
+    let mut current_translation_lang: Option<String> = None;
+    let mut current_text_for_key: Option<String> = None;
+    let mut current_am_translation_text = String::new();
 
     // 解析过程中的状态变量
     let mut in_metadata_section = false;
@@ -248,7 +295,7 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
     let mut current_div_song_part_word_mode: Option<String> = None;
 
     // 逐行模式 (Line timing) 的状态变量
-    let mut current_p_data_for_line_mode: Option<(u64, u64, Option<String>)> = None;
+    let mut current_p_data_for_line_mode: Option<(u64, u64, Option<String>, Option<String>)> = None;
     let mut current_p_text_for_line_mode = String::new();
     let mut current_p_translation_line_mode: Option<(String, Option<String>)> = None;
     let mut current_p_romanization_line_mode: Option<String> = None;
@@ -297,6 +344,27 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                     }
                     "metadata" if !in_p_element => in_metadata_section = true,
                     "iTunesMetadata" if in_metadata_section => in_itunes_metadata = true,
+                    "translations" if in_itunes_metadata => {
+                        in_translations_tag = true;
+                    }
+                    "translation" if in_translations_tag => {
+                        in_translation_tag = true;
+                        current_translation_lang = e
+                            .attributes()
+                            .flatten()
+                            .find(|attr| attr.key.as_ref() == b"xml:lang")
+                            .and_then(|attr| attr.decode_and_unescape_value(reader.decoder()).ok())
+                            .map(|cow| cow.into_owned());
+                    }
+                    "text" if in_translation_tag => {
+                        current_text_for_key = e
+                            .attributes()
+                            .flatten()
+                            .find(|attr| attr.key.as_ref() == b"for")
+                            .and_then(|attr| attr.decode_and_unescape_value(reader.decoder()).ok())
+                            .map(|cow| cow.into_owned());
+                        current_am_translation_text.clear();
+                    }
                     "songwriters" if in_itunes_metadata => in_songwriters_tag = true,
                     "songwriter" if in_songwriters_tag => {
                         in_songwriter_tag = true;
@@ -358,6 +426,8 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             let mut p_end_ms_val = 0;
                             let mut p_agent_opt_val: Option<String> = None;
                             let mut p_song_part_val = current_div_song_part_line_mode.clone();
+                            let mut p_key_val: Option<String> = None;
+
                             for attr_res in e.attributes() {
                                 let attr = attr_res?;
                                 let value_cow = attr.decode_and_unescape_value(reader.decoder())?;
@@ -372,11 +442,14 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                     b"itunes:song-part" => {
                                         p_song_part_val = Some(value_cow.into_owned())
                                     }
+                                    b"itunes:key" => {
+                                        p_key_val = Some(value_cow.into_owned());
+                                    }
                                     _ => {}
                                 }
                             }
                             current_p_data_for_line_mode =
-                                Some((p_start_ms_val, p_end_ms_val, p_agent_opt_val));
+                                Some((p_start_ms_val, p_end_ms_val, p_agent_opt_val, p_key_val));
                             current_div_song_part_line_mode = p_song_part_val;
                             current_p_text_for_line_mode.clear();
                             current_p_translation_line_mode = None;
@@ -399,6 +472,9 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                     b"end" => p_data.p_end_ms = parse_any_ttml_time_ms(&value_cow)?,
                                     b"itunes:song-part" => {
                                         p_data.song_part = Some(value_cow.into_owned())
+                                    }
+                                    b"itunes:key" => {
+                                        p_data.itunes_key = Some(value_cow.into_owned());
                                     }
                                     _ => {}
                                 }
@@ -530,7 +606,9 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                 let text_cow = e_text.unescape()?;
                 let text_str = text_cow.as_ref();
 
-                if in_p_element {
+                if current_text_for_key.is_some() {
+                    current_am_translation_text.push_str(text_str);
+                } else if in_p_element {
                     if is_line_timing_mode {
                         if let Some((span_type, _, _, _, lang_code_opt)) =
                             span_type_stack_word_mode.last()
@@ -623,7 +701,7 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                     }
                     "p" => {
                         if is_line_timing_mode {
-                            if let Some((p_start, p_end, p_agent_opt)) =
+                            if let Some((p_start, p_end, p_agent_opt, p_key_opt)) =
                                 current_p_data_for_line_mode.take()
                             {
                                 let main_text = current_p_text_for_line_mode.trim().to_string();
@@ -645,14 +723,13 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                         song_part: current_div_song_part_line_mode.clone(),
                                         translation: current_p_translation_line_mode.take(),
                                         romanization: current_p_romanization_line_mode.take(),
+                                        itunes_key: p_key_opt,
                                         ..Default::default()
                                     });
                                 }
                             }
                         } else {
                             if let Some(para) = current_paragraph_word_mode.take() {
-                                // 优化建议：可以添加一个检查，如果段落结束时间小于最后一个音节的结束时间，
-                                // 可以自动修正段落结束时间，以增强对不规范数据的兼容性。
                                 if !para.main_syllables.is_empty()
                                     || para.background_section.as_ref().is_some_and(|bs| {
                                         !bs.syllables.is_empty()
@@ -886,6 +963,25 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             last_ended_syllable_span_info = LastEndedSyllableSpanInfo::None;
                         }
                     }
+                    "translations" if in_translations_tag => {
+                        in_translations_tag = false;
+                    }
+                    "translation" if in_translation_tag => {
+                        in_translation_tag = false;
+                        current_translation_lang = None;
+                    }
+                    "text" if in_translation_tag => {
+                        if let Some(key) = current_text_for_key.take() {
+                            if !current_am_translation_text.is_empty() {
+                                am_translations.entry(key).or_insert_with(|| {
+                                    (
+                                        current_am_translation_text.clone(),
+                                        current_translation_lang.clone(),
+                                    )
+                                });
+                            }
+                        }
+                    }
                     "metadata" if in_metadata_section => in_metadata_section = false,
                     "songwriter" if in_songwriter_tag => {
                         if !current_songwriter_name.trim().is_empty() {
@@ -927,6 +1023,21 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                 return Err(ConvertError::Xml(e));
             }
             _ => {}
+        }
+    }
+    if !am_translations.is_empty() {
+        for para in paragraphs.iter_mut() {
+            if para.translation.is_none() {
+                if let Some(key) = &para.itunes_key {
+                    if let Some((trans_text, trans_lang)) = am_translations.get(key) {
+                        extract_and_apply_parenthesized_translation(para, trans_text, trans_lang);
+                    }
+                }
+            } else {
+                if let Some((trans_text, trans_lang)) = para.translation.clone() {
+                    extract_and_apply_parenthesized_translation(para, &trans_text, &trans_lang);
+                }
+            }
         }
     }
     info!(target: "unilyric::ttml_parser", "[TTML 解析] 解析完成。共 {} 个段落, {} 条元数据。逐行模式: {}, 检测到格式化: {}", paragraphs.len(), metadata.len(), is_line_timing_mode, detected_formatted_ttml_or_normalized_text);
