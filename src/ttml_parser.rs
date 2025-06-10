@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use crate::types::{AssMetadata, BackgroundSection, ConvertError, TtmlParagraph, TtmlSyllable};
 use log::{error, info};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use regex::Regex;
+use std::collections::HashMap;
 
 /// 定义一个类型别名，用于表示 TTML 解析函数的返回结果。
 /// 这是一个包含元组的 Result，元组中包含：
@@ -219,13 +219,13 @@ fn extract_and_apply_parenthesized_translation(
             let bg_trans_text = bg_trans_match.as_str().trim().to_string();
 
             if !bg_trans_text.is_empty() {
-                let bg_sec = para.background_section.get_or_insert_with(|| {
-                    BackgroundSection {
+                let bg_sec = para
+                    .background_section
+                    .get_or_insert_with(|| BackgroundSection {
                         start_ms: para.p_start_ms,
                         end_ms: para.p_end_ms,
                         ..Default::default()
-                    }
-                });
+                    });
 
                 if bg_sec.translation.is_none() {
                     bg_sec.translation = Some((bg_trans_text, main_translation_lang.clone()));
@@ -1033,10 +1033,8 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         extract_and_apply_parenthesized_translation(para, trans_text, trans_lang);
                     }
                 }
-            } else {
-                if let Some((trans_text, trans_lang)) = para.translation.clone() {
-                    extract_and_apply_parenthesized_translation(para, &trans_text, &trans_lang);
-                }
+            } else if let Some((trans_text, trans_lang)) = para.translation.clone() {
+                extract_and_apply_parenthesized_translation(para, &trans_text, &trans_lang);
             }
         }
     }
