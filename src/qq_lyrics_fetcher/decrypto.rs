@@ -112,30 +112,31 @@ pub const fn bit_num_intl(a: u32, b: usize, c: usize) -> u32 {
     ((a << b) & 0x80000000) >> c
 }
 
-/// 计算 S-盒的输入索引。
-/// DES S-盒的输入是6位，这6位由扩展置换后的48位数据中的对应6位决定。
-/// 这6位中的第1位和第6位决定S-盒的行号 (0-3)，中间4位决定S-盒的列号 (0-15)。
-/// 此函数将一个字节（假设包含这6位，通常是高6位或低6位）转换为 S-盒查找表的实际索引 (0-63)。
-/// `a` 是一个字节，其中相关的6位用于计算索引。
-/// (a & 0x20): 取出第5位 (0-indexed, MSB is 7th)。
-/// ((a & 0x1f) >> 1): 取出第0-4位，然后右移1位，得到原来的第1-4位。
-/// ((a & 0x01) << 4): 取出第0位，然后左移4位。
-/// 组合起来：(第5位) | (原来的第1-4位) | (原来的第0位 << 4)
-/// 这实际上是将输入的6位 (b5 b4 b3 b2 b1 b0) 重新排列为 (b5 b0 b4 b3 b2 b1) 的形式，
-/// 其中 b5 和 b0 组合成2位行索引，b4 b3 b2 b1 组合成4位列索引。
-/// S-盒查找表是一维数组，所以行和列组合成一个0-63的索引。
-/// 例如，如果6位输入是 `b5 b4 b3 b2 b1 b0`，行索引是 `b5b0` (2位)，列索引是 `b4b3b2b1` (4位)。
-/// 一维表索引 = 行索引 * 16 + 列索引。
-/// 这个函数 `sbox_bit` 的具体位操作是 DES S-盒输入选择的特定方式：
-/// `a` (8bit) -> `b7 b6 b5 b4 b3 b2 b1 b0`
-/// S-Box input (6bit) is typically `b_outer_1 b_inner_1 b_inner_2 b_inner_3 b_inner_4 b_outer_2`
-/// Row is `b_outer_1 b_outer_2`
-/// Col is `b_inner_1 b_inner_2 b_inner_3 b_inner_4`
-/// The function seems to take a byte where the 6 bits are packed, e.g., `xx b5 b4 b3 b2 b1 b0`.
-/// `(a & 0x20)` is `00 b5 00000` (isolates b5)
-/// `((a & 0x1F) >> 1)` is `000 b4 b3 b2 b1` (isolates b0-b4, shifts to get b1-b4 at lower bits)
-/// `((a & 0x01) << 4)` is `00 b0 0000` (isolates b0, shifts it left)
-/// The ORing combines these parts. This specific permutation is standard for DES S-Box input mapping.
+/// 计算 DES S-盒的查找索引。
+///
+/// 在 DES 算法中，S-盒的输入是6位数据，这6位决定了S-盒的行（2位）和列（4位）。
+/// 此函数的作用就是将这6位输入转换为一个0到63之间的一维数组索引。
+///
+/// # 参数
+///
+/// * `a`: 一个 `u8` 类型的字节。函数假定用于计算的6位数据位于此字节的低6位（从 b5 到 b0，其中 b0 是最低位）。
+///
+/// # 索引计算规则
+///
+/// 输入的6位（记为 `b5 b4 b3 b2 b1 b0`）按以下规则重新组合：
+/// - **行索引** 由外侧的两位 `b5` 和 `b0` 决定。
+/// - **列索引** 由中间的四位 `b4 b3 b2 b1` 决定。
+///
+/// 最终形成的6位索引值的结构是 `b5b0 b4b3b2b1`，可用于直接在S-盒查找表（一维数组）中定位。
+///
+/// # 代码实现
+///
+/// 假设输入字节 a 的低6位是 `b5 b4 b3 b2 b1 b0`:
+/// - `(a & 0x20)`: 提取 `b5`，结果为 `00b50000`。
+/// - `((a & 0x1f) >> 1)`: 提取 `b4 b3 b2 b1 b0`，右移一位后得到 `0000b4b3b2b1`。
+/// - `((a & 0x01) << 4)`: 提取 `b0`，左移四位后得到 `000b00000`。
+///
+/// 将这三部分按位或（`|`）组合，最终得到 `00b5b0b4b3b2b1`，这正是我们需要的索引值。
 pub const fn sbox_bit(a: u8) -> usize {
     ((a & 0x20) | ((a & 0x1f) >> 1) | ((a & 0x01) << 4)) as usize
 }
@@ -478,48 +479,30 @@ pub fn des_crypt(input: &[u8], output: &mut [u8], key: &[Vec<u8>]) {
     ip(&mut state, input); // state[0] = L0, state[1] = R0
 
     // 2. 16轮 Feistel 网络
-    //    对于前15轮：L_i = R_i-1; R_i = L_i-1 XOR f(R_i-1, K_i)
+    //    对于前15轮，执行标准的Feistel轮：
+    //    L_i = R_i-1; R_i = L_i-1 XOR f(R_i-1, K_i)
     for key_item in key.iter().take(15) {
-        // 迭代前15个轮密钥
-        let t = state[1]; // R_i-1
+        let t = state[1]; // t (临时) = R_i-1
         state[1] = f_function(state[1], key_item) ^ state[0]; // R_i = f(R_i-1, K_i) XOR L_i-1
         state[0] = t; // L_i = R_i-1 (交换)
     }
 
-    // 第16轮：L16 = R15; R16 = L15 XOR f(R15, K16) (注意：最后一轮不交换左右两半)
-    // 当前代码实现是：L16 = R15; R16 = f(R15, K16) XOR L15
-    // 然后在 inv_ip 之前，state[0] 存的是 L16，state[1] 存的是 R16。
-    // 标准DES在第16轮后，输出是 (R16, L16) 经过 InvIP。
-    // 此处实现：
-    // state[0] (L_i-1) 在上一轮循环后是 R_i-2
-    // state[1] (R_i-1) 在上一轮循环后是 L_i-2 ^ f(R_i-2, K_i-1)
-    // 经过15轮后，state[0] = R14, state[1] = L14 ^ f(R14, K15)
-    // 第16轮，key[15] 是 K16:
-    // L15 = state[0] (R14)
-    // R15 = state[1] (L14 ^ f(R14, K15))
-    // f_function(state[1], &key[15]) 是 f(R15, K16)
-    // state[0] ^= f_function(state[1], &key[15])  =>  L16 = L15 ^ f(R15, K16)
-    //                                            =>  R14 ^= f(L14 ^ f(R14,K15), K16)
-    // 这与标准DES的 R16 = L15 ^ f(R15, K16) 和 L16 = R15 结构不同。
-    // 标准DES在最后一轮后，输出是 (R16, L16) 送入 InvIP。
-    // 此处在最后一轮后，state[0] 存储 L15 ^ f(R15, K16)，state[1] 存储 R15。
-    // **这是一个与标准DES实现有差异的地方，但只要IP和InvIP以及整体加解密流程对称即可。**
-    state[0] ^= f_function(state[1], &key[15]); // L16 = L15 XOR f(R15, K16)
+    // 经过15轮后, state = (L15, R15)
+
+    // 第16轮: 标准DES在最后一轮计算后不交换左右两半。
+    // R16 = L15 XOR f(R15, K16)
+    // L16 = R15
+    // 最终送入InvIP的数据块是交换后的 (R16, L16)。
+    //
+    // 此实现通过一个技巧，省略了最后的显式交换：
+    // state[0] (即L15) 被更新为 L15 ^ f(R15, K16)，这正是 R16。
+    // state[1] (即R15) 保持不变，这正是 L16。
+    state[0] ^= f_function(state[1], &key[15]);
+
+    // 此时, state 数组的内容是 (R16, L16)，这正是InvIP所需的输入顺序。
+    // 这个实现技巧在结果上与“标准16轮+最终交换”等效。
 
     // 3. 逆初始置换 (InvIP)
-    //    注意：InvIP 的输入应该是 (R16, L16)。
-    //    由于上面最后一轮的处理，state[0] 是 L15 ^ f(R15, K16)，state[1] 是 R15。
-    //    如果 InvIP 期望的是 (R16, L16)，那么在调用 inv_ip 之前可能需要交换 state[0] 和 state[1]。
-    //    或者 InvIP 本身就是针对这种 (L15^f, R15) 的顺序设计的。
-    //    从 inv_ip 的实现来看，它期望 state[0] 是 IP 输出的左半部分，state[1] 是右半部分。
-    //    DES 加密和解密算法相同，只是轮密钥顺序相反。
-    //    如果这是解密，那么输入是 (L15^f, R15)，输出应该是明文。
-    //    如果这是加密，那么输入是 (L0, R0)，输出是 (L15^f, R15)。
-    //    标准DES的输出是 (R16,L16)，然后经过InvIP。
-    //    这里的 state[0] 和 state[1] 在最后一轮后没有进行最终的交换。
-    //    即 state = (L16, R16) 实际上是 (L15 ^ f(R15, K16), R15)
-    //    InvIP 作用于 (L16, R16) 得到密文/明文。
-    //    **此处的实现细节可能与标准DES略有不同，但只要加解密对称，仍能工作。**
     inv_ip(&state, output);
 }
 
@@ -538,53 +521,70 @@ pub fn triple_des_key_setup(key: &[u8], schedule: &mut [Vec<Vec<u8>>], mode: u32
         key_schedule(&key[8..16], &mut schedule[1], DECRYPT); // K2 用于第二阶段DES解密
         key_schedule(&key[16..24], &mut schedule[2], mode); // K3 用于第三阶段DES加密
     } else {
-        // 解密模式： K3解密, K2加密, K1解密 (与加密操作顺序相反，密钥使用也对应相反操作)
-        key_schedule(&key[0..8], &mut schedule[2], mode); // K1 (对应加密的K3) 用于第一阶段DES解密
-        key_schedule(&key[8..16], &mut schedule[1], ENCRYPT); // K2 (对应加密的K2) 用于第二阶段DES加密
-        key_schedule(&key[16..24], &mut schedule[0], mode); // K3 (对应加密的K1) 用于第三阶段DES解密
-        // 注意：上面注释中 K1, K2, K3 的对应关系是为了说明操作的逆过程。
-        // 实际上传入的 key[0..8] 始终是 TripleDES 的第一个8字节密钥，key[8..16] 是第二个，以此类推。
-        // 解密时，schedule[0] 存的是用 key[16..24] 生成的解密轮密钥。
-        // schedule[1] 存的是用 key[8..16] 生成的加密轮密钥。
-        // schedule[2] 存的是用 key[0..8] 生成的解密轮密钥。
+        // 解密模式：为了逆转加密操作 (E-D-E with K1,K2,K3)，
+        // 我们需要执行解密-加密-解密 (D-E-D) 的操作，并使用 K3, K2, K1。
+        // 我们将计算好的轮密钥按执行顺序放入 schedule[0], schedule[1], schedule[2]。
+
+        // 第1步 (D with K3): 使用 K3 (key[16..24]) 生成解密轮密钥，存入 schedule[0]。
+        key_schedule(&key[16..24], &mut schedule[0], mode); 
+        
+        // 第2步 (E with K2): 使用 K2 (key[8..16]) 生成加密轮密钥，存入 schedule[1]。
+        key_schedule(&key[8..16], &mut schedule[1], ENCRYPT); 
+        
+        // 第3步 (D with K1): 使用 K1 (key[0..8]) 生成解密轮密钥，存入 schedule[2]。
+        key_schedule(&key[0..8], &mut schedule[2], mode);
     }
 }
 
-/// Triple DES 加密/解密单个64位数据块。
+/// Triple DES 加密/解密单个 64 位数据块。
 ///
 /// # Arguments
-/// * `input` - 8字节的输入数据块。
-/// * `output` - 8字节的可变切片，用于存储输出数据块。
-/// * `key` - Triple DES 的三组轮密钥 (由 `triple_des_key_setup` 生成)。
+/// * `input`  - 8 字节输入块
+/// * `output` - 8 字节输出块，用于存储加密或解密后的结果
+/// * `key`    - 由 `triple_des_key_setup` 生成的三套轮密钥，按阶段存放于 `key[0]`、`key[1]`、`key[2]`
+///
+/// # 实现细节
+/// 本函数始终按顺序对数据执行三次 DES 操作。
+///
+/// **重要提示：与标准的差异**
+/// 本实现的密钥使用顺序 (K1->K2->K3) 与常见标准（如 NIST SP 800-67）
+/// 定义的 (K3->K2->K1) 顺序不同。因此，此代码可能无法与其他标准实现互操作。
+///
+/// ## 加密示例 (E-D-E 模式)
+/// 如果 `triple_des_key_setup(..., ENCRYPT)` 被调用，则：
+/// ```text
+/// // 准备阶段 (setup)
+/// key = K1 的加密轮密钥
+/// key = K2 的解密轮密钥
+/// key = K3 的加密轮密钥
+///
+/// // 执行阶段 (crypt)
+/// temp1 = Encrypt(input,  key)  // E_K1(Plaintext)
+/// temp2 = Decrypt(temp1,  key)  // D_K2(E_K1(P))
+/// output = Encrypt(temp2, key)   // E_K3(D_K2(E_K1(P)))
+/// ```
+///
+/// ## 解密示例 (D-E-D 模式)
+/// 如果 `triple_des_key_setup(..., DECRYPT)` 被调用，则：
+/// ```text
+/// // 准备阶段 (setup)
+/// key = K3 的解密轮密钥
+/// key = K2 的加密轮密钥
+/// key = K1 的解密轮密钥
+///
+/// // 执行阶段 (crypt)
+/// temp1 = Decrypt(input,  key)  // D_K3(Ciphertext)
+/// temp2 = Encrypt(temp1,  key)  // E_K2(D_K3(C))
+/// output = Decrypt(temp2, key)   // D_K1(E_K2(D_K3(C)))
+/// ```
 pub fn triple_des_crypt(input: &[u8], output: &mut [u8], key: &[Vec<Vec<u8>>]) {
-    let mut temp1 = [0u8; 8]; // 存储第一阶段DES操作的结果
-    let mut temp2 = [0u8; 8]; // 存储第二阶段DES操作的结果
+    let mut temp1 = [0u8; 8]; // 第一阶段 DES 操作结果
+    let mut temp2 = [0u8; 8]; // 第二阶段 DES 操作结果
 
-    // 执行 Triple DES 的三个阶段
-    // 如果是加密：DES_K1_Enc( DES_K2_Dec( DES_K3_Enc(明文) ) ) -> 这种是EDE模式，但密钥是反的
-    // 标准 EDE: Enc(K1, Dec(K2, Enc(K3, Plaintext)))
-    // 这里用的密钥 schedule[0], schedule[1], schedule[2] 是根据 triple_des_key_setup 中
-    // mode 参数生成的。
-    // 如果 setup mode 是 ENCRYPT:
-    //   schedule[0] 是 K1_Enc_keys
-    //   schedule[1] 是 K2_Dec_keys
-    //   schedule[2] 是 K3_Enc_keys
-    //   操作是: crypt(input, schedule[0]) -> temp1  (K1_Enc)
-    //            crypt(temp1, schedule[1]) -> temp2  (K2_Dec)
-    //            crypt(temp2, schedule[2]) -> output (K3_Enc)
-    // 这符合 EDE (Encrypt-Decrypt-Encrypt) 模式。
-
-    // 如果 setup mode 是 DECRYPT:
-    //   schedule[0] 是 K3_Dec_keys (用 key[16..24] 生成的解密轮密钥)
-    //   schedule[1] 是 K2_Enc_keys (用 key[8..16] 生成的加密轮密钥)
-    //   schedule[2] 是 K1_Dec_keys (用 key[0..8] 生成的解密轮密钥)
-    //   操作是: crypt(input, schedule[0]) -> temp1  (K3_Dec)
-    //            crypt(temp1, schedule[1]) -> temp2  (K2_Enc)
-    //            crypt(temp2, schedule[2]) -> output (K1_Dec)
-    // 这符合 DED (Decrypt-Encrypt-Decrypt) 模式，是 EDE 的逆过程。
-    des_crypt(input, &mut temp1, &key[0]);
-    des_crypt(&temp1, &mut temp2, &key[1]);
-    des_crypt(&temp2, output, &key[2]);
+    // 按 schedule[0] → schedule[1] → schedule[2] 依次调用 DES
+    des_crypt(input,   &mut temp1, &key[0]);
+    des_crypt(&temp1,  &mut temp2, &key[1]);
+    des_crypt(&temp2,  output,     &key[2]);
 }
 
 /// 将十六进制字符串转换为字节向量。
