@@ -29,8 +29,7 @@ jobs:
         run: cargo build --release
 
       - name: 压缩产物
-        run: |
-          run: Compress-Archive -Path ./target/release/Unilyric.exe -DestinationPath Unilyric.zip
+        run: Compress-Archive -Path ./target/release/Unilyric.exe -DestinationPath Unilyric.zip
 
       - name: 上传产物
         uses: softprops/action-gh-release@master
