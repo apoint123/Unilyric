@@ -5,7 +5,7 @@ use crate::types::{LysSyllable, TtmlSyllable};
 use directories::ProjectDirs;
 use log::{error, info, trace, warn};
 use once_cell::sync::Lazy;
-use opencc_rust::{DefaultConfig, OpenCC, generate_static_dictionary};
+use opencc_rust_windows::{DefaultConfig, OpenCC, generate_static_dictionary};
 use tempfile::{TempDir, tempdir};
 
 #[macro_export]
@@ -385,7 +385,13 @@ pub fn convert_traditional_to_simplified(text: &str) -> String {
                     warn!("[简繁转换] 移除null字节后文本变为空。返回原始文本。");
                     return text.to_string();
                 }
-                let simplified_text: String = converter.convert(&sanitized_text);
+                let simplified_text: String = match converter.convert(&sanitized_text) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("[简繁转换] OpenCC 转换失败: {}，返回原文。", e);
+                        return text.to_string();
+                    }
+                };
 
                 if text != simplified_text {
                     // 比较的是原始带null的text和转换后文本
@@ -404,7 +410,13 @@ pub fn convert_traditional_to_simplified(text: &str) -> String {
                 }
                 simplified_text
             } else {
-                let simplified_text: String = converter.convert(text);
+                let simplified_text: String = match converter.convert(text) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        warn!("[简繁转换] OpenCC 转换失败: {}，返回原文。", e);
+                        return text.to_string();
+                    }
+                };
 
                 if text != simplified_text {
                     info!("[简繁转换] 原文: '{}' -> 简体: '{}'", text, simplified_text);

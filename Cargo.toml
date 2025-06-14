@@ -16,7 +16,7 @@ webbrowser = "1.0.4"
 futures-util = "0.3.31"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "multipart"] }
 tokio = { version = "1.45", features = ["rt-multi-thread", "macros"] }
-tokio-tungstenite = "0.26.2"
+tokio-tungstenite = "0.27.0"
 url = "2.5.4"
 ws-protocol = { path = "src/ws-protocol" }
 
@@ -44,7 +44,7 @@ urlencoding = "2.1.3"
 
 directories = "6"
 once_cell = "1.19"
-opencc-rust = { version = "1.1.19", features = ["static-dictionaries"] }
+opencc-rust-windows = { version = "1.2.0"}
 rand = "0.9"
 rubato = "0.16.2"
 strum = "0.27.1"
