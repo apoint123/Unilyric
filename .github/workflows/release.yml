@@ -30,7 +30,7 @@ jobs:
 
       - name: 压缩产物
         run: |
-          zip -j Unilyric.zip ./target/release/Unilyric.exe
+          run: Compress-Archive -Path ./target/release/Unilyric.exe -DestinationPath Unilyric.zip
 
       - name: 上传产物
         uses: softprops/action-gh-release@master
