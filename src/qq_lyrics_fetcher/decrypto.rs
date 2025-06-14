@@ -526,11 +526,11 @@ pub fn triple_des_key_setup(key: &[u8], schedule: &mut [Vec<Vec<u8>>], mode: u32
         // 我们将计算好的轮密钥按执行顺序放入 schedule[0], schedule[1], schedule[2]。
 
         // 第1步 (D with K3): 使用 K3 (key[16..24]) 生成解密轮密钥，存入 schedule[0]。
-        key_schedule(&key[16..24], &mut schedule[0], mode); 
-        
+        key_schedule(&key[16..24], &mut schedule[0], mode);
+
         // 第2步 (E with K2): 使用 K2 (key[8..16]) 生成加密轮密钥，存入 schedule[1]。
-        key_schedule(&key[8..16], &mut schedule[1], ENCRYPT); 
-        
+        key_schedule(&key[8..16], &mut schedule[1], ENCRYPT);
+
         // 第3步 (D with K1): 使用 K1 (key[0..8]) 生成解密轮密钥，存入 schedule[2]。
         key_schedule(&key[0..8], &mut schedule[2], mode);
     }
@@ -582,9 +582,9 @@ pub fn triple_des_crypt(input: &[u8], output: &mut [u8], key: &[Vec<Vec<u8>>]) {
     let mut temp2 = [0u8; 8]; // 第二阶段 DES 操作结果
 
     // 按 schedule[0] → schedule[1] → schedule[2] 依次调用 DES
-    des_crypt(input,   &mut temp1, &key[0]);
-    des_crypt(&temp1,  &mut temp2, &key[1]);
-    des_crypt(&temp2,  output,     &key[2]);
+    des_crypt(input, &mut temp1, &key[0]);
+    des_crypt(&temp1, &mut temp2, &key[1]);
+    des_crypt(&temp2, output, &key[2]);
 }
 
 /// 将十六进制字符串转换为字节向量。
