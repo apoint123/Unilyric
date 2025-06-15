@@ -131,7 +131,7 @@ impl UniLyricApp {
                 app_settings_locked.pinned_metadata = current_pinned_for_settings; // 更新设置中的固定元数据
                 // 尝试保存设置文件
                 if let Err(e) = app_settings_locked.save() {
-                    log::error!("[Unilyric UI同步] 保存固定元数据到设置文件失败: {}", e);
+                    log::error!("[Unilyric UI同步] 保存固定元数据到设置文件失败: {e}");
                 } else {
                     log::info!(
                         "[Unilyric UI同步] 已将 {} 个键的固定元数据保存到设置文件。",
@@ -367,9 +367,9 @@ impl UniLyricApp {
 
         // 写入歌词到文件
         match std::fs::write(&file_path, &self.output_text) {
-            Ok(_) => log::info!("[本地缓存] TTML 歌词已保存到: {:?}", file_path),
+            Ok(_) => log::info!("[本地缓存] TTML 歌词已保存到: {file_path:?}"),
             Err(e) => {
-                log::error!("[本地缓存] 保存 TTML 文件到 {:?} 失败: {}", file_path, e);
+                log::error!("[本地缓存] 保存 TTML 文件到 {file_path:?} 失败: {e}");
                 self.toasts.add(Toast {
                     text: "缓存失败：写入文件错误".into(),
                     kind: ToastKind::Error,
@@ -395,10 +395,7 @@ impl UniLyricApp {
         if let Some(existing_idx) = index_guard.iter().position(|entry| {
             entry.smtc_title == title_to_save && entry.smtc_artists == artists_to_save // 检查是否已存在相同歌曲的缓存
         }) {
-            log::info!(
-                "[本地缓存] 找到现有缓存条目，将替换为新的歌词: {}",
-                title_to_save
-            );
+            log::info!("[本地缓存] 找到现有缓存条目，将替换为新的歌词: {title_to_save}");
             // 删除旧的缓存文件
             if let Some(old_filename) = index_guard
                 .get(existing_idx)
@@ -406,7 +403,7 @@ impl UniLyricApp {
             {
                 let old_file_path = cache_dir.join(old_filename);
                 if let Err(e) = std::fs::remove_file(&old_file_path) {
-                    log::warn!("[本地缓存] 删除旧缓存文件 {:?} 失败: {}", old_file_path, e);
+                    log::warn!("[本地缓存] 删除旧缓存文件 {old_file_path:?} 失败: {e}");
                 }
             }
             index_guard[existing_idx] = new_entry.clone(); // 替换现有条目
@@ -426,23 +423,21 @@ impl UniLyricApp {
                     let mut writer = BufWriter::new(file); // 使用带缓冲的写入器
                     if let Ok(json_line) = serde_json::to_string(&new_entry) {
                         // 序列化为 JSON 字符串
-                        if writeln!(writer, "{}", json_line).is_err() {
+                        if writeln!(writer, "{json_line}").is_err() {
                             // 写入并换行
-                            log::error!("[本地缓存] 写入索引条目到 {:?} 失败。", index_file_path);
+                            log::error!("[本地缓存] 写入索引条目到 {index_file_path:?} 失败。");
                         }
                     }
                 }
-                Err(e) => log::error!(
-                    "[本地缓存] 打开或创建本地索引文件 {:?} 失败: {}",
-                    index_file_path,
-                    e
-                ),
+                Err(e) => {
+                    log::error!("[本地缓存] 打开或创建本地索引文件 {index_file_path:?} 失败: {e}")
+                }
             }
         }
 
         // 显示成功提示
         self.toasts.add(Toast {
-            text: format!("歌词已保存: {}", title_to_save).into(),
+            text: format!("歌词已保存: {title_to_save}").into(),
             kind: ToastKind::Success,
             options: ToastOptions::default()
                 .duration_in_seconds(3.0)
@@ -704,7 +699,7 @@ impl UniLyricApp {
             );
         } else if let Some(err_msg) = error_to_report {
             // 如果有错误信息，记录日志
-            log::error!("[Unilyric] AMLL TTML Database 下载错误: {}", err_msg);
+            log::error!("[Unilyric] AMLL TTML Database 下载错误: {err_msg}");
             // 可以在这里添加UI提示，例如通过 self.toasts
         }
 
@@ -749,17 +744,16 @@ impl UniLyricApp {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    log::error!("[Unilyric] QQ音乐下载：创建Tokio运行时失败: {}", e);
+                    log::error!("[Unilyric] QQ音乐下载：创建Tokio运行时失败: {e}");
                     let mut status_lock = state_clone.lock().unwrap();
-                    *status_lock =
-                        QqMusicDownloadState::Error(format!("创建异步运行时失败: {}", e));
+                    *status_lock = QqMusicDownloadState::Error(format!("创建异步运行时失败: {e}"));
                     return;
                 }
             };
 
             // 在 Tokio 运行时中执行异步代码块
             rt.block_on(async {
-                log::info!("[Unilyric] QQ音乐下载：正在获取: '{}'", query);
+                log::info!("[Unilyric] QQ音乐下载：正在获取: '{query}'");
                 // 调用 QQ 音乐歌词获取器的下载函数
                 match qq_lyrics_fetcher::qqlyricsfetcher::download_lyrics_by_query_first_match(
                     &client_clone, // 传递 HTTP 客户端引用
@@ -779,7 +773,7 @@ impl UniLyricApp {
                     }
                     Err(e) => {
                         // 下载失败
-                        log::error!("[Unilyric] QQ音乐歌词下载失败: {}", e);
+                        log::error!("[Unilyric] QQ音乐歌词下载失败: {e}");
                         let mut status_lock = state_clone.lock().unwrap();
                         *status_lock = QqMusicDownloadState::Error(e.to_string()); // 更新状态为错误并附带错误信息
                     }
@@ -824,10 +818,9 @@ impl UniLyricApp {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    log::error!("[Unilyric 网易云下载线程] 创建Tokio运行时失败: {}", e);
+                    log::error!("[Unilyric 网易云下载线程] 创建Tokio运行时失败: {e}");
                     let mut status_lock = download_state_clone.lock().unwrap();
-                    *status_lock =
-                        NeteaseDownloadState::Error(format!("创建异步运行时失败: {}", e));
+                    *status_lock = NeteaseDownloadState::Error(format!("创建异步运行时失败: {e}"));
                     return;
                 }
             };
@@ -848,7 +841,7 @@ impl UniLyricApp {
                                 // 客户端初始化失败
                                 let mut status_lock = download_state_clone.lock().unwrap();
                                 *status_lock =
-                                    NeteaseDownloadState::Error(format!("客户端初始化失败: {}", e));
+                                    NeteaseDownloadState::Error(format!("客户端初始化失败: {e}"));
                                 return;
                             }
                         }
@@ -886,7 +879,7 @@ impl UniLyricApp {
                         }
                         Err(e) => {
                             // 下载失败
-                            log::error!("[Unilyric] 网易云歌词下载失败: {}", e);
+                            log::error!("[Unilyric] 网易云歌词下载失败: {e}");
                             let mut status_lock = download_state_clone.lock().unwrap();
                             *status_lock = NeteaseDownloadState::Error(e.to_string()); // 更新状态为错误并附带错误信息
                         }
@@ -942,10 +935,7 @@ impl UniLyricApp {
             );
         } else if let Some(err_msg) = error_to_report {
             // 如果有错误信息
-            log::error!(
-                "[UniLyricApp] QQ音乐下载失败 (在 handle_completion 中报告): {}",
-                err_msg
-            );
+            log::error!("[UniLyricApp] QQ音乐下载失败 (在 handle_completion 中报告): {err_msg}");
             // 可以在此添加UI提示，例如 self.toasts.add(...)
         }
 
@@ -992,7 +982,7 @@ impl UniLyricApp {
             );
         } else if let Some(err_msg) = error_to_report {
             // 如果有错误信息
-            log::error!("[Unilyric] 酷狗歌词下载失败: {}", err_msg);
+            log::error!("[Unilyric] 酷狗歌词下载失败: {err_msg}");
             // 可以在此添加UI提示
         }
 
@@ -1040,7 +1030,7 @@ impl UniLyricApp {
             );
         } else if let Some(err_msg) = error_to_report {
             // 如果有错误信息
-            log::error!("[Unilyric] 网易云音乐歌词下载失败: {}", err_msg);
+            log::error!("[Unilyric] 网易云音乐歌词下载失败: {err_msg}");
             // 可以在此添加UI提示
         }
 
@@ -1137,10 +1127,7 @@ impl UniLyricApp {
                     for v_str in values_vec_from_settings {
                         if let Err(e) = store.add(display_key_from_settings, v_str.clone()) {
                             log::warn!(
-                                "[UniLyricApp clear_all_data] 从设置重载固定元数据 '{}' (值: '{}') 到Store失败: {}",
-                                display_key_from_settings,
-                                v_str,
-                                e
+                                "[UniLyricApp clear_all_data] 从设置重载固定元数据 '{display_key_from_settings}' (值: '{v_str}') 到Store失败: {e}"
                             );
                         }
                     }
@@ -1491,11 +1478,11 @@ impl UniLyricApp {
                                         }
                                     }
                                     // 如果这个后续段落本身也有翻译，也加入
-                                    if let Some((next_trans_text, _)) = next_para.translation {
-                                        if !next_trans_text.is_empty() {
-                                            collected_additional_translations_for_current_para
-                                                .push(next_trans_text);
-                                        }
+                                    if let Some((next_trans_text, _)) = next_para.translation
+                                        && !next_trans_text.is_empty()
+                                    {
+                                        collected_additional_translations_for_current_para
+                                            .push(next_trans_text);
                                     }
                                 } else {
                                     break; // 起始时间不同，停止合并
@@ -1860,10 +1847,7 @@ impl UniLyricApp {
                         // 遍历该固定键的所有固定值
                         if let Err(e) = store.add(&pinned_display_key, pinned_value_str.clone()) {
                             log::warn!(
-                                "[Unilyric 更新应用状态] 应用设置中的固定元数据 '{}' (值: '{}') 到Store失败: {}",
-                                pinned_display_key,
-                                pinned_value_str,
-                                e
+                                "[Unilyric 更新应用状态] 应用设置中的固定元数据 '{pinned_display_key}' (值: '{pinned_value_str}') 到Store失败: {e}"
                             );
                         }
                     }
@@ -1883,61 +1867,57 @@ impl UniLyricApp {
         } // MetadataStore 锁释放
 
         // 3. 处理从双语LRC主输入中提取的翻译
-        if let Some(bilingual_translations) = data.bilingual_extracted_translations {
-            if !bilingual_translations.is_empty() {
-                log::info!(
-                    "[Unilyric 更新应用状态] 应用从双语LRC主输入中提取的 {} 行翻译。",
-                    bilingual_translations.len()
+        if let Some(bilingual_translations) = data.bilingual_extracted_translations
+            && !bilingual_translations.is_empty()
+        {
+            log::info!(
+                "[Unilyric 更新应用状态] 应用从双语LRC主输入中提取的 {} 行翻译。",
+                bilingual_translations.len()
+            );
+            // 1. 将 Vec<LrcLine> 转换为 Vec<DisplayLrcLine> (用于存储和UI)
+            let display_translations: Vec<DisplayLrcLine> = bilingual_translations
+                .iter()
+                .map(|lrc_line| DisplayLrcLine::Parsed(lrc_line.clone()))
+                .collect();
+
+            // 2. 更新 loaded_translation_lrc (应用内部存储的翻译LRC行)
+            self.loaded_translation_lrc = Some(display_translations);
+
+            // 3. 更新 display_translation_lrc_output (用于UI预览的LRC文本字符串)
+            //    需要重新生成LRC文本，包括可能的元数据头部
+            let mut temp_translation_lrc_output = String::new();
+            //    首先尝试从元数据存储中获取翻译相关的头部信息
+            let header;
+            {
+                // 限制锁的范围
+                let store_guard = self.metadata_store.lock().unwrap();
+                header = self.generate_specific_lrc_header_from_store(
+                    LrcContentType::Translation, // 指定为翻译类型
+                    &store_guard,
                 );
-                // 1. 将 Vec<LrcLine> 转换为 Vec<DisplayLrcLine> (用于存储和UI)
-                let display_translations: Vec<DisplayLrcLine> = bilingual_translations
-                    .iter()
-                    .map(|lrc_line| DisplayLrcLine::Parsed(lrc_line.clone()))
-                    .collect();
+            } // 元数据存储锁释放
+            temp_translation_lrc_output.push_str(&header); // 添加头部
 
-                // 2. 更新 loaded_translation_lrc (应用内部存储的翻译LRC行)
-                self.loaded_translation_lrc = Some(display_translations);
-
-                // 3. 更新 display_translation_lrc_output (用于UI预览的LRC文本字符串)
-                //    需要重新生成LRC文本，包括可能的元数据头部
-                let mut temp_translation_lrc_output = String::new();
-                //    首先尝试从元数据存储中获取翻译相关的头部信息
-                let header;
+            // 添加LRC行
+            for lrc_line in bilingual_translations {
+                let time_str = crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms); // 格式化时间戳
+                if let Err(e) =
+                    writeln!(temp_translation_lrc_output, "{}{}", time_str, lrc_line.text)
+                // 写入行
                 {
-                    // 限制锁的范围
-                    let store_guard = self.metadata_store.lock().unwrap();
-                    header = self.generate_specific_lrc_header_from_store(
-                        LrcContentType::Translation, // 指定为翻译类型
-                        &store_guard,
-                    );
-                } // 元数据存储锁释放
-                temp_translation_lrc_output.push_str(&header); // 添加头部
-
-                // 添加LRC行
-                for lrc_line in bilingual_translations {
-                    let time_str = crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms); // 格式化时间戳
-                    if let Err(e) =
-                        writeln!(temp_translation_lrc_output, "{}{}", time_str, lrc_line.text)
-                    // 写入行
-                    {
-                        log::error!(
-                            "[Unilyric 更新应用状态] 写入双语翻译LRC行到字符串失败: {}",
-                            e
-                        );
-                    }
+                    log::error!("[Unilyric 更新应用状态] 写入双语翻译LRC行到字符串失败: {e}");
                 }
-                // 更新UI预览字符串，确保末尾有换行符（如果非空）
-                self.display_translation_lrc_output =
-                    if temp_translation_lrc_output.trim().is_empty() {
-                        String::new() // 如果内容为空，则设置为空字符串
-                    } else {
-                        temp_translation_lrc_output
-                            .trim_end_matches('\n') // 移除可能的多余尾部换行
-                            .to_string()
-                            + "\n" // 添加一个尾部换行
-                    };
-                log::trace!("[Unilyric 更新应用状态] 双语翻译LRC面板内容已更新。");
             }
+            // 更新UI预览字符串，确保末尾有换行符（如果非空）
+            self.display_translation_lrc_output = if temp_translation_lrc_output.trim().is_empty() {
+                String::new() // 如果内容为空，则设置为空字符串
+            } else {
+                temp_translation_lrc_output
+                    .trim_end_matches('\n') // 移除可能的多余尾部换行
+                    .to_string()
+                    + "\n" // 添加一个尾部换行
+            };
+            log::trace!("[Unilyric 更新应用状态] 双语翻译LRC面板内容已更新。");
         }
 
         // 4. 根据更新后的 MetadataStore 重建UI的可编辑元数据列表
@@ -1972,8 +1952,7 @@ impl UniLyricApp {
                 Err(e) => {
                     // 解析失败
                     log::error!(
-                        "[Unilyric 处理转换] 解析源数据失败: {}. 仍将尝试应用元数据和已加载LRC。",
-                        e
+                        "[Unilyric 处理转换] 解析源数据失败: {e}. 仍将尝试应用元数据和已加载LRC。"
                     );
                     // 清理可能存在的旧解析结果
                     self.parsed_ttml_paragraphs = None;
@@ -1982,7 +1961,7 @@ impl UniLyricApp {
                     self.current_raw_ttml_from_input = None;
                     // 显示错误提示给用户
                     self.toasts.add(egui_toast::Toast {
-                        text: format!("主歌词解析失败: {}", e).into(),
+                        text: format!("主歌词解析失败: {e}").into(),
                         kind: egui_toast::ToastKind::Error,
                         options: egui_toast::ToastOptions::default()
                             .duration_in_seconds(3.0)
@@ -2074,16 +2053,16 @@ impl UniLyricApp {
         }; // 元数据存储锁在此释放
 
         // 如果合并后生成了独立的翻译LRC行，并且当前没有手动加载的翻译LRC，则应用它
-        if let Some(lines) = ind_trans_lrc {
-            if self.loaded_translation_lrc.is_none() {
-                self.loaded_translation_lrc = Some(lines);
-            }
+        if let Some(lines) = ind_trans_lrc
+            && self.loaded_translation_lrc.is_none()
+        {
+            self.loaded_translation_lrc = Some(lines);
         }
         // 如果合并后生成了独立的罗马音LRC行，并且当前没有手动加载的罗马音LRC，则应用它
-        if let Some(lines) = ind_roma_lrc {
-            if self.loaded_romanization_lrc.is_none() {
-                self.loaded_romanization_lrc = Some(lines);
-            }
+        if let Some(lines) = ind_roma_lrc
+            && self.loaded_romanization_lrc.is_none()
+        {
+            self.loaded_romanization_lrc = Some(lines);
         }
 
         if self.loaded_translation_lrc.is_some() || self.loaded_romanization_lrc.is_some() {
@@ -2140,7 +2119,7 @@ impl UniLyricApp {
                 }
             }
             Err(e) => {
-                log::error!("[Side Panel Update] 生成翻译LRC预览失败: {}", e);
+                log::error!("[Side Panel Update] 生成翻译LRC预览失败: {e}");
                 self.display_translation_lrc_output.clear();
             }
         }
@@ -2162,7 +2141,7 @@ impl UniLyricApp {
                 }
             }
             Err(e) => {
-                log::error!("生成罗马音LRC预览失败: {}", e);
+                log::error!("生成罗马音LRC预览失败: {e}");
                 self.display_romanization_lrc_output.clear();
             }
         }
@@ -2206,16 +2185,16 @@ impl UniLyricApp {
             {
                 Ok(r) => r,
                 Err(e) => {
-                    log::error!("[Unilyric 酷狗下载线程] 创建Tokio运行时失败: {}", e);
+                    log::error!("[Unilyric 酷狗下载线程] 创建Tokio运行时失败: {e}");
                     let mut status_lock = state_clone.lock().unwrap();
-                    *status_lock = KrcDownloadState::Error(format!("创建异步运行时失败: {}", e));
+                    *status_lock = KrcDownloadState::Error(format!("创建异步运行时失败: {e}"));
                     return;
                 }
             };
 
             // 在 Tokio 运行时中执行异步代码块
             rt.block_on(async {
-                log::info!("[Unilyric 酷狗下载线程] 正在获取 '{}' 的KRC歌词...", query);
+                log::info!("[Unilyric 酷狗下载线程] 正在获取 '{query}' 的KRC歌词...");
                 // 调用酷狗歌词获取器的下载函数
                 match kugou_lyrics_fetcher::fetch_lyrics_for_song_async(&client_clone, &query).await
                 {
@@ -2231,8 +2210,8 @@ impl UniLyricApp {
                     }
                     Err(e) => {
                         // 下载失败
-                        let error_message = format!("下载失败: {}", e);
-                        log::error!("[Unilyric] 酷狗歌词下载失败: {}", error_message);
+                        let error_message = format!("下载失败: {e}");
+                        log::error!("[Unilyric] 酷狗歌词下载失败: {error_message}");
                         let mut status_lock = state_clone.lock().unwrap();
                         *status_lock = KrcDownloadState::Error(error_message); // 更新状态为错误
                     }
@@ -2282,10 +2261,10 @@ impl UniLyricApp {
         }
 
         // 如果获取到了语言代码，则写入LRC头部
-        if let Some(lang) = lang_to_use {
-            if !lang.is_empty() {
-                let _ = writeln!(header, "[language:{}]", lang.trim()); // 写入 [language:xx]
-            }
+        if let Some(lang) = lang_to_use
+            && !lang.is_empty()
+        {
+            let _ = writeln!(header, "[language:{}]", lang.trim()); // 写入 [language:xx]
         }
 
         // 定义LRC标准标签与规范元数据键的映射关系
@@ -2313,9 +2292,9 @@ impl UniLyricApp {
                         .collect::<Vec<&str>>()
                         .join("/");
                     if !combined_value.is_empty()
-                        && writeln!(header, "[{}:{}]", lrc_tag_name, combined_value).is_err()
+                        && writeln!(header, "[{lrc_tag_name}:{combined_value}]").is_err()
                     {
-                        log::error!("[生成LRC头部] 写入 {} 标签失败。", lrc_tag_name);
+                        log::error!("[生成LRC头部] 写入 {lrc_tag_name} 标签失败。");
                     }
                 }
             }
@@ -2652,10 +2631,7 @@ impl UniLyricApp {
             // .is_none_or() 是 nightly API，稳定版可用 .map_or(true, |h| h.is_finished())
             {
                 log::trace!(
-                    "[UniLyric] 启动进度定时器任务 (条件满足: 连接器启用={}, WebSocket连接={}, 播放中={}).",
-                    connector_enabled,
-                    ws_connected,
-                    is_playing_sensed_by_smtc
+                    "[UniLyric] 启动进度定时器任务 (条件满足: 连接器启用={connector_enabled}, WebSocket连接={ws_connected}, 播放中={is_playing_sensed_by_smtc})."
                 );
                 // 确保在启动新定时器前，任何旧的定时器都已停止
                 self.stop_progress_timer(); // 发送停止信号给可能存在的旧定时器
@@ -2805,8 +2781,7 @@ impl UniLyricApp {
                     }
                 } else {
                     log::warn!(
-                        "[UniLyricApp 加载存储结果] 处理后输出为空，不发送TTML。来源: {:?}",
-                        original_source_enum
+                        "[UniLyricApp 加载存储结果] 处理后输出为空，不发送TTML。来源: {original_source_enum:?}"
                     );
                 }
             }
@@ -2861,13 +2836,12 @@ impl UniLyricApp {
         // 如果用户尝试选择当前已经选中的会话，则不执行任何操作
         if *current_selected_guard == session_id_to_select {
             log::trace!(
-                "[UniLyricApp] 用户尝试选择当前已选中的 SMTC 会话 ({:?})，不执行操作。",
-                session_id_to_select
+                "[UniLyricApp] 用户尝试选择当前已选中的 SMTC 会话 ({session_id_to_select:?})，不执行操作。"
             );
             return;
         }
 
-        log::info!("[UniLyricApp] 切换 SMTC 会话到: {:?}", session_id_to_select);
+        log::info!("[UniLyricApp] 切换 SMTC 会话到: {session_id_to_select:?}");
         *current_selected_guard = session_id_to_select.clone(); // 更新当前选定的会话ID
         drop(current_selected_guard); // 释放锁
 
@@ -2887,13 +2861,11 @@ impl UniLyricApp {
                 .is_err()
             {
                 log::error!(
-                    "[UniLyricApp] 发送 SelectSmtcSession 命令 (ID: {}) 失败。",
-                    command_payload
+                    "[UniLyricApp] 发送 SelectSmtcSession 命令 (ID: {command_payload}) 失败。"
                 );
             } else {
                 log::debug!(
-                    "[UniLyricApp] 已发送 SelectSmtcSession 命令 (ID: {}) 给 worker。",
-                    command_payload
+                    "[UniLyricApp] 已发送 SelectSmtcSession 命令 (ID: {command_payload}) 给 worker。"
                 );
             }
         } else {
@@ -2932,8 +2904,7 @@ impl UniLyricApp {
             {
                 // 使用 try_send 避免阻塞，如果通道已满或关闭则记录警告
                 warn!(
-                    "[UniLyricApp] 发送 PlaybackInfo 到 WebSocket 服务器失败 (通道可能已满或关闭): {}",
-                    e
+                    "[UniLyricApp] 发送 PlaybackInfo 到 WebSocket 服务器失败 (通道可能已满或关闭): {e}"
                 );
             } else {
                 // log::trace!("[UniLyricApp] 已发送 PlaybackInfo 到 WebSocket 服务器。"); // 成功发送，可选日志
@@ -2983,10 +2954,7 @@ impl UniLyricApp {
             // 尝试发送播放信息（包含歌词更新）
             if let Err(e) = tx.try_send(ServerCommand::BroadcastPlaybackInfo(playback_info_payload))
             {
-                warn!(
-                    "[UniLyricApp] 发送歌词更新 (作为PlaybackInfo) 到 WebSocket 服务器失败: {}",
-                    e
-                );
+                warn!("[UniLyricApp] 发送歌词更新 (作为PlaybackInfo) 到 WebSocket 服务器失败: {e}");
             } else {
                 // log::trace!("[UniLyricApp] 已发送歌词更新 (作为PlaybackInfo) 到 WebSocket 服务器。");
             }
@@ -3008,8 +2976,7 @@ impl UniLyricApp {
             // 尝试发送时间更新
             if let Err(e) = tx.try_send(ServerCommand::BroadcastTimeUpdate(time_update_payload)) {
                 warn!(
-                    "[UniLyricApp] 发送 TimeUpdate 到 WebSocket 服务器失败 (通道可能已满或关闭): {}",
-                    e
+                    "[UniLyricApp] 发送 TimeUpdate 到 WebSocket 服务器失败 (通道可能已满或关闭): {e}"
                 );
             } else {
                 // log::trace!("[UniLyricApp] 已发送 TimeUpdate ({:.3}s) 到 WebSocket 服务器。", current_time_ms as f64 / 1000.0);
@@ -3137,8 +3104,7 @@ impl UniLyricApp {
                 .text("expires", "604800");             // 设置过期时间为7天 (604800秒)
 
             log::debug!(
-                "[TTML数据库上传 异步任务] 开始上传到 dpaste.org (URL: {}).",
-                dpaste_api_url
+                "[TTML数据库上传 异步任务] 开始上传到 dpaste.org (URL: {dpaste_api_url})."
             );
 
             // 执行 dpaste.org 上传
@@ -3155,8 +3121,7 @@ impl UniLyricApp {
                         // 请求成功发送
                         let status_code = res.status();
                         log::debug!(
-                            "[TTML数据库上传 异步任务] dpaste.org API 响应状态码: {}",
-                            status_code
+                            "[TTML数据库上传 异步任务] dpaste.org API 响应状态码: {status_code}"
                         );
 
                         if status_code == reqwest::StatusCode::OK { // 如果HTTP状态码为200 OK
@@ -3167,14 +3132,12 @@ impl UniLyricApp {
                                     if base_url.starts_with("http://") || base_url.starts_with("https://") {
                                         // 构建指向 raw 内容的 URL
                                         let raw_paste_url = if base_url.ends_with('/') {
-                                            format!("{}raw", base_url)
+                                            format!("{base_url}raw")
                                         } else {
-                                            format!("{}/raw", base_url)
+                                            format!("{base_url}/raw")
                                         };
                                         log::info!(
-                                            "[TTML数据库上传 异步任务] dpaste.org 上传成功，基础链接: {}, Raw链接: {}",
-                                            base_url,
-                                            raw_paste_url
+                                            "[TTML数据库上传 异步任务] dpaste.org 上传成功，基础链接: {base_url}, Raw链接: {raw_paste_url}"
                                         );
                                         Ok(raw_paste_url) // 返回 raw 内容的 URL
                                     } else {
@@ -3187,10 +3150,9 @@ impl UniLyricApp {
                                 }
                                 Err(e) => {
                                     log::error!(
-                                        "[TTML数据库上传 异步任务] 读取 dpaste.org API 成功响应的 Body 失败: {}",
-                                        e
+                                        "[TTML数据库上传 异步任务] 读取 dpaste.org API 成功响应的 Body 失败: {e}"
                                     );
-                                    Err(format!("读取 dpaste.org API 成功响应的 Body 失败: {}", e))
+                                    Err(format!("读取 dpaste.org API 成功响应的 Body 失败: {e}"))
                                 }
                             }
                         } else { // HTTP状态码非200
@@ -3212,10 +3174,9 @@ impl UniLyricApp {
                     }
                     Err(e) => { // 网络请求本身失败
                         log::error!(
-                            "[TTML数据库上传 异步任务] 发送 dpaste.org API 请求网络错误: {}",
-                            e
+                            "[TTML数据库上传 异步任务] 发送 dpaste.org API 请求网络错误: {e}"
                         );
-                        Err(format!("发送 dpaste.org API 请求网络错误: {}", e))
+                        Err(format!("发送 dpaste.org API 请求网络错误: {e}"))
                     }
                 }
             }
@@ -3226,8 +3187,8 @@ impl UniLyricApp {
                 Ok(paste_url_from_api) => {
                     // dpaste 上传成功，准备 GitHub Issue URL
                     let issue_title_prefix = "[歌词提交] ";
-                    let issue_title_content = format!("{} - {}", artist_for_async, title_for_async);
-                    let final_issue_title_str = format!("{}{}", issue_title_prefix, issue_title_content);
+                    let issue_title_content = format!("{artist_for_async} - {title_for_async}");
+                    let final_issue_title_str = format!("{issue_title_prefix}{issue_title_content}");
                     let issue_title_encoded = urlencoding::encode(&final_issue_title_str).into_owned(); // URL编码标题
 
                     let labels_str = "歌词提交"; // GitHub Issue 标签
@@ -3238,12 +3199,7 @@ impl UniLyricApp {
 
                     // 构建预填表单的 GitHub Issue URL
                     let github_issue_url_to_open = format!(
-                        "https://github.com/{}/{}/issues/new?template=submit-lyric.yml&title={}&labels={}&assignees={}",
-                        ttml_db_repo_owner,
-                        ttml_db_repo_name,
-                        issue_title_encoded,
-                        labels_encoded,
-                        assignees_encoded
+                        "https://github.com/{ttml_db_repo_owner}/{ttml_db_repo_name}/issues/new?template=submit-lyric.yml&title={issue_title_encoded}&labels={labels_encoded}&assignees={assignees_encoded}"
                         // 注意：dpaste_url 需要通过 issue template 的 body 参数传递，
                         // 或者让用户手动粘贴。这里只生成打开 issue 页面的链接。
                         // 如果模板支持通过URL参数预填body，可以添加 &body=...paste_url_from_api...
@@ -3259,9 +3215,9 @@ impl UniLyricApp {
                 }
                 Err(e_msg) => {
                     // dpaste 上传失败
-                    log::error!("[TTML数据库上传 异步任务] dpaste.org 上传流程失败: {}", e_msg);
+                    log::error!("[TTML数据库上传 异步任务] dpaste.org 上传流程失败: {e_msg}");
                     // 发送错误消息给UI线程
-                    if action_sender_clone.send(TtmlDbUploadUserAction::Error(format!("dpaste.org上传失败: {}", e_msg))).is_err() {
+                    if action_sender_clone.send(TtmlDbUploadUserAction::Error(format!("dpaste.org上传失败: {e_msg}"))).is_err() {
                          log::error!("[TTML数据库上传 异步任务] 发送Error消息失败。");
                     }
                 }

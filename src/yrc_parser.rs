@@ -65,9 +65,7 @@ pub fn parse_yrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
         && timestamps_info.is_empty()
     {
         log::warn!(
-            "行 {}: 内容 '{}' 中未找到有效的YRC音节时间戳，但内容非空。",
-            line_num,
-            content_after_line_ts
+            "行 {line_num}: 内容 '{content_after_line_ts}' 中未找到有效的YRC音节时间戳，但内容非空。"
         );
     }
 
@@ -105,11 +103,11 @@ pub fn load_yrc_from_string(
                     yrc_lines_vec.push(parsed_line);
                 }
                 Err(e) => {
-                    log::error!("解析 YRC 行 {} ('{}') 失败: {}", line_num, trimmed_line, e);
+                    log::error!("解析 YRC 行 {line_num} ('{trimmed_line}') 失败: {e}");
                 }
             }
         } else {
-            log::warn!("行 {}: 无法识别的 YRC 行格式: '{}'", line_num, trimmed_line);
+            log::warn!("行 {line_num}: 无法识别的 YRC 行格式: '{trimmed_line}'");
         }
     }
     Ok((yrc_lines_vec, metadata_vec))

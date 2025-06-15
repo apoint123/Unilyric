@@ -121,21 +121,21 @@ pub fn parse_lrc_text_to_lines(content: &str) -> Result<ParsedLrcCollection, Con
         match &parsed_lines_buffer[i] {
             DisplayLrcLine::Parsed(current_lrc_line) => {
                 // 检查下一行是否存在且为 Parsed 类型
-                if i + 1 < parsed_lines_buffer.len() {
-                    if let DisplayLrcLine::Parsed(next_lrc_line) = &parsed_lines_buffer[i + 1] {
-                        // 检查时间戳是否严格相同
-                        if current_lrc_line.timestamp_ms == next_lrc_line.timestamp_ms {
-                            // 认为是双语对
-                            // 第一行作为主歌词
-                            final_main_lines.push(DisplayLrcLine::Parsed(current_lrc_line.clone()));
-                            // 第二行作为翻译提取
-                            extracted_translations.push(LrcLine {
-                                timestamp_ms: next_lrc_line.timestamp_ms,
-                                text: next_lrc_line.text.clone(),
-                            });
-                            i += 2; // 跳过这两行
-                            continue;
-                        }
+                if i + 1 < parsed_lines_buffer.len()
+                    && let DisplayLrcLine::Parsed(next_lrc_line) = &parsed_lines_buffer[i + 1]
+                {
+                    // 检查时间戳是否严格相同
+                    if current_lrc_line.timestamp_ms == next_lrc_line.timestamp_ms {
+                        // 认为是双语对
+                        // 第一行作为主歌词
+                        final_main_lines.push(DisplayLrcLine::Parsed(current_lrc_line.clone()));
+                        // 第二行作为翻译提取
+                        extracted_translations.push(LrcLine {
+                            timestamp_ms: next_lrc_line.timestamp_ms,
+                            text: next_lrc_line.text.clone(),
+                        });
+                        i += 2; // 跳过这两行
+                        continue;
                     }
                 }
                 // 如果不是双语对中的第一行，或者没有匹配的下一行，则作为普通主歌词行

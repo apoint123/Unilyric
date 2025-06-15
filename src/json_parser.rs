@@ -58,13 +58,9 @@ pub fn load_from_string(json_content: &str) -> Result<ParsedJsonDataBundle, Conv
     ) = match ttml_parser::parse_ttml_from_string(ttml_string_from_json_attributes) {
         Ok(result_tuple) => result_tuple,
         Err(e) => {
-            eprintln!(
-                "[JSON Parser] Failed to parse TTML content from JSON: {}",
-                e
-            );
+            eprintln!("[JSON Parser] Failed to parse TTML content from JSON: {e}");
             return Err(ConvertError::Internal(format!(
-                "无法解析JSON中的TTML内容: {}",
-                e
+                "无法解析JSON中的TTML内容: {e}"
             )));
         }
     };

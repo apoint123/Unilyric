@@ -70,7 +70,7 @@ pub fn create_secret_key(length: usize) -> String {
 /// RSA 加密中需要将密钥、指数和模数表示为大整数。
 fn hex_str_to_bigint(hex: &str) -> Result<BigInt> {
     BigInt::from_str_radix(hex, 16) // 以16为基数解析
-        .map_err(|e| NeteaseError::Crypto(format!("无法解析十六进制字符串: {}", e)))
+        .map_err(|e| NeteaseError::Crypto(format!("无法解析十六进制字符串: {e}")))
 }
 
 /// 实现 RSA 加密的核心逻辑。
@@ -97,7 +97,7 @@ pub fn rsa_encode(text: &str, pub_key_hex: &str, modulus_hex: &str) -> Result<St
     // 4. 执行 RSA 加密核心操作: result = a^b mod c
     let result_bigint = a.modpow(&b, &c);
     // 5. 将加密结果大整数转换为十六进制字符串
-    let mut key_hex = format!("{:x}", result_bigint);
+    let mut key_hex = format!("{result_bigint:x}");
 
     // 6. 对结果进行填充或截断，确保长度为256个字符 (对应128字节的 RSA 密钥长度)
     //    如果不足256位，在前面补0；如果超过，则截取低256位 (这部分逻辑可能不完全标准，但符合网易云实现)
@@ -170,7 +170,7 @@ pub fn aes_cbc_encrypt(data_str: &str, key_str: &str, iv_str: &str) -> Result<St
     // 执行带 PKCS7 填充的 AES CBC 加密
     let ciphertext_slice = cipher
         .encrypt_padded_mut::<Pkcs7>(&mut buffer, msg_len) // msg_len 是原始数据长度
-        .map_err(|e| NeteaseError::Crypto(format!("AES CBC 加密失败: {:?}", e)))?;
+        .map_err(|e| NeteaseError::Crypto(format!("AES CBC 加密失败: {e:?}")))?;
 
     // 将加密后的字节数据转换为大写的十六进制字符串
     Ok(hex::encode_upper(ciphertext_slice))
@@ -209,7 +209,7 @@ pub fn aes_ecb_encrypt_eapi(data_bytes: &[u8], key_bytes: &[u8]) -> Result<Strin
     // 执行带 PKCS7 填充的 AES ECB 加密
     let ciphertext_slice = cipher
         .encrypt_padded_mut::<Pkcs7>(&mut buffer, msg_len)
-        .map_err(|e| NeteaseError::Crypto(format!("AES ECB 加密失败: {:?}", e)))?;
+        .map_err(|e| NeteaseError::Crypto(format!("AES ECB 加密失败: {e:?}")))?;
 
     Ok(hex::encode_upper(ciphertext_slice))
 }
@@ -227,14 +227,14 @@ pub fn prepare_eapi_params<T: serde::Serialize>(url_path: &str, params_obj: &T) 
     // 1. 将原始请求参数对象序列化为 JSON 字符串
     let text = serde_json::to_string(params_obj)?;
     // 2. 构造特定格式的消息字符串
-    let message = format!("nobody{}use{}md5forencrypt", url_path, text);
+    let message = format!("nobody{url_path}use{text}md5forencrypt");
     // 3. 计算该消息字符串的 MD5 哈希
     let mut md5_hasher = Md5Hasher::new_with_prefix(""); // 初始化 MD5 哈希器
     md5_hasher.update(message.as_bytes()); // 更新哈希内容
     let digest = format!("{:x}", md5_hasher.finalize()); // 获取十六进制的 MD5摘要
 
     // 4. 构造一个新的待加密字符串，格式为：url_path + "-36cd479b6b5-" + json_payload + "-36cd479b6b5-" + md5_digest
-    let data_to_encrypt_str = format!("{}-36cd479b6b5-{}-36cd479b6b5-{}", url_path, text, digest);
+    let data_to_encrypt_str = format!("{url_path}-36cd479b6b5-{text}-36cd479b6b5-{digest}");
 
     // 5. 使用固定的 EAPI_KEY_STR 对构造的字符串进行 AES ECB 加密
     aes_ecb_encrypt_eapi(data_to_encrypt_str.as_bytes(), EAPI_KEY_STR.as_bytes())

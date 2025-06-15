@@ -8,14 +8,14 @@ use quick_xml::escape::escape;
 use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::writer::Writer;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Cursor, Error as IoError, ErrorKind as IoErrorKind};
+use std::io::{self, Cursor, Error as IoError};
 
 // --- 辅助函数区 ---
 
 /// 辅助函数: 将 quick_xml 库的错误转换为标准的 IO 错误。
 /// 这在 quick_xml 的写入器（Writer）的闭包中非常有用，因为这些闭包要求返回 `io::Result`。
 fn map_xml_error_to_io(e: quick_xml::Error) -> IoError {
-    IoError::new(IoErrorKind::Other, e)
+    IoError::other(e)
 }
 
 /// 辅助函数: 格式化毫秒时间为 TTML 标准的时间字符串。
@@ -31,11 +31,11 @@ fn format_ttml_time(ms: u64) -> String {
     let fr = ms % 1000;
 
     if h > 0 {
-        format!("{}:{:02}:{:02}.{:03}", h, m, s, fr)
+        format!("{h}:{m:02}:{s:02}.{fr:03}")
     } else if m > 0 {
-        format!("{}:{:02}.{:03}", m, s, fr)
+        format!("{m}:{s:02}.{fr:03}")
     } else {
-        format!("{}.{:03}", s, fr)
+        format!("{s}.{fr:03}")
     }
 }
 
@@ -59,15 +59,15 @@ fn write_optional_span(
             .with_attribute(("ttm:role", role));
 
         // 如果提供了语言代码，则添加 xml:lang 属性
-        if let Some(lang_code) = lang {
-            if !lang_code.is_empty() {
-                span_builder = span_builder.with_attribute(("xml:lang", lang_code));
-            }
+        if let Some(lang_code) = lang
+            && !lang_code.is_empty()
+        {
+            span_builder = span_builder.with_attribute(("xml:lang", lang_code));
         }
 
         span_builder
             .write_text_content(BytesText::from_escaped(escape(text).as_ref()))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+            .map_err(std::io::Error::other)?;
     }
 
     Ok(())
@@ -194,11 +194,11 @@ fn write_ttml_p_from_ass_lines(
                                         let mut text_bg = clean_parentheses_from_bg_text(&syl.text);
                                         if !text_bg.is_empty() {
                                             if num_s == 1 {
-                                                text_bg = format!("({})", text_bg);
+                                                text_bg = format!("({text_bg})");
                                             } else if idx == 0 {
-                                                text_bg = format!("({}", text_bg);
+                                                text_bg = format!("({text_bg}");
                                             } else if idx == num_s - 1 {
-                                                text_bg = format!("{})", text_bg);
+                                                text_bg = format!("{text_bg})");
                                             }
                                         }
                                         bg_content_writer
@@ -221,31 +221,31 @@ fn write_ttml_p_from_ass_lines(
                                         }
                                     }
                                 }
-                                if let Some((lang_opt, text_val)) = bg_translation {
-                                    if !text_val.is_empty() {
-                                        let mut trans_span = bg_content_writer
-                                            .create_element("span")
-                                            .with_attribute(("ttm:role", "x-translation"));
-                                        if let Some(lang) = lang_opt {
-                                            if !lang.is_empty() {
-                                                trans_span = trans_span
-                                                    .with_attribute(("xml:lang", lang.as_str()));
-                                            }
-                                        }
-                                        trans_span.write_text_content(BytesText::from_escaped(
-                                            escape(text_val).as_ref(),
-                                        ))?;
+                                if let Some((lang_opt, text_val)) = bg_translation
+                                    && !text_val.is_empty()
+                                {
+                                    let mut trans_span = bg_content_writer
+                                        .create_element("span")
+                                        .with_attribute(("ttm:role", "x-translation"));
+                                    if let Some(lang) = lang_opt
+                                        && !lang.is_empty()
+                                    {
+                                        trans_span =
+                                            trans_span.with_attribute(("xml:lang", lang.as_str()));
                                     }
+                                    trans_span.write_text_content(BytesText::from_escaped(
+                                        escape(text_val).as_ref(),
+                                    ))?;
                                 }
-                                if let Some(roma_text) = bg_romanization {
-                                    if !roma_text.is_empty() {
-                                        bg_content_writer
-                                            .create_element("span")
-                                            .with_attribute(("ttm:role", "x-roman"))
-                                            .write_text_content(BytesText::from_escaped(
-                                                escape(roma_text).as_ref(),
-                                            ))?;
-                                    }
+                                if let Some(roma_text) = bg_romanization
+                                    && !roma_text.is_empty()
+                                {
+                                    bg_content_writer
+                                        .create_element("span")
+                                        .with_attribute(("ttm:role", "x-roman"))
+                                        .write_text_content(BytesText::from_escaped(
+                                            escape(roma_text).as_ref(),
+                                        ))?;
                                 }
                                 Ok(())
                             })?;
@@ -299,10 +299,10 @@ fn write_ttml_div_from_ass_lines(
         ("begin", div_begin_str.as_str()),
         ("end", div_end_str.as_str()),
     ];
-    if let Some(part) = song_part {
-        if !part.is_empty() {
-            div_attributes.push(("itunes:song-part", part.as_str()));
-        }
+    if let Some(part) = song_part
+        && !part.is_empty()
+    {
+        div_attributes.push(("itunes:song-part", part.as_str()));
     }
 
     writer
@@ -490,10 +490,10 @@ pub fn generate_intermediate_ttml_from_ass(
     );
     tt_attributes_map.insert("itunes:timing", "Word".to_string());
 
-    if let Some(lang_code_val) = temp_store.get_single_value(&CanonicalMetadataKey::Language) {
-        if !lang_code_val.is_empty() {
-            tt_attributes_map.insert("xml:lang", lang_code_val.clone());
-        }
+    if let Some(lang_code_val) = temp_store.get_single_value(&CanonicalMetadataKey::Language)
+        && !lang_code_val.is_empty()
+    {
+        tt_attributes_map.insert("xml:lang", lang_code_val.clone());
     }
     let amll_keys = [
         CanonicalMetadataKey::Album,
@@ -629,7 +629,7 @@ pub fn generate_intermediate_ttml_from_ass(
     writer.write_event(Event::End(BytesEnd::new("tt")))?; // 结束 <tt> 标签
     // 将字节缓冲区转换为 UTF-8 字符串
     String::from_utf8(buffer)
-        .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {}", e)))
+        .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {e}")))
 }
 
 // --- 从 TtmlParagraph (内部标准格式) 生成 TTML 的相关函数 ---
@@ -669,10 +669,10 @@ pub fn generate_ttml_from_paragraphs(
     );
     tt_attributes_map.insert("itunes:timing", output_timing_mode.to_string());
 
-    if let Some(lang_code_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Language) {
-        if !lang_code_val.is_empty() {
-            tt_attributes_map.insert("xml:lang", lang_code_val.clone());
-        }
+    if let Some(lang_code_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Language)
+        && !lang_code_val.is_empty()
+    {
+        tt_attributes_map.insert("xml:lang", lang_code_val.clone());
     }
     let amll_keys = [
         CanonicalMetadataKey::Album,
@@ -856,7 +856,7 @@ pub fn generate_ttml_from_paragraphs(
 
     writer.write_event(Event::End(BytesEnd::new("tt")))?;
     String::from_utf8(buffer)
-        .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {}", e)))
+        .map_err(|e| ConvertError::Internal(format!("TTML 缓冲区转 UTF-8 失败: {e}")))
 }
 
 /// 内部辅助函数: 将 TtmlParagraph 列表写入为 TTML 的 div 和 p 结构。
@@ -903,10 +903,10 @@ fn write_ttml_div_from_paragraphs_internal(
         ("begin", div_begin_str.as_str()),
         ("end", div_end_str.as_str()),
     ];
-    if let Some(part_str) = song_part {
-        if !part_str.is_empty() {
-            div_attributes.push(("itunes:song-part", part_str.as_str()));
-        }
+    if let Some(part_str) = song_part
+        && !part_str.is_empty()
+    {
+        div_attributes.push(("itunes:song-part", part_str.as_str()));
     }
 
     // 写入 <div> 标签
@@ -1025,16 +1025,14 @@ fn write_ttml_div_from_paragraphs_internal(
                                                                 );
                                                             if !text_bg_val.is_empty() {
                                                                 if num_s == 1 {
-                                                                    text_bg_val = format!(
-                                                                        "({})",
-                                                                        text_bg_val
-                                                                    );
+                                                                    text_bg_val =
+                                                                        format!("({text_bg_val})");
                                                                 } else if idx == 0 {
                                                                     text_bg_val =
-                                                                        format!("({}", text_bg_val);
+                                                                        format!("({text_bg_val}");
                                                                 } else if idx == num_s - 1 {
                                                                     text_bg_val =
-                                                                        format!("{})", text_bg_val);
+                                                                        format!("{text_bg_val})");
                                                                 }
                                                             }
                                                         }
@@ -1075,72 +1073,70 @@ fn write_ttml_div_from_paragraphs_internal(
                                                 }
                                                 if let Some((text_val, lang_opt)) =
                                                     &bg_sec.translation
+                                                    && !text_val.is_empty()
                                                 {
-                                                    if !text_val.is_empty() {
-                                                        let mut ts_builder = bg_syls_writer
-                                                            .create_element("span")
-                                                            .with_attribute((
-                                                                "ttm:role",
-                                                                "x-translation",
-                                                            ));
-                                                        if let Some(lang) = lang_opt {
-                                                            if !lang.is_empty() {
-                                                                ts_builder = ts_builder
-                                                                    .with_attribute((
-                                                                        "xml:lang",
-                                                                        lang.as_str(),
-                                                                    ));
-                                                            }
-                                                        }
-                                                        ts_builder.write_text_content(
+                                                    let mut ts_builder = bg_syls_writer
+                                                        .create_element("span")
+                                                        .with_attribute((
+                                                            "ttm:role",
+                                                            "x-translation",
+                                                        ));
+                                                    if let Some(lang) = lang_opt
+                                                        && !lang.is_empty()
+                                                    {
+                                                        ts_builder = ts_builder.with_attribute((
+                                                            "xml:lang",
+                                                            lang.as_str(),
+                                                        ));
+                                                    }
+                                                    ts_builder.write_text_content(
+                                                        BytesText::from_escaped(
+                                                            escape(text_val).as_ref(),
+                                                        ),
+                                                    )?;
+                                                }
+                                                if let Some(text_val) = &bg_sec.romanization
+                                                    && !text_val.is_empty()
+                                                {
+                                                    bg_syls_writer
+                                                        .create_element("span")
+                                                        .with_attribute(("ttm:role", "x-roman"))
+                                                        .write_text_content(
                                                             BytesText::from_escaped(
                                                                 escape(text_val).as_ref(),
                                                             ),
                                                         )?;
-                                                    }
-                                                }
-                                                if let Some(text_val) = &bg_sec.romanization {
-                                                    if !text_val.is_empty() {
-                                                        bg_syls_writer
-                                                            .create_element("span")
-                                                            .with_attribute(("ttm:role", "x-roman"))
-                                                            .write_text_content(
-                                                                BytesText::from_escaped(
-                                                                    escape(text_val).as_ref(),
-                                                                ),
-                                                            )?;
-                                                    }
                                                 }
                                                 Ok(())
                                             },
                                         )?;
                                 }
                             }
-                            if let Some((text_val, lang_opt)) = &para.translation {
-                                if !text_val.is_empty() {
-                                    let mut ts_builder = p_content_writer_inner
-                                        .create_element("span")
-                                        .with_attribute(("ttm:role", "x-translation"));
-                                    if let Some(lang) = lang_opt {
-                                        if !lang.is_empty() {
-                                            ts_builder = ts_builder
-                                                .with_attribute(("xml:lang", lang.as_str()));
-                                        }
-                                    }
-                                    ts_builder.write_text_content(BytesText::from_escaped(
+                            if let Some((text_val, lang_opt)) = &para.translation
+                                && !text_val.is_empty()
+                            {
+                                let mut ts_builder = p_content_writer_inner
+                                    .create_element("span")
+                                    .with_attribute(("ttm:role", "x-translation"));
+                                if let Some(lang) = lang_opt
+                                    && !lang.is_empty()
+                                {
+                                    ts_builder =
+                                        ts_builder.with_attribute(("xml:lang", lang.as_str()));
+                                }
+                                ts_builder.write_text_content(BytesText::from_escaped(
+                                    escape(text_val).as_ref(),
+                                ))?;
+                            }
+                            if let Some(text_val) = &para.romanization
+                                && !text_val.is_empty()
+                            {
+                                p_content_writer_inner
+                                    .create_element("span")
+                                    .with_attribute(("ttm:role", "x-roman"))
+                                    .write_text_content(BytesText::from_escaped(
                                         escape(text_val).as_ref(),
                                     ))?;
-                                }
-                            }
-                            if let Some(text_val) = &para.romanization {
-                                if !text_val.is_empty() {
-                                    p_content_writer_inner
-                                        .create_element("span")
-                                        .with_attribute(("ttm:role", "x-roman"))
-                                        .write_text_content(BytesText::from_escaped(
-                                            escape(text_val).as_ref(),
-                                        ))?;
-                                }
                             }
                         }
                         Ok(())
@@ -1179,11 +1175,11 @@ pub fn generate_line_timed_ttml_from_paragraphs(
     );
     tt_attributes_map.insert("itunes:timing", "Line".to_string());
 
-    if let Some(lang_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Language) {
-        if !lang_val.is_empty() {
-            let lang_to_use = lang_val.clone();
-            tt_attributes_map.insert("xml:lang", lang_to_use);
-        }
+    if let Some(lang_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Language)
+        && !lang_val.is_empty()
+    {
+        let lang_to_use = lang_val.clone();
+        tt_attributes_map.insert("xml:lang", lang_to_use);
     }
 
     let amll_keys = [
@@ -1224,12 +1220,12 @@ pub fn generate_line_timed_ttml_from_paragraphs(
     writer.write_event(Event::Empty(agent_tag))?;
 
     // (可选) 写入其他从元数据转换来的标准TTML元数据
-    if let Some(title) = metadata_store.get_single_value(&CanonicalMetadataKey::Title) {
-        if !title.is_empty() {
-            writer
-                .create_element("ttm:title")
-                .write_text_content(BytesText::from_escaped(escape(title).as_ref()))?;
-        }
+    if let Some(title) = metadata_store.get_single_value(&CanonicalMetadataKey::Title)
+        && !title.is_empty()
+    {
+        writer
+            .create_element("ttm:title")
+            .write_text_content(BytesText::from_escaped(escape(title).as_ref()))?;
     }
 
     writer.write_event(Event::End(BytesEnd::new("metadata")))?;
@@ -1270,11 +1266,10 @@ pub fn generate_line_timed_ttml_from_paragraphs(
                     ("begin", div_begin_str.as_str()),
                     ("end", div_end_str.as_str()),
                 ];
-                if let Some(song_part_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Custom("songPart".to_string())) {
-                     if !song_part_val.is_empty() {
+                if let Some(song_part_val) = metadata_store.get_single_value(&CanonicalMetadataKey::Custom("songPart".to_string()))
+                     && !song_part_val.is_empty() {
                         div_attributes.push(("itunes:songPart", song_part_val.as_str()));
                      }
-                }
 
                 body_writer
                     .create_element("div")
@@ -1285,7 +1280,7 @@ pub fn generate_line_timed_ttml_from_paragraphs(
                             line_key_counter += 1;
                             let p_start_str = format_ttml_time(para_to_render.p_start_ms);
                             let p_end_str = format_ttml_time(para_to_render.p_end_ms); // 使用段落自身的结束时间
-                            let key_val = format!("L{}", line_key_counter);
+                            let key_val = format!("L{line_key_counter}");
 
                             let p_attributes = vec![
                                 ("begin", p_start_str.as_str()),
@@ -1299,34 +1294,30 @@ pub fn generate_line_timed_ttml_from_paragraphs(
                                 .with_attributes(p_attributes)
                                 .write_inner_content(|p_writer: &mut Writer<Cursor<&mut Vec<u8>>>| -> Result<(), std::io::Error> {
                                     // 主文本 (假设LRC行只有一个音节代表整行)
-                                    if let Some(main_syl) = para_to_render.main_syllables.first() {
-                                        if !main_syl.text.trim().is_empty() {
+                                    if let Some(main_syl) = para_to_render.main_syllables.first()
+                                        && !main_syl.text.trim().is_empty() {
                                              p_writer.write_event(Event::Text(BytesText::from_escaped(escape(&main_syl.text).as_ref())))?;
                                         }
-                                    }
 
                                     // 写入翻译
-                                    if let Some((trans_text, trans_lang_opt)) = &para_to_render.translation {
-                                        if !trans_text.is_empty() {
+                                    if let Some((trans_text, trans_lang_opt)) = &para_to_render.translation
+                                        && !trans_text.is_empty() {
                                             let mut trans_span = p_writer.create_element("span")
                                                 .with_attribute(("ttm:role", "x-translation"));
-                                            if let Some(lang) = trans_lang_opt {
-                                                if !lang.is_empty() {
+                                            if let Some(lang) = trans_lang_opt
+                                                && !lang.is_empty() {
                                                     trans_span = trans_span.with_attribute(("xml:lang", lang.as_str()));
                                                 }
-                                            }
                                             trans_span.write_text_content(BytesText::from_escaped(escape(trans_text).as_ref()))?;
                                         }
-                                    }
 
                                     // 写入罗马音
-                                    if let Some(roma_text) = &para_to_render.romanization {
-                                        if !roma_text.is_empty() {
+                                    if let Some(roma_text) = &para_to_render.romanization
+                                        && !roma_text.is_empty() {
                                             p_writer.create_element("span")
                                                 .with_attribute(("ttm:role", "x-roman"))
                                                 .write_text_content(BytesText::from_escaped(escape(roma_text).as_ref()))?;
                                         }
-                                    }
                                     Ok(())
                                 })?;
                         }

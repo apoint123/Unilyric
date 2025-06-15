@@ -40,10 +40,9 @@ const REPO_BRANCH: &str = "main";
 pub async fn fetch_remote_index_head(client: &Client) -> Result<String, ConvertError> {
     // 构建获取指定文件最新 commit 信息的 GitHub API URL
     let url = format!(
-        "{}/repos/{}/{}/commits?path={}&sha={}&per_page=1", // per_page=1 表示只获取最新的一个 commit
-        GITHUB_API_BASE_URL, REPO_OWNER, REPO_NAME, INDEX_FILE_PATH_IN_REPO, REPO_BRANCH
+        "{GITHUB_API_BASE_URL}/repos/{REPO_OWNER}/{REPO_NAME}/commits?path={INDEX_FILE_PATH_IN_REPO}&sha={REPO_BRANCH}&per_page=1"
     );
-    log::info!("[AMLLFetcher] 正在获取索引文件的 HEAD commit SHA: {}", url);
+    log::info!("[AMLLFetcher] 正在获取索引文件的 HEAD commit SHA: {url}");
 
     // 发送 GET 请求
     let response = client
@@ -56,7 +55,7 @@ pub async fn fetch_remote_index_head(client: &Client) -> Result<String, ConvertE
     // 检查响应状态码
     if !response.status().is_success() {
         let err_msg = format!("获取远程索引 HEAD 失败，HTTP 状态码: {}", response.status());
-        log::error!("[AMLLFetcher] {}", err_msg);
+        log::error!("[AMLLFetcher] {err_msg}");
         // 当状态码表示失败时，response.error_for_status() 会返回 Err(reqwest::Error)
         // 我们使用 unwrap_err() 来获取这个 Error
         return Err(ConvertError::NetworkRequest(
@@ -75,7 +74,7 @@ pub async fn fetch_remote_index_head(client: &Client) -> Result<String, ConvertE
         Ok(latest_commit.sha.clone())
     } else {
         let err_msg = "未找到索引文件的 commit 信息。".to_string();
-        log::error!("[AMLLFetcher] {}", err_msg);
+        log::error!("[AMLLFetcher] {err_msg}");
         Err(ConvertError::Internal(err_msg)) // 内部逻辑错误或 API 返回了非预期的空数据
     }
 }
@@ -97,51 +96,34 @@ fn save_index_to_cache(
     current_head_sha: &str,
 ) -> Result<(), ConvertError> {
     log::info!(
-        "[AMLLFetcher] 准备将索引保存到缓存文件: {:?} (HEAD SHA: {})",
-        cache_file_path,
-        current_head_sha
+        "[AMLLFetcher] 准备将索引保存到缓存文件: {cache_file_path:?} (HEAD SHA: {current_head_sha})"
     );
     // 确保缓存文件所在的父目录存在，如果不存在则创建
     if let Some(parent_dir) = cache_file_path.parent() {
         fs::create_dir_all(parent_dir).map_err(|e| {
-            log::error!("[AMLLFetcher] 创建缓存目录 {:?} 失败: {}", parent_dir, e);
+            log::error!("[AMLLFetcher] 创建缓存目录 {parent_dir:?} 失败: {e}");
             ConvertError::Io(e) // 将 std::io::Error 转换为 ConvertError::Io
         })?;
     }
 
     // 创建或覆盖索引缓存文件并写入内容
     let mut file = File::create(cache_file_path).map_err(|e| {
-        log::error!(
-            "[AMLLFetcher] 创建索引缓存文件 {:?} 失败: {}",
-            cache_file_path,
-            e
-        );
+        log::error!("[AMLLFetcher] 创建索引缓存文件 {cache_file_path:?} 失败: {e}");
         ConvertError::Io(e)
     })?;
     file.write_all(index_content.as_bytes()).map_err(|e| {
-        log::error!(
-            "[AMLLFetcher] 写入索引内容到缓存文件 {:?} 失败: {}",
-            cache_file_path,
-            e
-        );
+        log::error!("[AMLLFetcher] 写入索引内容到缓存文件 {cache_file_path:?} 失败: {e}");
         ConvertError::Io(e)
     })?;
-    log::info!("[AMLLFetcher] 索引已保存到文件: {:?}", cache_file_path);
+    log::info!("[AMLLFetcher] 索引已保存到文件: {cache_file_path:?}");
 
     // 创建或覆盖 .head 文件并写入当前的 HEAD SHA
     let head_file_path = cache_file_path.with_extension("jsonl.head");
     fs::write(&head_file_path, current_head_sha).map_err(|e| {
-        log::error!(
-            "[AMLLFetcher] 写入 HEAD SHA 到文件 {:?} 失败: {}",
-            head_file_path,
-            e
-        );
+        log::error!("[AMLLFetcher] 写入 HEAD SHA 到文件 {head_file_path:?} 失败: {e}");
         ConvertError::Io(e)
     })?;
-    log::info!(
-        "[AMLLFetcher] HEAD SHA 已成功保存到文件: {:?}",
-        head_file_path
-    );
+    log::info!("[AMLLFetcher] HEAD SHA 已成功保存到文件: {head_file_path:?}");
 
     Ok(())
 }
@@ -168,36 +150,24 @@ pub fn load_cached_index_head(cache_file_path: &Path) -> Result<Option<String>, 
                 if !trimmed_head.is_empty() {
                     // 如果内容不为空
                     log::info!(
-                        "[AMLLFetcher] 从缓存文件 {:?} 加载到 HEAD SHA: {}",
-                        head_file_path,
-                        trimmed_head
+                        "[AMLLFetcher] 从缓存文件 {head_file_path:?} 加载到 HEAD SHA: {trimmed_head}"
                     );
                     Ok(Some(trimmed_head.to_string()))
                 } else {
                     // 文件存在但内容为空
-                    log::warn!(
-                        "[AMLLFetcher] 缓存的 HEAD SHA 文件 {:?} 内容为空。",
-                        head_file_path
-                    );
+                    log::warn!("[AMLLFetcher] 缓存的 HEAD SHA 文件 {head_file_path:?} 内容为空。");
                     Ok(None)
                 }
             }
             Err(e) => {
                 // 读取文件失败
-                log::error!(
-                    "[AMLLFetcher] 读取缓存的 HEAD SHA 文件 {:?} 失败: {}",
-                    head_file_path,
-                    e
-                );
+                log::error!("[AMLLFetcher] 读取缓存的 HEAD SHA 文件 {head_file_path:?} 失败: {e}");
                 Err(e)
             }
         }
     } else {
         // .head 文件不存在
-        log::info!(
-            "[AMLLFetcher] 缓存的 HEAD SHA 文件 {:?} 未找到。",
-            head_file_path
-        );
+        log::info!("[AMLLFetcher] 缓存的 HEAD SHA 文件 {head_file_path:?} 未找到。");
         Ok(None)
     }
 }
@@ -213,7 +183,7 @@ pub fn load_cached_index_head(cache_file_path: &Path) -> Result<Option<String>, 
 pub fn load_index_from_cache(cache_file_path: &Path) -> Result<Vec<AmllIndexEntry>, ConvertError> {
     if !cache_file_path.exists() {
         // 检查缓存文件是否存在
-        log::info!("[AMLLFetcher] 索引缓存文件 {:?} 不存在。", cache_file_path);
+        log::info!("[AMLLFetcher] 索引缓存文件 {cache_file_path:?} 不存在。");
         // 返回特定的 NotFound 错误
         return Err(ConvertError::Io(io::Error::new(
             io::ErrorKind::NotFound,
@@ -223,11 +193,7 @@ pub fn load_index_from_cache(cache_file_path: &Path) -> Result<Vec<AmllIndexEntr
 
     // 打开缓存文件
     let file = File::open(cache_file_path).map_err(|e| {
-        log::error!(
-            "[AMLLFetcher] 打开索引缓存文件 {:?} 失败: {}",
-            cache_file_path,
-            e
-        );
+        log::error!("[AMLLFetcher] 打开索引缓存文件 {cache_file_path:?} 失败: {e}");
         ConvertError::Io(e)
     })?;
 
@@ -274,14 +240,10 @@ pub fn load_index_from_cache(cache_file_path: &Path) -> Result<Vec<AmllIndexEntr
     {
         // 文件非空，但没有解析出任何条目，这可能表明文件格式有问题
         log::error!(
-            "[AMLLFetcher] 从缓存文件 {:?} 加载的索引为空，但文件本身非空。请检查文件格式。",
-            cache_file_path
+            "[AMLLFetcher] 从缓存文件 {cache_file_path:?} 加载的索引为空，但文件本身非空。请检查文件格式。"
         );
     } else if entries.is_empty() {
-        log::warn!(
-            "[AMLLFetcher] 从缓存文件 {:?} 加载的索引为空。",
-            cache_file_path
-        );
+        log::warn!("[AMLLFetcher] 从缓存文件 {cache_file_path:?} 加载的索引为空。");
     }
 
     log::info!(
@@ -309,19 +271,19 @@ pub async fn download_and_parse_index(
     remote_head_sha: String, // 传入期望保存的远程 HEAD SHA
 ) -> Result<Vec<AmllIndexEntry>, ConvertError> {
     // 构建索引文件的直接下载 URL
-    let index_url = format!("{}/{}", repo_base_url, INDEX_FILE_PATH_IN_REPO); // INDEX_FILE_PATH_IN_REPO 是 "metadata/raw-lyrics-index.jsonl"
-    log::info!("[AMLLFetcher] 开始下载索引文件: {}", index_url);
+    let index_url = format!("{repo_base_url}/{INDEX_FILE_PATH_IN_REPO}"); // INDEX_FILE_PATH_IN_REPO 是 "metadata/raw-lyrics-index.jsonl"
+    log::info!("[AMLLFetcher] 开始下载索引文件: {index_url}");
 
     // 发送 GET 请求下载文件内容
     let response = client.get(&index_url).send().await.map_err(|e| {
-        log::error!("[AMLLFetcher] 下载索引文件时发生网络请求错误: {}", e);
+        log::error!("[AMLLFetcher] 下载索引文件时发生网络请求错误: {e}");
         ConvertError::NetworkRequest(e)
     })?;
 
     // 检查 HTTP 状态码
     if !response.status().is_success() {
         let err_msg = format!("下载索引文件失败，HTTP 状态码: {}", response.status());
-        log::error!("[AMLLFetcher] {}", err_msg);
+        log::error!("[AMLLFetcher] {err_msg}");
         return Err(ConvertError::NetworkRequest(
             response.error_for_status().unwrap_err(),
         ));
@@ -329,7 +291,7 @@ pub async fn download_and_parse_index(
 
     // 读取响应体文本内容
     let response_text = response.text().await.map_err(|e| {
-        log::error!("[AMLLFetcher] 读取索引文件响应体为文本时出错: {}", e);
+        log::error!("[AMLLFetcher] 读取索引文件响应体为文本时出错: {e}");
         ConvertError::NetworkRequest(e)
     })?;
 
@@ -338,8 +300,7 @@ pub async fn download_and_parse_index(
     // 将下载的索引内容和当前的远程 HEAD SHA 保存到缓存
     if let Err(e) = save_index_to_cache(cache_file_path, &response_text, &remote_head_sha) {
         log::warn!(
-            "[AMLLFetcher] 保存下载的索引文件到本地缓存失败: {}。后续操作将使用内存中的数据。",
-            e
+            "[AMLLFetcher] 保存下载的索引文件到本地缓存失败: {e}。后续操作将使用内存中的数据。"
         );
         // 即使保存缓存失败，仍然尝试解析并返回内存中的数据
     }
@@ -462,11 +423,11 @@ pub async fn download_ttml_from_entry(
         "raw-lyrics",
         index_entry.raw_lyric_file // raw_lyric_file 字段存储文件名
     );
-    log::info!("[AMLLFetcher] 开始下载 TTML 歌词文件: {}", ttml_file_url);
+    log::info!("[AMLLFetcher] 开始下载 TTML 歌词文件: {ttml_file_url}");
 
     // 发送 GET 请求下载文件
     let response = client.get(&ttml_file_url).send().await.map_err(|e| {
-        log::error!("[AMLLFetcher] 下载 TTML 文件时发生网络请求错误: {}", e);
+        log::error!("[AMLLFetcher] 下载 TTML 文件时发生网络请求错误: {e}");
         ConvertError::NetworkRequest(e)
     })?;
 
@@ -477,7 +438,7 @@ pub async fn download_ttml_from_entry(
             index_entry.raw_lyric_file,
             response.status()
         );
-        log::error!("[AMLLFetcher] {}", err_msg);
+        log::error!("[AMLLFetcher] {err_msg}");
         return Err(ConvertError::NetworkRequest(
             response.error_for_status().unwrap_err(),
         ));

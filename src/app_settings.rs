@@ -406,11 +406,11 @@ impl AppSettings {
     pub fn config_dir() -> Option<PathBuf> {
         if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
             let config_dir = proj_dirs.data_local_dir();
-            if !config_dir.exists() {
-                if let Err(e) = fs::create_dir_all(config_dir) {
-                    log::error!("无法创建配置目录 {:?}: {}", config_dir, e);
-                    return None;
-                }
+            if !config_dir.exists()
+                && let Err(e) = fs::create_dir_all(config_dir)
+            {
+                log::error!("无法创建配置目录 {config_dir:?}: {e}");
+                return None;
             }
             Some(config_dir.to_path_buf())
         } else {
@@ -426,7 +426,7 @@ impl AppSettings {
     pub fn load() -> Self {
         if let Some(path) = Self::config_file_path() {
             if path.exists() {
-                log::info!("[Settings] 尝试从 {:?} 加载配置文件。", path);
+                log::info!("[Settings] 尝试从 {path:?} 加载配置文件。");
                 match Ini::load_from_file(&path) {
                     Ok(conf) => {
                         // --- 初始化默认值，用于 fallback ---
@@ -704,33 +704,23 @@ impl AppSettings {
                         return final_settings;
                     }
                     Err(e) => {
-                        log::error!(
-                            "[Settings] 加载配置文件 {:?} 失败: {}。将使用默认配置。",
-                            path,
-                            e
-                        );
+                        log::error!("[Settings] 加载配置文件 {path:?} 失败: {e}。将使用默认配置。");
                         // 如果加载失败，仍然可以考虑保存一次默认配置，以确保文件存在且格式正确
                         // 但这里遵循原逻辑，返回默认配置
                         let defaults_on_error = AppSettings::default();
                         if defaults_on_error.save().is_err() {
                             // 尝试保存默认配置，以备下次启动
-                            log::error!(
-                                "[Settings] 无法在加载错误后保存默认配置文件到 {:?}。",
-                                path
-                            );
+                            log::error!("[Settings] 无法在加载错误后保存默认配置文件到 {path:?}。");
                         }
                         return defaults_on_error;
                     }
                 }
             } else {
-                log::info!(
-                    "[Settings] 配置文件 {:?} 未找到。将创建并使用默认配置。",
-                    path
-                );
+                log::info!("[Settings] 配置文件 {path:?} 未找到。将创建并使用默认配置。");
                 // 配置文件不存在时，直接使用默认值，并尝试保存一次
                 let default_settings = AppSettings::default();
                 if default_settings.save().is_err() {
-                    log::error!("[Settings] 无法保存初始默认配置文件到 {:?}。", path);
+                    log::error!("[Settings] 无法保存初始默认配置文件到 {path:?}。");
                 }
                 return default_settings;
             }
@@ -857,13 +847,13 @@ impl AppSettings {
             match conf.write_to_file(&path) {
                 Ok(_) => Ok(()),
                 Err(write_error) => {
-                    log::error!("[Settings] 保存配置到 {:?} 失败: {}", path, write_error);
+                    log::error!("[Settings] 保存配置到 {path:?} 失败: {write_error}");
                     Err(ini::Error::Io(write_error))
                 }
             }
         } else {
             let err_msg = "[Settings] 无法确定配置文件路径，保存失败。".to_string();
-            log::error!("{}", err_msg);
+            log::error!("{err_msg}");
             Err(ini::Error::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 err_msg,

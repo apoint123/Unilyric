@@ -24,10 +24,7 @@ fn format_spl_timestamp_from_total_ms(total_ms: u64, use_angle_brackets: bool) -
     let close_bracket = if use_angle_brackets { '>' } else { ']' };
 
     // 格式化输出，例如 "[01:23.456]" 或 "<01:23.456>"
-    format!(
-        "{}{:02}:{:02}.{:03}{}", // 分和秒补零到2位，毫秒补零到3位
-        open_bracket, minutes_part, seconds_part, millis_part, close_bracket
-    )
+    format!("{open_bracket}{minutes_part:02}:{seconds_part:02}.{millis_part:03}{close_bracket}")
 }
 
 /// 从 TTML 段落数据生成 SPL (Salt Player Lyric) 格式的字符串。
@@ -82,10 +79,7 @@ pub fn generate_spl_from_ttml_data(
                 writeln!(spl_output)?;
             } else {
                 // 如果段落无内容也无时长，记录警告并跳过
-                log::warn!(
-                    "[SPL 生成] 跳过第 {} 个段落：无主音节、无翻译且无时长。",
-                    para_idx
-                );
+                log::warn!("[SPL 生成] 跳过第 {para_idx} 个段落：无主音节、无翻译且无时长。");
             }
             continue; // 处理下一个段落
         }
@@ -94,7 +88,7 @@ pub fn generate_spl_from_ttml_data(
         if has_main_syllables {
             // 写入行开始时间戳 (使用方括号)
             let line_start_ts_str = format_spl_timestamp_from_total_ms(para.p_start_ms, false);
-            write!(spl_output, "{}", line_start_ts_str)?;
+            write!(spl_output, "{line_start_ts_str}")?;
 
             // 判断当前行是否为“卡拉OK行”（即需要逐字时间戳）
             // 一个行被视为卡拉OK行，如果：
@@ -113,15 +107,15 @@ pub fn generate_spl_from_ttml_data(
             if is_karaoke_line {
                 // --- 生成卡拉OK行 (带内联逐字时间戳) ---
                 // 如果第一个音节不是从段落开始时间立即开始 (有前导静默)
-                if let Some(first_syl) = para.main_syllables.first() {
-                    if first_syl.start_ms > para.p_start_ms {
-                        // 写入第一个音节的开始时间作为内联时间戳 (使用尖括号)
-                        write!(
-                            spl_output,
-                            "{}",
-                            format_spl_timestamp_from_total_ms(first_syl.start_ms, true)
-                        )?;
-                    }
+                if let Some(first_syl) = para.main_syllables.first()
+                    && first_syl.start_ms > para.p_start_ms
+                {
+                    // 写入第一个音节的开始时间作为内联时间戳 (使用尖括号)
+                    write!(
+                        spl_output,
+                        "{}",
+                        format_spl_timestamp_from_total_ms(first_syl.start_ms, true)
+                    )?;
                 }
 
                 // 遍历所有音节
@@ -172,7 +166,7 @@ pub fn generate_spl_from_ttml_data(
                     }
                 }
                 let trimmed_line_full_text = line_full_text.trim_end(); // 去除可能因最后一个音节带空格而产生的行尾空格
-                write!(spl_output, "{}", trimmed_line_full_text)?;
+                write!(spl_output, "{trimmed_line_full_text}")?;
 
                 // 决定是否需要显式的行尾结束时间戳
                 let mut needs_explicit_line_end_tag = false;
@@ -224,35 +218,35 @@ pub fn generate_spl_from_ttml_data(
         }
 
         // --- 处理翻译行 ---
-        if let Some((trans_text, _lang_code)) = &para.translation {
-            if !trans_text.trim().is_empty() {
-                // 确保翻译文本非空
-                // SPL规范允许多行翻译，如果TTML中的翻译文本包含换行符，则拆分为多行SPL翻译
-                let trans_lines = trans_text.split('\n').filter(|s| !s.trim().is_empty());
-                for single_trans_line in trans_lines {
-                    // 每行翻译都使用主歌词行的开始时间戳（同时间戳翻译）
-                    // 或者，如果主歌词行本身是空的（只有时间），翻译行也只输出时间戳+文本
-                    if has_main_syllables {
-                        // 如果主歌词行有内容
-                        writeln!(
-                            spl_output,
-                            "{}{}",
-                            format_spl_timestamp_from_total_ms(para.p_start_ms, false),
-                            single_trans_line.trim() // 翻译文本
-                        )?;
-                    } else {
-                        // 如果主歌词行是空的（例如只有时间戳的静默行），翻译行也对应这个时间戳
-                        writeln!(
-                            spl_output,
-                            "{}{}",
-                            format_spl_timestamp_from_total_ms(para.p_start_ms, false),
-                            single_trans_line.trim()
-                        )?;
-                    }
-                    // SPL规范中，隐式翻译（无时间戳，紧跟主歌词）也是支持的。
-                    // 当前生成逻辑总是为翻译行添加与主歌词相同的开始时间戳。
-                    // 如果要生成隐式翻译，这里的逻辑需要调整。
+        if let Some((trans_text, _lang_code)) = &para.translation
+            && !trans_text.trim().is_empty()
+        {
+            // 确保翻译文本非空
+            // SPL规范允许多行翻译，如果TTML中的翻译文本包含换行符，则拆分为多行SPL翻译
+            let trans_lines = trans_text.split('\n').filter(|s| !s.trim().is_empty());
+            for single_trans_line in trans_lines {
+                // 每行翻译都使用主歌词行的开始时间戳（同时间戳翻译）
+                // 或者，如果主歌词行本身是空的（只有时间），翻译行也只输出时间戳+文本
+                if has_main_syllables {
+                    // 如果主歌词行有内容
+                    writeln!(
+                        spl_output,
+                        "{}{}",
+                        format_spl_timestamp_from_total_ms(para.p_start_ms, false),
+                        single_trans_line.trim() // 翻译文本
+                    )?;
+                } else {
+                    // 如果主歌词行是空的（例如只有时间戳的静默行），翻译行也对应这个时间戳
+                    writeln!(
+                        spl_output,
+                        "{}{}",
+                        format_spl_timestamp_from_total_ms(para.p_start_ms, false),
+                        single_trans_line.trim()
+                    )?;
                 }
+                // SPL规范中，隐式翻译（无时间戳，紧跟主歌词）也是支持的。
+                // 当前生成逻辑总是为翻译行添加与主歌词相同的开始时间戳。
+                // 如果要生成隐式翻译，这里的逻辑需要调整。
             }
         }
     }
@@ -263,6 +257,6 @@ pub fn generate_spl_from_ttml_data(
     Ok(if final_output.is_empty() {
         String::new()
     } else {
-        format!("{}\n", final_output)
+        format!("{final_output}\n")
     })
 }

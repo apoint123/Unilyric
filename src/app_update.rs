@@ -114,10 +114,7 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
                 let old_status = ws_status_guard.clone();
                 *ws_status_guard = status.clone();
                 drop(ws_status_guard);
-                info!(
-                    "[UniLyric] AMLL Connector WebSocket 状态改变: {:?} -> {:?}",
-                    old_status, status
-                );
+                info!("[UniLyric] AMLL Connector WebSocket 状态改变: {old_status:?} -> {status:?}");
 
                 if status == WebsocketStatus::已连接 && old_status != WebsocketStatus::已连接
                 {
@@ -267,7 +264,7 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
                         if !artist_candidate.is_empty() {
                             temp_final_artist = Some(artist_candidate.to_string());
                             parsed_artist_successfully = true;
-                            trace!("[UniLyric] 初始艺术家解析自 SMTC: '{}'", artist_candidate);
+                            trace!("[UniLyric] 初始艺术家解析自 SMTC: '{artist_candidate}'");
 
                             if parts.len() > 1 {
                                 let album_candidate_from_artist_parts = parts[1..].join(SEPARATOR);
@@ -331,10 +328,10 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
                 if let Some(original_pos) = current_event_data.position_ms {
                     let mut adjusted_pos_i64 = original_pos as i64 - app.smtc_time_offset_ms;
                     adjusted_pos_i64 = adjusted_pos_i64.max(0);
-                    if let Some(duration) = current_event_data.duration_ms {
-                        if duration > 0 {
-                            adjusted_pos_i64 = adjusted_pos_i64.min(duration as i64);
-                        }
+                    if let Some(duration) = current_event_data.duration_ms
+                        && duration > 0
+                    {
+                        adjusted_pos_i64 = adjusted_pos_i64.min(duration as i64);
                     }
                     current_event_data.position_ms = Some(adjusted_pos_i64 as u64);
                 }
@@ -627,23 +624,20 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
                 drop(available_sessions_guard);
 
                 let mut selected_id_guard = app.selected_smtc_session_id.lock().unwrap();
-                if let Some(ref current_selected_id) = *selected_id_guard {
-                    if !sessions
+                if let Some(ref current_selected_id) = *selected_id_guard
+                    && !sessions
                         .iter()
                         .any(|s| s.session_id == *current_selected_id)
-                    {
-                        trace!(
-                            "[UniLyric] 当前选择的 SMTC 会话 ID '{}' 已不再可用，清除选择。",
-                            current_selected_id
-                        );
-                        *selected_id_guard = None;
-                    }
+                {
+                    trace!(
+                        "[UniLyric] 当前选择的 SMTC 会话 ID '{current_selected_id}' 已不再可用，清除选择。"
+                    );
+                    *selected_id_guard = None;
                 }
             }
             ConnectorUpdate::SelectedSmtcSessionVanished(vanished_session_id) => {
                 trace!(
-                    "[UniLyric] 收到通知：之前选择的 SMTC 会话 ID '{}' 已消失。",
-                    vanished_session_id
+                    "[UniLyric] 收到通知：之前选择的 SMTC 会话 ID '{vanished_session_id}' 已消失。"
                 );
                 let mut selected_id_guard = app.selected_smtc_session_id.lock().unwrap();
                 if selected_id_guard.as_ref() == Some(&vanished_session_id) {
@@ -671,8 +665,7 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
                 is_muted,
             } => {
                 trace!(
-                    "[Unilyric] 收到 AudioSessionVolumeChanged: session='{}', vol={}, mute={}",
-                    session_id, volume, is_muted
+                    "[Unilyric] 收到 AudioSessionVolumeChanged: session='{session_id}', vol={volume}, mute={is_muted}"
                 );
                 let mut current_vol_guard = app.current_smtc_volume.lock().unwrap();
                 *current_vol_guard = Some((volume, is_muted));
@@ -693,197 +686,187 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
 /// Handles results from automatic lyric fetching.
 pub(crate) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     match app.auto_fetch_result_rx.try_recv() {
-        Ok(auto_fetch_result) => {
-            match auto_fetch_result {
-                AutoFetchResult::Success {
-                    source,
-                    source_format,
-                    main_lyrics,
-                    translation_lrc,
-                    romanization_qrc,
-                    romanization_lrc,
-                    krc_translation_lines,
-                    platform_metadata,
-                } => {
-                    info!(
-                        "[UniLyricApp] 自动获取成功，来源: {:?}, 格式: {:?}",
-                        source, source_format
-                    );
+        Ok(auto_fetch_result) => match auto_fetch_result {
+            AutoFetchResult::Success {
+                source,
+                source_format,
+                main_lyrics,
+                translation_lrc,
+                romanization_qrc,
+                romanization_lrc,
+                krc_translation_lines,
+                platform_metadata,
+            } => {
+                info!("[UniLyricApp] 自动获取成功，来源: {source:?}, 格式: {source_format:?}");
 
-                    let app_settings_guard = app.app_settings.lock().unwrap();
-                    let always_search_all = app_settings_guard.always_search_all_sources;
-                    drop(app_settings_guard);
+                let app_settings_guard = app.app_settings.lock().unwrap();
+                let always_search_all = app_settings_guard.always_search_all_sources;
+                drop(app_settings_guard);
 
-                    let processed_main_lyrics = main_lyrics;
+                let processed_main_lyrics = main_lyrics;
 
-                    let result_data_for_storage = crate::types::ProcessedLyricsSourceData {
-                        format: source_format,
-                        main_lyrics: processed_main_lyrics.clone(),
-                        translation_lrc: translation_lrc.clone(),
-                        romanization_qrc: romanization_qrc.clone(),
-                        romanization_lrc: romanization_lrc.clone(),
-                        krc_translation_lines: krc_translation_lines.clone(),
-                        platform_metadata: platform_metadata.clone(),
-                    };
+                let result_data_for_storage = crate::types::ProcessedLyricsSourceData {
+                    format: source_format,
+                    main_lyrics: processed_main_lyrics.clone(),
+                    translation_lrc: translation_lrc.clone(),
+                    romanization_qrc: romanization_qrc.clone(),
+                    romanization_lrc: romanization_lrc.clone(),
+                    krc_translation_lines: krc_translation_lines.clone(),
+                    platform_metadata: platform_metadata.clone(),
+                };
 
-                    match source {
-                        crate::types::AutoSearchSource::QqMusic => {
-                            *app.last_qq_search_result.lock().unwrap() =
-                                Some(result_data_for_storage);
-                        }
-                        crate::types::AutoSearchSource::Kugou => {
-                            *app.last_kugou_search_result.lock().unwrap() =
-                                Some(result_data_for_storage);
-                        }
-                        crate::types::AutoSearchSource::Netease => {
-                            *app.last_netease_search_result.lock().unwrap() =
-                                Some(result_data_for_storage);
-                        }
-                        crate::types::AutoSearchSource::AmllDb => {
-                            *app.last_amll_db_search_result.lock().unwrap() =
-                                Some(result_data_for_storage);
-                        }
-                        crate::types::AutoSearchSource::LocalCache => {}
+                match source {
+                    crate::types::AutoSearchSource::QqMusic => {
+                        *app.last_qq_search_result.lock().unwrap() = Some(result_data_for_storage);
                     }
-
-                    let status_arc_to_update = match source {
-                        crate::types::AutoSearchSource::LocalCache => {
-                            &app.local_cache_auto_search_status
-                        }
-                        crate::types::AutoSearchSource::QqMusic => &app.qqmusic_auto_search_status,
-                        crate::types::AutoSearchSource::Kugou => &app.kugou_auto_search_status,
-                        crate::types::AutoSearchSource::Netease => &app.netease_auto_search_status,
-                        crate::types::AutoSearchSource::AmllDb => &app.amll_db_auto_search_status,
-                    };
-                    *status_arc_to_update.lock().unwrap() =
-                        AutoSearchStatus::Success(source_format);
-
-                    if !app.current_auto_search_ui_populated {
-                        app.clear_all_data();
-
-                        app.last_auto_fetch_source_for_stripping_check = Some(source);
-                        app.last_auto_fetch_source_format = Some(source_format);
-
-                        app.input_text = processed_main_lyrics;
-                        app.source_format = source_format;
-
-                        if source == crate::types::AutoSearchSource::Netease
-                            && source_format == crate::types::LyricFormat::Lrc
-                        {
-                            app.direct_netease_main_lrc_content = Some(app.input_text.clone());
-                        }
-
-                        app.pending_translation_lrc_from_download = translation_lrc;
-                        app.pending_romanization_qrc_from_download = romanization_qrc;
-                        app.pending_romanization_lrc_from_download = romanization_lrc;
-                        app.pending_krc_translation_lines = krc_translation_lines;
-                        app.session_platform_metadata = platform_metadata;
-                        app.metadata_source_is_download = true;
-
-                        app.loaded_translation_lrc = None;
-                        app.loaded_romanization_lrc = None;
-
-                        app.handle_convert();
-
-                        app.last_auto_fetch_source_for_stripping_check = None;
-
-                        app.current_auto_search_ui_populated = true;
-
-                        if !always_search_all {
-                            app_fetch_core::set_other_sources_not_attempted(app, source);
-                        }
-
-                        if app.media_connector_config.lock().unwrap().enabled {
-                            if let Some(tx) = &app.media_connector_command_tx {
-                                if !app.output_text.is_empty() {
-                                    trace!(
-                                        "[UniLyricApp] (首次填充后) 已发送 TTML (源: {:?}, 长度: {}) 到播放器。",
-                                        source,
-                                        app.output_text.len()
-                                    );
-                                    let ttml_body = ws_protocol::Body::SetLyricFromTTML {
-                                        data: app.output_text.as_str().into(),
-                                    };
-                                    if tx
-                                    .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(ttml_body))
-                                    .is_err()
-                                {
-                                    error!("[UniLyricApp] (首次填充后)发送 TTML 失败。");
-                                }
-                                } else {
-                                    warn!(
-                                        "[UniLyricApp] (首次填充后) 处理后输出为空，不发送TTML。来源: {:?}",
-                                        source
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        trace!(
-                            "[UniLyricApp] UI已填充，来源 {:?} 的歌词结果已存储 (用于侧边栏)，但不更新主UI或再次发送。",
-                            source
-                        );
+                    crate::types::AutoSearchSource::Kugou => {
+                        *app.last_kugou_search_result.lock().unwrap() =
+                            Some(result_data_for_storage);
                     }
+                    crate::types::AutoSearchSource::Netease => {
+                        *app.last_netease_search_result.lock().unwrap() =
+                            Some(result_data_for_storage);
+                    }
+                    crate::types::AutoSearchSource::AmllDb => {
+                        *app.last_amll_db_search_result.lock().unwrap() =
+                            Some(result_data_for_storage);
+                    }
+                    crate::types::AutoSearchSource::LocalCache => {}
                 }
-                AutoFetchResult::NotFound => {
-                    info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
-                    let sources_to_update_on_not_found = [
-                        &app.qqmusic_auto_search_status,
-                        &app.kugou_auto_search_status,
-                        &app.netease_auto_search_status,
-                        &app.amll_db_auto_search_status,
-                    ];
-                    for status_arc in sources_to_update_on_not_found {
-                        let mut guard = status_arc.lock().unwrap();
-                        if matches!(*guard, AutoSearchStatus::Searching) {
-                            *guard = AutoSearchStatus::NotFound;
-                        }
+
+                let status_arc_to_update = match source {
+                    crate::types::AutoSearchSource::LocalCache => {
+                        &app.local_cache_auto_search_status
                     }
-                    if !app.current_auto_search_ui_populated
-                        && app.media_connector_config.lock().unwrap().enabled
+                    crate::types::AutoSearchSource::QqMusic => &app.qqmusic_auto_search_status,
+                    crate::types::AutoSearchSource::Kugou => &app.kugou_auto_search_status,
+                    crate::types::AutoSearchSource::Netease => &app.netease_auto_search_status,
+                    crate::types::AutoSearchSource::AmllDb => &app.amll_db_auto_search_status,
+                };
+                *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Success(source_format);
+
+                if !app.current_auto_search_ui_populated {
+                    app.clear_all_data();
+
+                    app.last_auto_fetch_source_for_stripping_check = Some(source);
+                    app.last_auto_fetch_source_format = Some(source_format);
+
+                    app.input_text = processed_main_lyrics;
+                    app.source_format = source_format;
+
+                    if source == crate::types::AutoSearchSource::Netease
+                        && source_format == crate::types::LyricFormat::Lrc
                     {
-                        if let Some(tx) = &app.media_connector_command_tx {
-                            info!("[UniLyricApp] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
-                            let empty_ttml_body =
-                                ws_protocol::Body::SetLyricFromTTML { data: "".into() };
+                        app.direct_netease_main_lrc_content = Some(app.input_text.clone());
+                    }
+
+                    app.pending_translation_lrc_from_download = translation_lrc;
+                    app.pending_romanization_qrc_from_download = romanization_qrc;
+                    app.pending_romanization_lrc_from_download = romanization_lrc;
+                    app.pending_krc_translation_lines = krc_translation_lines;
+                    app.session_platform_metadata = platform_metadata;
+                    app.metadata_source_is_download = true;
+
+                    app.loaded_translation_lrc = None;
+                    app.loaded_romanization_lrc = None;
+
+                    app.handle_convert();
+
+                    app.last_auto_fetch_source_for_stripping_check = None;
+
+                    app.current_auto_search_ui_populated = true;
+
+                    if !always_search_all {
+                        app_fetch_core::set_other_sources_not_attempted(app, source);
+                    }
+
+                    if app.media_connector_config.lock().unwrap().enabled
+                        && let Some(tx) = &app.media_connector_command_tx
+                    {
+                        if !app.output_text.is_empty() {
+                            trace!(
+                                "[UniLyricApp] (首次填充后) 已发送 TTML (源: {:?}, 长度: {}) 到播放器。",
+                                source,
+                                app.output_text.len()
+                            );
+                            let ttml_body = ws_protocol::Body::SetLyricFromTTML {
+                                data: app.output_text.as_str().into(),
+                            };
                             if tx
                                 .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                    empty_ttml_body,
+                                    ttml_body,
                                 ))
                                 .is_err()
                             {
-                                error!("[UniLyricApp] (未找到歌词) 发送空TTML失败。");
+                                error!("[UniLyricApp] (首次填充后)发送 TTML 失败。");
                             }
+                        } else {
+                            warn!(
+                                "[UniLyricApp] (首次填充后) 处理后输出为空，不发送TTML。来源: {source:?}"
+                            );
                         }
                     }
-                    if app.websocket_server_enabled && !app.current_auto_search_ui_populated {
-                        let mut current_title = None;
-                        let mut current_artist = None;
-                        if let Ok(media_info_guard) = app.current_media_info.try_lock() {
-                            if let Some(info) = &*media_info_guard {
-                                current_title = info.title.clone();
-                                current_artist = info.artist.clone();
-                            }
-                        }
-                        let empty_lyrics_payload = PlaybackInfoPayload {
-                            title: current_title,
-                            artist: current_artist,
-                            ttml_lyrics: None,
-                        };
-                        if let Some(ws_tx) = &app.websocket_server_command_tx {
-                            if let Err(e) = ws_tx.try_send(ServerCommand::BroadcastPlaybackInfo(
-                                empty_lyrics_payload,
-                            )) {
-                                warn!("[UniLyricApp] 发送空歌词PlaybackInfo到WebSocket失败: {}", e);
-                            }
-                        }
-                    }
-                }
-                AutoFetchResult::FetchError(err_msg) => {
-                    error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err_msg);
+                } else {
+                    trace!(
+                        "[UniLyricApp] UI已填充，来源 {source:?} 的歌词结果已存储 (用于侧边栏)，但不更新主UI或再次发送。"
+                    );
                 }
             }
-        }
+            AutoFetchResult::NotFound => {
+                info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
+                let sources_to_update_on_not_found = [
+                    &app.qqmusic_auto_search_status,
+                    &app.kugou_auto_search_status,
+                    &app.netease_auto_search_status,
+                    &app.amll_db_auto_search_status,
+                ];
+                for status_arc in sources_to_update_on_not_found {
+                    let mut guard = status_arc.lock().unwrap();
+                    if matches!(*guard, AutoSearchStatus::Searching) {
+                        *guard = AutoSearchStatus::NotFound;
+                    }
+                }
+                if !app.current_auto_search_ui_populated
+                    && app.media_connector_config.lock().unwrap().enabled
+                    && let Some(tx) = &app.media_connector_command_tx
+                {
+                    info!("[UniLyricApp] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
+                    let empty_ttml_body = ws_protocol::Body::SetLyricFromTTML { data: "".into() };
+                    if tx
+                        .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
+                            empty_ttml_body,
+                        ))
+                        .is_err()
+                    {
+                        error!("[UniLyricApp] (未找到歌词) 发送空TTML失败。");
+                    }
+                }
+                if app.websocket_server_enabled && !app.current_auto_search_ui_populated {
+                    let mut current_title = None;
+                    let mut current_artist = None;
+                    if let Ok(media_info_guard) = app.current_media_info.try_lock()
+                        && let Some(info) = &*media_info_guard
+                    {
+                        current_title = info.title.clone();
+                        current_artist = info.artist.clone();
+                    }
+                    let empty_lyrics_payload = PlaybackInfoPayload {
+                        title: current_title,
+                        artist: current_artist,
+                        ttml_lyrics: None,
+                    };
+                    if let Some(ws_tx) = &app.websocket_server_command_tx
+                        && let Err(e) = ws_tx
+                            .try_send(ServerCommand::BroadcastPlaybackInfo(empty_lyrics_payload))
+                    {
+                        warn!("[UniLyricApp] 发送空歌词PlaybackInfo到WebSocket失败: {e}");
+                    }
+                }
+            }
+            AutoFetchResult::FetchError(err_msg) => {
+                error!("[UniLyricApp] 自动获取歌词时发生错误: {err_msg}");
+            }
+        },
         Err(std::sync::mpsc::TryRecvError::Empty) => {}
         Err(std::sync::mpsc::TryRecvError::Disconnected) => {
             error!("[UniLyricApp] 自动获取结果通道已断开!");
@@ -896,7 +879,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
     match app.ttml_db_upload_action_rx.try_recv() {
         Ok(action) => match action {
             TtmlDbUploadUserAction::InProgressUpdate(msg) => {
-                info!("[TTML_DB_Upload_UI] 状态更新: {}", msg);
+                info!("[TTML_DB_Upload_UI] 状态更新: {msg}");
                 app.toasts.add(Toast {
                     text: msg.into(),
                     kind: ToastKind::Info,
@@ -912,8 +895,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
                 github_issue_url_to_open,
             } => {
                 info!(
-                    "[TTML_DB_Upload_UI] dpaste链接已就绪: {}, 将打开Issue页面: {}",
-                    paste_url, github_issue_url_to_open
+                    "[TTML_DB_Upload_UI] dpaste链接已就绪: {paste_url}, 将打开Issue页面: {github_issue_url_to_open}"
                 );
                 app.ttml_db_last_paste_url = Some(paste_url.clone());
 
@@ -939,7 +921,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
                         clipboard_toast_message =
                             "无法访问系统剪贴板，请手动从通知中复制dpaste链接。".to_string();
                         clipboard_toast_kind = ToastKind::Error;
-                        error!("[TTML_DB_Upload_UI] 初始化剪贴板失败: {}", e);
+                        error!("[TTML_DB_Upload_UI] 初始化剪贴板失败: {e}");
                     }
                 }
                 app.toasts.add(Toast {
@@ -975,8 +957,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
                     let ttml_db_repo_owner = "Steve-xmh";
                     let ttml_db_repo_name = "amll-ttml-db";
                     let repo_url_for_manual_submission = format!(
-                        "https://github.com/{}/{}/issues/new",
-                        ttml_db_repo_owner, ttml_db_repo_name
+                        "https://github.com/{ttml_db_repo_owner}/{ttml_db_repo_name}/issues/new"
                     );
                     final_toast_message = format!(
                         "{}\n但打开Issue页面失败。\n\n请手动：\n1. (如果上面复制失败) 从本条通知或日志中复制 dpaste 链接。\n2. 访问 {}。\n3. 粘贴链接并填写表单提交。",
@@ -990,7 +971,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
                     final_toast_kind = ToastKind::Warning;
                 }
                 let final_toast_message_with_url =
-                    format!("{}\n\ndpaste链接: {}", final_toast_message, paste_url);
+                    format!("{final_toast_message}\n\ndpaste链接: {paste_url}");
 
                 app.toasts.add(Toast {
                     text: final_toast_message_with_url.into(),
@@ -1004,13 +985,13 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
                 app.ttml_db_upload_in_progress = false;
             }
             TtmlDbUploadUserAction::PreparationError(err_msg) => {
-                error!("[TTML_DB_Upload_UI] 准备阶段错误: {}", err_msg);
+                error!("[TTML_DB_Upload_UI] 准备阶段错误: {err_msg}");
                 app.ttml_db_upload_in_progress = false;
             }
             TtmlDbUploadUserAction::Error(err_msg) => {
-                error!("[Unilyric] 上传过程中发生错误: {}", err_msg);
+                error!("[Unilyric] 上传过程中发生错误: {err_msg}");
                 app.toasts.add(Toast {
-                    text: format!("上传失败: {}", err_msg).into(),
+                    text: format!("上传失败: {err_msg}").into(),
                     kind: ToastKind::Error,
                     options: ToastOptions::default()
                         .duration_in_seconds(5.0)

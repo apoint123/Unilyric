@@ -59,27 +59,19 @@ pub fn parse_lyricify_lines(content: &str) -> Result<Vec<ParsedLyricifyLine>, Co
             // 解析开始时间字符串为 u64 毫秒数
             let start_ms: u64 = start_ms_str.parse().map_err(|e| {
                 log::error!(
-                    "Lyricify Line 处理错误 (行 {}): 无效的开始时间 '{}': {}",
-                    line_num,
-                    start_ms_str,
-                    e
+                    "Lyricify Line 处理错误 (行 {line_num}): 无效的开始时间 '{start_ms_str}': {e}"
                 );
                 ConvertError::InvalidTime(format!(
-                    "行 {}：无效的开始时间 '{}' : {}",
-                    line_num, start_ms_str, e
+                    "行 {line_num}：无效的开始时间 '{start_ms_str}' : {e}"
                 ))
             })?;
             // 解析结束时间字符串为 u64 毫秒数
             let end_ms: u64 = end_ms_str.parse().map_err(|e| {
                 log::error!(
-                    "Lyricify Line 处理错误 (行 {}): 无效的结束时间 '{}': {}",
-                    line_num,
-                    end_ms_str,
-                    e
+                    "Lyricify Line 处理错误 (行 {line_num}): 无效的结束时间 '{end_ms_str}': {e}"
                 );
                 ConvertError::InvalidTime(format!(
-                    "行 {}: 无效的结束时间 '{}': {}",
-                    line_num, end_ms_str, e
+                    "行 {line_num}: 无效的结束时间 '{end_ms_str}': {e}"
                 ))
             })?;
 
@@ -87,11 +79,7 @@ pub fn parse_lyricify_lines(content: &str) -> Result<Vec<ParsedLyricifyLine>, Co
             // 歌词行本身仍然会被创建，但这个时间戳问题可能会在后续处理中导致非预期行为
             if end_ms < start_ms {
                 log::warn!(
-                    "Lyricify Line {}: 结束时间 {} 毫秒 在开始时间 {} 毫秒之前。行: '{}'",
-                    line_num,
-                    end_ms,
-                    start_ms,
-                    trimmed_line
+                    "Lyricify Line {line_num}: 结束时间 {end_ms} 毫秒 在开始时间 {start_ms} 毫秒之前。行: '{trimmed_line}'"
                 );
             }
 
@@ -103,11 +91,7 @@ pub fn parse_lyricify_lines(content: &str) -> Result<Vec<ParsedLyricifyLine>, Co
             });
         } else {
             // 如果行不符合 LYL 格式，记录一个警告
-            log::warn!(
-                "无效的 Lyricify Line 格式 (行 {}): '{}'",
-                line_num,
-                trimmed_line
-            );
+            log::warn!("无效的 Lyricify Line 格式 (行 {line_num}): '{trimmed_line}'");
         }
     }
     Ok(lines_vec) // 返回解析出的所有行

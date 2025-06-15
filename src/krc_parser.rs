@@ -66,7 +66,7 @@ pub fn load_krc_from_string(
                     key: "KrcInternalTranslation".to_string(),
                     value: base64_value.as_str().to_string(),
                 });
-                log::info!("[KRC 解析] 行 {}: 处理KRC特有language标签。", line_number);
+                log::info!("[KRC 解析] 行 {line_number}: 处理KRC特有language标签。");
             }
             continue; // 处理完 language 标签后跳到下一行
         }
@@ -89,10 +89,7 @@ pub fn load_krc_from_string(
                             value: value.clone(),
                         });
                         log::trace!(
-                            "[KRC 解析] 行 {}: 处理标准元数据标签: [{}:{}]",
-                            line_number,
-                            key,
-                            value
+                            "[KRC 解析] 行 {line_number}: 处理标准元数据标签: [{key}:{value}]"
                         );
                     }
                     // "language" 标签如果不是 Base64 格式的，则按普通元数据处理或警告
@@ -107,9 +104,7 @@ pub fn load_krc_from_string(
             } else {
                 // GENERIC_METADATA_TAG_RE 匹配了行，但无法提取 key/value (理论上不应发生，因为正则定义了捕获组)
                 log::warn!(
-                    "[KRC 解析] 行 {}: 疑似元数据标签但无法解析key/value: '{}'",
-                    line_number,
-                    trimmed_line
+                    "[KRC 解析] 行 {line_number}: 疑似元数据标签但无法解析key/value: '{trimmed_line}'"
                 );
             }
             continue; // 处理完元数据标签后跳到下一行
@@ -123,14 +118,12 @@ pub fn load_krc_from_string(
             // 解析行开始时间和行持续时间
             let line_start_ms = line_start_ms_str.parse::<u64>().map_err(|e| {
                 ConvertError::InvalidTime(format!(
-                    "KRC 行 {} 开始时间无效 '{}': {}",
-                    line_number, line_start_ms_str, e
+                    "KRC 行 {line_number} 开始时间无效 '{line_start_ms_str}': {e}"
                 ))
             })?;
             let line_duration_ms = line_duration_ms_str.parse::<u64>().map_err(|e| {
                 ConvertError::InvalidTime(format!(
-                    "KRC 行 {} 持续时间无效 '{}': {}",
-                    line_number, line_duration_ms_str, e
+                    "KRC 行 {line_number} 持续时间无效 '{line_duration_ms_str}': {e}"
                 ))
             })?;
 
@@ -165,14 +158,12 @@ pub fn load_krc_from_string(
                 // 解析音节的偏移和时长
                 let syl_offset_ms = syl_offset_ms_str.parse::<u64>().map_err(|e| {
                     ConvertError::InvalidTime(format!(
-                        "KRC 行 {} 音节偏移无效 '{}': {}",
-                        line_number, syl_offset_ms_str, e
+                        "KRC 行 {line_number} 音节偏移无效 '{syl_offset_ms_str}': {e}"
                     ))
                 })?;
                 let syl_duration_ms = syl_duration_ms_str.parse::<u64>().map_err(|e| {
                     ConvertError::InvalidTime(format!(
-                        "KRC 行 {} 音节时长无效 '{}': {}",
-                        line_number, syl_duration_ms_str, e
+                        "KRC 行 {line_number} 音节时长无效 '{syl_duration_ms_str}': {e}"
                     ))
                 })?;
 
@@ -192,9 +183,7 @@ pub fn load_krc_from_string(
                 let trailing_text = &syllables_part[current_char_pos_in_syllables_part..];
                 if !trailing_text.trim().is_empty() {
                     log::warn!(
-                        "[KRC 解析] 行 {}: 在最后一个音节后发现文本: '{}'",
-                        line_number,
-                        trailing_text
+                        "[KRC 解析] 行 {line_number}: 在最后一个音节后发现文本: '{trailing_text}'"
                     );
                     // 将尾随文本追加到最后一个音节，或创建一个新音节
                     if let Some(last_syl) = krc_syllables.last_mut() {
@@ -221,9 +210,7 @@ pub fn load_krc_from_string(
                 // 如果音节部分非空，但没有解析出带时间戳的音节，
                 // 可能意味着整行文本没有逐字时间信息，将其作为单个音节处理。
                 log::warn!(
-                    "[KRC 解析] 行 {}: 内容 '{}' 中未找到有效的KRC音节时间戳，但内容非空。将其作为单音节行处理。",
-                    line_number,
-                    syllables_part
+                    "[KRC 解析] 行 {line_number}: 内容 '{syllables_part}' 中未找到有效的KRC音节时间戳，但内容非空。将其作为单音节行处理。"
                 );
                 lines_data.push(QrcLine {
                     line_start_ms,

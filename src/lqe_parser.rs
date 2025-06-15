@@ -26,7 +26,7 @@ fn parse_lqe_section_attributes(attrs_str: &str) -> (Option<LyricFormat>, Option
             match key {
                 "format" => format = LyricFormat::from_string(value),
                 "language" => language = Some(value.to_string()),
-                _ => log::warn!("[LQE 处理] 未知的属性: {}={}", key, value),
+                _ => log::warn!("[LQE 处理] 未知的属性: {key}={value}"),
             }
         }
     }
@@ -67,7 +67,7 @@ pub fn load_lqe_from_string(lqe_content: &str) -> Result<ParsedLqeData, ConvertE
         } else if LQE_SECTION_HEADER_REGEX.is_match(trimmed_line) {
             break;
         } else {
-            log::warn!("[LQE 处理] 无法识别的元数据: '{}'", trimmed_line);
+            log::warn!("[LQE 处理] 无法识别的元数据: '{trimmed_line}'");
             continue;
         }
     }
@@ -119,7 +119,7 @@ pub fn load_lqe_from_string(lqe_content: &str) -> Result<ParsedLqeData, ConvertE
                     }
                 }
                 _ => {
-                    log::error!("[LQE 处理] 意外错误：未知的名称 '{}'", section_name);
+                    log::error!("[LQE 处理] 意外错误：未知的名称 '{section_name}'");
                     current_active_section_type = None;
                 }
             }
@@ -154,7 +154,7 @@ pub fn load_lqe_from_string(lqe_content: &str) -> Result<ParsedLqeData, ConvertE
                 _ => {}
             }
         } else if !line_str_raw.trim().is_empty() {
-            log::warn!("[LQE 处理] 在歌词/翻译/音译部分之外的行 '{}'", line_str_raw);
+            log::warn!("[LQE 处理] 在歌词/翻译/音译部分之外的行 '{line_str_raw}'");
         }
     }
 

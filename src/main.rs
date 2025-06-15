@@ -131,6 +131,6 @@ fn main() {
         }),
     ) {
         // 如果 `eframe::run_native` 返回错误 (Err)，则记录错误信息。
-        log::error!(target: "unilyric_main", "Eframe 运行错误: {}", e);
+        log::error!(target: "unilyric_main", "Eframe 运行错误: {e}");
     }
 }

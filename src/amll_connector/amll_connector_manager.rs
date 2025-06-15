@@ -63,10 +63,7 @@ pub fn ensure_running(app: &mut UniLyricApp) {
 
     if let Some(ref initial_id) = app.initial_selected_smtc_session_id_from_settings {
         if let Some(ref tx) = app.media_connector_command_tx {
-            log::debug!(
-                "[AMLLManager] 应用启动时，尝试恢复上次选择的 SMTC 会话 ID: {}",
-                initial_id
-            );
+            log::debug!("[AMLLManager] 应用启动时，尝试恢复上次选择的 SMTC 会话 ID: {initial_id}");
             if tx
                 .send(ConnectorCommand::SelectSmtcSession(initial_id.clone()))
                 .is_err()
@@ -116,8 +113,7 @@ pub fn check_index_download(app: &mut UniLyricApp) {
     match current_index_state_clone {
         AmllIndexDownloadState::Idle | AmllIndexDownloadState::Error(_) => {
             log::info!(
-                "[AMLLManager] AMLL Connector 已启用，索引状态为 {:?}。正在检查 AMLL DB 索引更新。",
-                current_index_state_clone
+                "[AMLLManager] AMLL Connector 已启用，索引状态为 {current_index_state_clone:?}。正在检查 AMLL DB 索引更新。"
             );
             app.check_for_amll_index_update();
         }
@@ -134,8 +130,7 @@ pub fn check_index_download(app: &mut UniLyricApp) {
         | AmllIndexDownloadState::UpdateAvailable(_) => {
             // 如果正在检查、下载或已知有更新，则不重复触发检查。
             log::info!(
-                "[AMLLManager] AMLL Connector 已启用，AMLL DB 索引操作正在进行中 (状态: {:?})。",
-                current_index_state_clone
+                "[AMLLManager] AMLL Connector 已启用，AMLL DB 索引操作正在进行中 (状态: {current_index_state_clone:?})。"
             );
         }
     }
@@ -149,7 +144,7 @@ pub(crate) async fn run_progress_timer_task(
     mut shutdown_rx: oneshot::Receiver<()>,
     update_tx_to_app: StdSender<ConnectorUpdate>,
 ) {
-    trace!("[ProgressTimer] 定时器已启动。间隔: {:?}", interval);
+    trace!("[ProgressTimer] 定时器已启动。间隔: {interval:?}");
     let mut ticker = tokio::time::interval(interval);
 
     loop {
@@ -176,8 +171,8 @@ pub(crate) async fn run_progress_timer_task(
                         let mut current_simulated_pos_ms = info.position_ms.unwrap_or(0)
                             + elapsed_since_report.as_millis() as u64;
 
-                        if let Some(duration_ms) = info.duration_ms {
-                            if duration_ms > 0 && current_simulated_pos_ms >= duration_ms {
+                        if let Some(duration_ms) = info.duration_ms
+                            && duration_ms > 0 && current_simulated_pos_ms >= duration_ms {
                                 current_simulated_pos_ms = duration_ms;
                                 // 发送 OnPaused 命令给 AMLL Player
                                 if command_tx_to_worker.send(ConnectorCommand::SendProtocolBody(ProtocolBody::OnPaused)).is_err() {
@@ -187,7 +182,6 @@ pub(crate) async fn run_progress_timer_task(
                                 // 或者，app.rs 在接收到 OnPaused 后自行处理 is_playing 状态。
                                 // 为简单起见，这里只发送进度。app.rs 的 SMTC 事件会最终确认播放状态。
                             }
-                        }
 
                         // 只发送模拟的播放进度
                         if command_tx_to_worker.send(ConnectorCommand::SendProtocolBody(ProtocolBody::OnPlayProgress { progress: current_simulated_pos_ms })).is_ok() {
@@ -226,7 +220,7 @@ pub fn trigger_amll_index_update_check(
                      match amll_lyrics_fetcher::amll_fetcher::load_cached_index_head(cache_p) {
                         Ok(Some(head)) => cached_head_on_disk = Some(head),
                         Ok(None) => info!("[AMLL_Manager check_update_task] 未找到缓存的 HEAD。"),
-                        Err(e) => warn!("[AMLL_Manager check_update_task] 加载缓存 HEAD 失败: {}", e),
+                        Err(e) => warn!("[AMLL_Manager check_update_task] 加载缓存 HEAD 失败: {e}"),
                     }
                 }
 
@@ -244,9 +238,9 @@ pub fn trigger_amll_index_update_check(
                 }
             }
             Err(e) => {
-                error!("[AMLL_Manager check_update_task] 检查 AMLL 索引更新失败: {}", e);
+                error!("[AMLL_Manager check_update_task] 检查 AMLL 索引更新失败: {e}");
                 let mut state_lock = amll_index_download_state.lock().unwrap();
-                *state_lock = AmllIndexDownloadState::Error(format!("检查更新失败: {}", e));
+                *state_lock = AmllIndexDownloadState::Error(format!("检查更新失败: {e}"));
             }
         }
     });
@@ -282,7 +276,7 @@ pub fn trigger_amll_index_download_async(
                     final_head_sha_to_use = head;
                 }
                 Err(e) => {
-                    error!("[AMLL_Manager dl_task] (强制刷新) 获取远程 HEAD 失败: {}. 将尝试使用 'unknown' 作为 HEAD 进行下载。", e);
+                    error!("[AMLL_Manager dl_task] (强制刷新) 获取远程 HEAD 失败: {e}. 将尝试使用 'unknown' 作为 HEAD 进行下载。");
                     final_head_sha_to_use = "unknown".to_string();
                     // 更新下载状态以反映正在尝试下载的版本（即使是 "unknown"）
                     let mut state_lock = params.amll_index_download_state.lock().unwrap();
@@ -303,9 +297,9 @@ pub fn trigger_amll_index_download_async(
                     final_head_sha_to_use = head;
                 }
                 Err(e) => {
-                    error!("[AMLL_Manager dl_task] (非强制) 获取远程 HEAD 失败: {}", e);
+                    error!("[AMLL_Manager dl_task] (非强制) 获取远程 HEAD 失败: {e}");
                     let mut state_lock = params.amll_index_download_state.lock().unwrap();
-                    *state_lock = AmllIndexDownloadState::Error(format!("获取远程 HEAD 失败: {}", e));
+                    *state_lock = AmllIndexDownloadState::Error(format!("获取远程 HEAD 失败: {e}"));
                     return; // 获取 HEAD 失败，则不继续下载
                 }
             }
@@ -351,9 +345,9 @@ pub fn trigger_amll_index_download_async(
                 info!("[AMLL_Manager dl_task] AMLL 索引文件下载并解析成功。");
             }
             Err(e) => {
-                error!("[AMLL_Manager dl_task] AMLL 索引文件下载或解析失败: {}", e);
+                error!("[AMLL_Manager dl_task] AMLL 索引文件下载或解析失败: {e}");
                 let mut state_lock = params.amll_index_download_state.lock().unwrap();
-                *state_lock = AmllIndexDownloadState::Error(format!("索引下载/解析失败: {}", e));
+                *state_lock = AmllIndexDownloadState::Error(format!("索引下载/解析失败: {e}"));
             }
         }
     });
@@ -427,7 +421,7 @@ pub fn handle_amll_lyrics_search_or_download_async(
                     }
                     Err(e) => {
                         // 下载失败，更新状态为 Error 并附带错误信息
-                        error!("[AMLL_Manager] AMLL TTML 文件下载失败: {}", e);
+                        error!("[AMLL_Manager] AMLL TTML 文件下载失败: {e}");
                         let mut state_lock = amll_ttml_download_state.lock().unwrap();
                         *state_lock = AmllTtmlDownloadState::Error(e.to_string());
                     }
@@ -462,10 +456,7 @@ pub fn handle_amll_lyrics_search_or_download_async(
                 *ttml_dl_state_lock = AmllTtmlDownloadState::SearchingIndex;
             }
 
-            debug!(
-                "[AMLL_Manager] 开始在 AMLL 索引中搜索: '{}' (字段: {:?})",
-                query_str, field
-            );
+            debug!("[AMLL_Manager] 开始在 AMLL 索引中搜索: '{query_str}' (字段: {field:?})");
 
             // 搜索是在内存中进行的，通常很快，所以直接在这里执行。
             let search_results_vec = {

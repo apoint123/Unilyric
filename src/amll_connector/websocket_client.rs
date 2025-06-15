@@ -68,12 +68,12 @@ async fn send_ws_message(
                     format!("SetMusicInfo({})", String::from_utf8_lossy(&music_name.0))
                 }
                 ProtocolBody::OnPlayProgress { progress } => {
-                    format!("OnPlayProgress(进度:{})", progress)
+                    format!("OnPlayProgress(进度:{progress})")
                 }
                 ProtocolBody::Ping => "Ping (应用层 - 发往服务器)".to_string(),
                 ProtocolBody::Pong => "Pong (应用层 - 回复服务器)".to_string(),
                 _ => {
-                    let debug_str = format!("{:?}", body);
+                    let debug_str = format!("{body:?}");
                     debug_str
                         .split_whitespace()
                         .next()
@@ -90,22 +90,20 @@ async fn send_ws_message(
 
             // 发送二进制消息
             if let Err(e) = writer.send(WsMessage::Binary(binary_data.into())).await {
-                let err_msg = format!(
-                    "发送 WebSocket 二进制消息 (类型: {}) 失败: {:?}",
-                    body_type_for_log, e
-                );
-                log::error!("[WebSocket 客户端] 发送失败: {}", err_msg);
+                let err_msg =
+                    format!("发送 WebSocket 二进制消息 (类型: {body_type_for_log}) 失败: {e:?}");
+                log::error!("[WebSocket 客户端] 发送失败: {err_msg}");
                 return Err(err_msg);
             } else if matches!(body, ProtocolBody::Pong) {
                 log::info!("[WebSocket 客户端] 已成功发送 Pong 到服务器。");
             } else {
-                log::trace!("[WebSocket 客户端] 已成功发送 {} 消息。", body_type_for_log);
+                log::trace!("[WebSocket 客户端] 已成功发送 {body_type_for_log} 消息。");
             }
         }
         Err(e) => {
             // 协议体序列化失败
-            let err_msg = format!("序列化 ProtocolBody {:?} 失败: {:?}", body, e);
-            log::error!("[WebSocket 客户端] 序列化失败: {}", err_msg);
+            let err_msg = format!("序列化 ProtocolBody {body:?} 失败: {e:?}");
+            log::error!("[WebSocket 客户端] 序列化失败: {err_msg}");
             return Err(err_msg);
         }
     }
@@ -125,14 +123,14 @@ async fn send_std_message<T: Send + 'static>(
         }
         Ok(Err(e)) => {
             // SendError from std::sync::mpsc::Sender
-            let err_msg = format!("发送 {} 到 std::mpsc 通道失败: {:?}", log_context, e);
-            log::error!("[WebSocket 客户端] {}", err_msg);
+            let err_msg = format!("发送 {log_context} 到 std::mpsc 通道失败: {e:?}");
+            log::error!("[WebSocket 客户端] {err_msg}");
             Err(err_msg)
         }
         Err(e) => {
             // JoinError from spawn_blocking itself (e.g., task panicked or was cancelled)
-            let err_msg = format!("spawn_blocking 执行 {} 发送失败: {:?}", log_context, e);
-            log::error!("[WebSocket 客户端] {}", err_msg);
+            let err_msg = format!("spawn_blocking 执行 {log_context} 发送失败: {e:?}");
+            log::error!("[WebSocket 客户端] {err_msg}");
             Err(err_msg)
         }
     }
@@ -147,7 +145,7 @@ pub async fn run_websocket_client(
     smtc_control_tx: StdSender<SmtcControlCommand>, // 用于向 SMTC 控制器发送命令的通道 (Std MPSC)
     mut shutdown_rx: OneshotReceiver<()>,  // 用于接收外部关闭信号的通道 (Tokio Oneshot)
 ) {
-    log::info!("[WebSocket 客户端] 启动，目标 URL: {}", websocket_url);
+    log::info!("[WebSocket 客户端] 启动，目标 URL: {websocket_url}");
 
     let mut consecutive_failures: u32 = 0;
     let mut last_seek_request_info: Option<(u64, Instant)> = None;
@@ -156,12 +154,10 @@ pub async fn run_websocket_client(
     'main_loop: loop {
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             log::info!(
-                "[WebSocket 客户端] 已达到最大连续失败连接次数 ({})，将暂停自动重连。",
-                MAX_CONSECUTIVE_FAILURES
+                "[WebSocket 客户端] 已达到最大连续失败连接次数 ({MAX_CONSECUTIVE_FAILURES})，将暂停自动重连。"
             );
             let msg_to_send = WebsocketStatus::错误(format!(
-                "已达到最大重连次数 ({})，请稍后重试。",
-                MAX_CONSECUTIVE_FAILURES
+                "已达到最大重连次数 ({MAX_CONSECUTIVE_FAILURES})，请稍后重试。"
             ));
             // 使用辅助函数发送状态
             if send_std_message(&status_tx, msg_to_send, "最大重连次数状态")
@@ -182,7 +178,7 @@ pub async fn run_websocket_client(
         }
 
         let outcome: LifecycleEndReason = async {
-            log::info!("[WebSocket 客户端] 正在尝试连接到: {} (当前失败次数: {})", websocket_url, consecutive_failures);
+            log::info!("[WebSocket 客户端] 正在尝试连接到: {websocket_url} (当前失败次数: {consecutive_failures})");
             // 使用辅助函数发送状态
             if send_std_message(&status_tx, WebsocketStatus::连接中, "连接中状态").await.is_err() {
                 log::error!("[WebSocket 客户端] 发送 '连接中' 状态失败，Worker 可能已关闭。");
@@ -307,13 +303,12 @@ pub async fn run_websocket_client(
                                                             ProtocolBody::SeekPlayProgress { progress } => {
                                                                 let now = Instant::now();
                                                                 let mut process_this_seek = true;
-                                                                if let Some((last_progress, last_time)) = last_seek_request_info {
-                                                                    if progress == last_progress && now.duration_since(last_time) < SEEK_DEBOUNCE_DURATION {
+                                                                if let Some((last_progress, last_time)) = last_seek_request_info
+                                                                    && progress == last_progress && now.duration_since(last_time) < SEEK_DEBOUNCE_DURATION {
                                                                         process_this_seek = false;
                                                                     }
-                                                                }
                                                                 if process_this_seek {
-                                                                    log::info!("[WebSocket 客户端] 收到服务器命令: 跳转到 {}.", progress);
+                                                                    log::info!("[WebSocket 客户端] 收到服务器命令: 跳转到 {progress}.");
                                                                     last_seek_request_info = Some((progress, now));
                                                                     if send_std_message(&smtc_control_tx, SmtcControlCommand::SeekTo(progress), "SMTC跳转命令").await.is_err() {
                                                                         log::error!("[WebSocket 客户端] 发送“跳转”命令到 SMTC 处理器失败。");
@@ -323,36 +318,35 @@ pub async fn run_websocket_client(
                                                             ProtocolBody::SetVolume { volume } => {
                                                                 let now = Instant::now();
                                                                 let mut process_this_volume_set = true;
-                                                                if let Some(last_time) = last_volume_set_processed_time {
-                                                                    if now.duration_since(last_time) < MIN_VOLUME_SET_INTERVAL {
+                                                                if let Some(last_time) = last_volume_set_processed_time
+                                                                    && now.duration_since(last_time) < MIN_VOLUME_SET_INTERVAL {
                                                                         process_this_volume_set = false;
                                                                     }
-                                                                }
                                                                 if process_this_volume_set {
-                                                                    log::info!("[WebSocket 客户端] 收到服务器命令: 设置音量为 {:.2}", volume);
+                                                                    log::info!("[WebSocket 客户端] 收到服务器命令: 设置音量为 {volume:.2}");
                                                                     last_volume_set_processed_time = Some(now);
                                                                     if (0.0..=1.0).contains(&volume) {
                                                                         let volume_f32 = volume as f32;
                                                                         let command_to_send = SmtcControlCommand::SetVolume(volume_f32);
                                                                         if send_std_message(&smtc_control_tx, command_to_send, "SMTC设置音量命令").await.is_err() {
-                                                                            error!("[WebSocket 客户端] 发送 SetVolume({:.2}) 命令到 Worker 失败。", volume_f32);
+                                                                            error!("[WebSocket 客户端] 发送 SetVolume({volume_f32:.2}) 命令到 Worker 失败。");
                                                                         }
                                                                     } else {
-                                                                        warn!("[WebSocket 客户端] 收到的音量值 {} 超出有效范围 (0.0-1.0)，已忽略。", volume);
+                                                                        warn!("[WebSocket 客户端] 收到的音量值 {volume} 超出有效范围 (0.0-1.0)，已忽略。");
                                                                     }
                                                                 }
                                                             }
                                                             ProtocolBody::OnPaused => { log::info!("[WebSocket 客户端] 收到服务器事件: 播放已暂停。"); }
                                                             ProtocolBody::OnResumed => { log::info!("[WebSocket 客户端] 收到服务器事件: 播放已恢复。"); }
-                                                            ProtocolBody::OnVolumeChanged { volume } => { log::info!("[WebSocket 客户端] 收到服务器事件: 音量更改为 {}.", volume); }
+                                                            ProtocolBody::OnVolumeChanged { volume } => { log::info!("[WebSocket 客户端] 收到服务器事件: 音量更改为 {volume}."); }
                                                             ProtocolBody::OnAudioData { .. } => { log::warn!("[WebSocket 客户端] 收到服务器 OnAudioData 消息，已忽略。"); }
-                                                            ProtocolBody::SetMusicAlbumCoverImageURI { img_url } => { log::warn!("[WebSocket 客户端] 服务器请求设置专辑封面 URI ({:?})，已忽略。", img_url); }
+                                                            ProtocolBody::SetMusicAlbumCoverImageURI { img_url } => { log::warn!("[WebSocket 客户端] 服务器请求设置专辑封面 URI ({img_url:?})，已忽略。"); }
                                                             p @ ProtocolBody::SetLyricFromTTML { .. } |
                                                             p @ ProtocolBody::SetMusicInfo { .. } |
                                                             p @ ProtocolBody::OnPlayProgress { .. } |
                                                             p @ ProtocolBody::SetMusicAlbumCoverImageData { .. }
-                                                            => { log::warn!("[WebSocket 客户端] 收到了应该是我们发送的信息类型: {:?}", p); }
-                                                            _ => { log::error!("[WebSocket 客户端] 收到未处理或未知的协议消息体: {:?}", parsed_body); }
+                                                            => { log::warn!("[WebSocket 客户端] 收到了应该是我们发送的信息类型: {p:?}"); }
+                                                            _ => { log::error!("[WebSocket 客户端] 收到未处理或未知的协议消息体: {parsed_body:?}"); }
                                                         }
                                                     }
                                                     Err(e) => {
@@ -360,18 +354,18 @@ pub async fn run_websocket_client(
                                                     }
                                                 }
                                             }
-                                            WsMessage::Text(text_msg) => { log::warn!("[WebSocket 客户端] 收到意外的文本消息: {}", text_msg); }
-                                            WsMessage::Ping(ping_payload) => { log::trace!("[WebSocket 客户端] 收到 WebSocket 底层 PING: {:?}", ping_payload); }
-                                            WsMessage::Pong(pong_payload) => { log::trace!("[WebSocket 客户端] 收到 WebSocket 底层 PONG: {:?}", pong_payload); }
+                                            WsMessage::Text(text_msg) => { log::warn!("[WebSocket 客户端] 收到意外的文本消息: {text_msg}"); }
+                                            WsMessage::Ping(ping_payload) => { log::trace!("[WebSocket 客户端] 收到 WebSocket 底层 PING: {ping_payload:?}"); }
+                                            WsMessage::Pong(pong_payload) => { log::trace!("[WebSocket 客户端] 收到 WebSocket 底层 PONG: {pong_payload:?}"); }
                                             WsMessage::Close(close_frame) => {
-                                                log::error!("[WebSocket 客户端] 服务器发送了 WebSocket 关闭帧: {:?}. 中断当前连接。", close_frame);
+                                                log::error!("[WebSocket 客户端] 服务器发送了 WebSocket 关闭帧: {close_frame:?}. 中断当前连接。");
                                                 return LifecycleEndReason::ServerClosed;
                                             }
                                             WsMessage::Frame(frame) => { log::trace!("[WebSocket 客户端] 从服务器收到原始 WebSocket 帧: {:?}", frame.header()); }
                                         }
                                     }
                                     Some(Err(e)) => {
-                                        log::error!("[WebSocket 客户端] 从 WebSocket 流读取消息时发生错误: {:?}. 中断当前连接。", e);
+                                        log::error!("[WebSocket 客户端] 从 WebSocket 流读取消息时发生错误: {e:?}. 中断当前连接。");
                                         return LifecycleEndReason::StreamFailure("WebSocket读取错误");
                                     }
                                     None => {
@@ -407,8 +401,8 @@ pub async fn run_websocket_client(
                     } // 活跃连接的消息处理 loop 结束
                 } // end Ok(Ok((ws_stream, response)))
                 Ok(Err(e)) => { // connect_async 返回错误
-                    log::error!("[WebSocket 客户端] 连接到 WebSocket 服务器失败: {:?}", e);
-                    let msg_to_send = WebsocketStatus::错误(format!("连接握手失败: {}", e));
+                    log::error!("[WebSocket 客户端] 连接到 WebSocket 服务器失败: {e:?}");
+                    let msg_to_send = WebsocketStatus::错误(format!("连接握手失败: {e}"));
                     if send_std_message(&status_tx, msg_to_send, "连接握手失败状态").await.is_err() {
                         return LifecycleEndReason::CriticalChannelFailure("发送“连接握手失败”状态失败");
                     }
@@ -455,16 +449,13 @@ pub async fn run_websocket_client(
             LifecycleEndReason::PongTimeout
             | LifecycleEndReason::StreamFailure(_)
             | LifecycleEndReason::ServerClosed => {
-                log::info!(
-                    "[WebSocket 客户端] 因 {:?} 而断开连接，准备尝试重连...",
-                    outcome
-                );
+                log::info!("[WebSocket 客户端] 因 {outcome:?} 而断开连接，准备尝试重连...");
                 // 对于这些在已连接后发生的断开，我们不应该增加 consecutive_failures。
                 // 如果之前 consecutive_failures 因 InitialConnectFailed 而累积，这里应该考虑是否重置。
                 // 最好的做法是在成功连接时重置。
             }
             LifecycleEndReason::InitialConnectFailed(err_msg) => {
-                log::error!("[WebSocket 客户端] 初始连接失败: '{}'。", err_msg);
+                log::error!("[WebSocket 客户端] 初始连接失败: '{err_msg}'。");
                 consecutive_failures += 1; // 只在这里增加
                 if consecutive_failures < MAX_CONSECUTIVE_FAILURES {
                     apply_reconnect_delay = true;
@@ -475,10 +466,7 @@ pub async fn run_websocket_client(
                 break 'main_loop;
             }
             LifecycleEndReason::CriticalChannelFailure(err_msg) => {
-                log::error!(
-                    "[WebSocket 客户端] 发生关键内部通道错误: '{}'。任务将退出。",
-                    err_msg
-                );
+                log::error!("[WebSocket 客户端] 发生关键内部通道错误: '{err_msg}'。任务将退出。");
                 break 'main_loop;
             }
         }
@@ -502,9 +490,7 @@ pub async fn run_websocket_client(
 
         if apply_reconnect_delay {
             log::debug!(
-                "[WebSocket 客户端] 将等待 {}ms 后尝试重连 (已连续失败: {} 次)...",
-                RECONNECT_DELAY_MS,
-                consecutive_failures
+                "[WebSocket 客户端] 将等待 {RECONNECT_DELAY_MS}ms 后尝试重连 (已连续失败: {consecutive_failures} 次)..."
             );
             tokio::select! {
                 biased;

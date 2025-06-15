@@ -261,7 +261,7 @@ impl UniLyricApp {
         let netease_api_client_instance = match netease_lyrics_fetcher::api::NeteaseClient::new() {
             Ok(client) => Some(client), // 成功则Some(client)
             Err(e) => {
-                log::error!("[Unilyric] 初始化网易云API客户端失败: {}", e);
+                log::error!("[Unilyric] 初始化网易云API客户端失败: {e}");
                 None // 失败则None
             }
         };
@@ -282,10 +282,7 @@ impl UniLyricApp {
                         // 遍历该键的所有固定值
                         if let Err(e) = initial_metadata_store.add(display_key, v_str.clone()) {
                             log::error!(
-                                "[Unilyric] 从设置加载固定元数据 '{}' (值: '{}') 到Store失败: {}",
-                                display_key,
-                                v_str,
-                                e
+                                "[Unilyric] 从设置加载固定元数据 '{display_key}' (值: '{v_str}') 到Store失败: {e}"
                             );
                         }
                     }
@@ -297,10 +294,7 @@ impl UniLyricApp {
                     for v_str in values_vec {
                         if let Err(e) = initial_metadata_store.add(display_key, v_str.clone()) {
                             log::error!(
-                                "[Unilyric] 从设置加载固定自定义元数据 '{}' (值: '{}') 到Store失败: {}",
-                                display_key,
-                                v_str,
-                                e
+                                "[Unilyric] 从设置加载固定自定义元数据 '{display_key}' (值: '{v_str}') 到Store失败: {e}"
                             );
                         }
                     }
@@ -330,7 +324,7 @@ impl UniLyricApp {
                     log::info!("[UniLyricApp new] 未找到缓存的 AMLL 索引 HEAD。");
                 }
                 Err(e) => {
-                    log::warn!("[UniLyricApp new] 从缓存加载 AMLL 索引 HEAD 失败: {}。", e);
+                    log::warn!("[UniLyricApp new] 从缓存加载 AMLL 索引 HEAD 失败: {e}。");
                 }
             }
 
@@ -377,7 +371,7 @@ impl UniLyricApp {
                     }
                     Err(e) => {
                         // 从缓存加载索引内容失败
-                        log::warn!("[UniLyricApp new] 从缓存加载 AMLL 索引内容失败: {}。", e);
+                        log::warn!("[UniLyricApp new] 从缓存加载 AMLL 索引内容失败: {e}。");
                         if let Some(head_str) = loaded_cached_head.clone() {
                             initial_amll_index_state = AmllIndexDownloadState::Error(format!(
                                 "缓存索引内容加载失败 (HEAD: {}): {}",
@@ -385,16 +379,14 @@ impl UniLyricApp {
                                 e
                             ));
                         } else {
-                            initial_amll_index_state = AmllIndexDownloadState::Error(format!(
-                                "缓存索引内容加载失败: {}",
-                                e
-                            ));
+                            initial_amll_index_state =
+                                AmllIndexDownloadState::Error(format!("缓存索引内容加载失败: {e}"));
                         }
                     }
                 }
             } else {
                 // 缓存文件不存在
-                log::info!("[UniLyricApp new] AMLL 索引缓存文件 {:?} 不存在。", cache_p);
+                log::info!("[UniLyricApp new] AMLL 索引缓存文件 {cache_p:?} 不存在。");
                 initial_amll_index_state = AmllIndexDownloadState::Idle;
             }
         } else {
@@ -423,11 +415,7 @@ impl UniLyricApp {
             if !cache_dir.exists() {
                 // 如果目录不存在则创建
                 if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                    log::error!(
-                        "[UniLyricApp] 无法创建本地歌词缓存目录 {:?}: {}",
-                        cache_dir,
-                        e
-                    );
+                    log::error!("[UniLyricApp] 无法创建本地歌词缓存目录 {cache_dir:?}: {e}");
                 }
             }
             local_cache_dir = Some(cache_dir.clone()); // 保存缓存目录路径
@@ -449,16 +437,14 @@ impl UniLyricApp {
                                         match serde_json::from_str::<LocalLyricCacheEntry>(&line) {
                                             Ok(entry) => local_lyrics_cache_index_data.push(entry),
                                             Err(e) => log::warn!(
-                                                "[UniLyricApp] 解析本地缓存索引行 '{}' 失败: {}",
-                                                line,
-                                                e
+                                                "[UniLyricApp] 解析本地缓存索引行 '{line}' 失败: {e}"
                                             ),
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     // 读取行失败
-                                    log::error!("[UniLyricApp] 读取本地缓存索引文件行失败: {}", e);
+                                    log::error!("[UniLyricApp] 读取本地缓存索引文件行失败: {e}");
                                     break; // 停止读取
                                 }
                             }
@@ -471,9 +457,7 @@ impl UniLyricApp {
                     }
                     Err(e) => log::error!(
                         // 打开索引文件失败
-                        "[UniLyricApp] 打开本地缓存索引文件 {:?} 失败: {}",
-                        index_file,
-                        e
+                        "[UniLyricApp] 打开本地缓存索引文件 {index_file:?} 失败: {e}"
                     ),
                 }
             }
@@ -660,10 +644,7 @@ impl UniLyricApp {
         if app.websocket_server_enabled {
             let server_addr = format!("127.0.0.1:{}", settings.websocket_server_settings.port); // 构建服务器地址
             let server_instance = websocket_server::WebsocketServer::new(ws_cmd_rx); // 创建服务器实例，传入命令接收端
-            log::info!(
-                "[UniLyricApp new] 准备启动 WebSocket 服务器, 服务器地址: {}",
-                server_addr
-            );
+            log::info!("[UniLyricApp new] 准备启动 WebSocket 服务器, 服务器地址: {server_addr}");
             // 在Tokio运行时中启动服务器任务
             let server_task_handle = app.tokio_runtime.spawn(async move {
                 server_instance.run(server_addr).await; // 运行服务器
@@ -683,10 +664,7 @@ impl UniLyricApp {
             // 尝试恢复上次选择的SMTC会话
             if let Some(ref initial_id) = app.initial_selected_smtc_session_id_from_settings {
                 if let Some(ref tx) = app.media_connector_command_tx {
-                    log::debug!(
-                        "[UniLyricApp new] 尝试恢复上次选择的 SMTC 会话 ID: {}",
-                        initial_id
-                    );
+                    log::debug!("[UniLyricApp new] 尝试恢复上次选择的 SMTC 会话 ID: {initial_id}");
                     if tx
                         .send(ConnectorCommand::SelectSmtcSession(initial_id.clone()))
                         .is_err()

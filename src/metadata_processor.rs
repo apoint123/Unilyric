@@ -181,22 +181,22 @@ impl MetadataStore {
         // 1. 首先按照 `group1_output_order` 中定义的顺序处理元数据
         for key_type in self.get_group1_output_order() {
             // `get_group1_tag_name_for_lrc_qrc` 方法定义在 `types.rs` 的 `CanonicalMetadataKey` impl 中
-            if let Some(tag_name) = key_type.get_group1_tag_name_for_lrc_qrc() {
-                if let Some(values) = self.data.get(key_type) {
-                    // 获取该规范化键的值列表
-                    if !values.is_empty() {
-                        // 将所有非空值用指定分隔符连接起来
-                        let value_str = values
-                            .iter()
-                            .map(|s| s.trim()) // 先 trim 每个值
-                            .filter(|s| !s.is_empty()) // 过滤掉 trim 后为空的值
-                            .collect::<Vec<&str>>()
-                            .join(artist_separator);
-                        if !value_str.is_empty() {
-                            // 如果连接后的值非空
-                            let _ = writeln!(output, "[{}:{}]", tag_name, value_str); // 写入标签
-                            written_keys.insert(key_type); // 标记此键已处理
-                        }
+            if let Some(tag_name) = key_type.get_group1_tag_name_for_lrc_qrc()
+                && let Some(values) = self.data.get(key_type)
+            {
+                // 获取该规范化键的值列表
+                if !values.is_empty() {
+                    // 将所有非空值用指定分隔符连接起来
+                    let value_str = values
+                        .iter()
+                        .map(|s| s.trim()) // 先 trim 每个值
+                        .filter(|s| !s.is_empty()) // 过滤掉 trim 后为空的值
+                        .collect::<Vec<&str>>()
+                        .join(artist_separator);
+                    if !value_str.is_empty() {
+                        // 如果连接后的值非空
+                        let _ = writeln!(output, "[{tag_name}:{value_str}]"); // 写入标签
+                        written_keys.insert(key_type); // 标记此键已处理
                     }
                 }
             }
@@ -218,7 +218,7 @@ impl MetadataStore {
                         .collect::<Vec<&str>>()
                         .join(artist_separator);
                     if !value_str.is_empty() {
-                        let _ = writeln!(output, "[{}:{}]", tag_name, value_str);
+                        let _ = writeln!(output, "[{tag_name}:{value_str}]");
                     }
                 }
             }
@@ -274,14 +274,13 @@ impl MetadataStore {
         let mut all_agent_ids_to_process = HashSet::<String>::new();
 
         for (canonical_key, _values) in store.iter_all() {
-            if let CanonicalMetadataKey::Custom(key_str) = canonical_key {
-                if (key_str.starts_with('v')
+            if let CanonicalMetadataKey::Custom(key_str) = canonical_key
+                && ((key_str.starts_with('v')
                     && key_str.len() > 1
                     && key_str[1..].chars().all(char::is_numeric))
-                    || ["v1", "v2", "v1000"].contains(&key_str.as_str())
-                {
-                    all_agent_ids_to_process.insert(key_str.clone());
-                }
+                    || ["v1", "v2", "v1000"].contains(&key_str.as_str()))
+            {
+                all_agent_ids_to_process.insert(key_str.clone());
             }
         }
 
@@ -511,8 +510,7 @@ impl MetadataStore {
                     if !trimmed_value.is_empty() {
                         let _ = writeln!(
                             comment_output,
-                            "Comment: 0,0:00:00.00,0:00:00.00,{},,0,0,0,,{}: {}",
-                            style_name, ass_comment_key_name, trimmed_value
+                            "Comment: 0,0:00:00.00,0:00:00.00,{style_name},,0,0,0,,{ass_comment_key_name}: {trimmed_value}"
                         );
                     }
                 }

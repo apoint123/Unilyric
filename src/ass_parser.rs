@@ -114,18 +114,16 @@ pub fn parse_karaoke_text(
     for cap in KARAOKE_TAG_REGEX.captures_iter(text) {
         // `tag_match` 是整个 `{\k...}` 标签的匹配结果。
         let tag_match = cap.get(0).ok_or_else(|| {
-            ConvertError::Internal(format!("行 {}: 无法提取K标签的完整匹配", line_num))
+            ConvertError::Internal(format!("行 {line_num}: 无法提取K标签的完整匹配"))
         })?;
         // `duration_cs_str` 是 `\k` 标签中的数字部分（厘秒时长）。
         let duration_cs_str = cap
             .get(1)
-            .ok_or_else(|| {
-                ConvertError::Internal(format!("行 {}: 无法从K标签提取时长值", line_num))
-            })?
+            .ok_or_else(|| ConvertError::Internal(format!("行 {line_num}: 无法从K标签提取时长值")))?
             .as_str();
         // 将时长字符串解析为 u32 类型的厘秒。
         let current_k_duration_cs: u32 = duration_cs_str.parse().map_err(|_| {
-            ConvertError::InvalidAssKaraoke(line_num, format!("无效的K值: {}", duration_cs_str))
+            ConvertError::InvalidAssKaraoke(line_num, format!("无效的K值: {duration_cs_str}"))
         })?;
 
         // `text_slice` 是上一个 `\k` 标签结束处到当前 `\k` 标签开始处之间的文本。
@@ -340,19 +338,12 @@ pub fn parse_actor(
                     lang_code = Some(code.to_string());
                 } else {
                     log::warn!(
-                        "行 {}: 在Actor字段 '{}' 中发现空的语言代码标签 '{}'。",
-                        line_num,
-                        actor_str_input,
-                        tag
+                        "行 {line_num}: 在Actor字段 '{actor_str_input}' 中发现空的语言代码标签 '{tag}'。"
                     );
                 }
             } else {
                 log::warn!(
-                    "行 {}: 非翻译行 (样式: {}) 的Actor字段 '{}' 中发现语言标签 '{}'。该标签可能被忽略或导致非预期行为。",
-                    line_num,
-                    style_input,
-                    actor_str_input,
-                    tag
+                    "行 {line_num}: 非翻译行 (样式: {style_input}) 的Actor字段 '{actor_str_input}' 中发现语言标签 '{tag}'。该标签可能被忽略或导致非预期行为。"
                 );
             }
         }
@@ -461,9 +452,7 @@ pub fn load_and_process_ass_from_string(
             // 基本有效性检查：行类型、开始时间、结束时间不能为空。
             if line_type.is_empty() || start_str.is_empty() || end_str.is_empty() {
                 log::warn!(
-                    "行 {}: 无法从行 '{}' 解析出必要的字段 (类型/开始/结束时间)。",
-                    line_num,
-                    line_str
+                    "行 {line_num}: 无法从行 '{line_str}' 解析出必要的字段 (类型/开始/结束时间)。"
                 );
                 continue;
             }
@@ -480,10 +469,7 @@ pub fn load_and_process_ass_from_string(
                 && !(effect_lower.is_empty() || effect_lower == "karaoke")
             {
                 log::info!(
-                    "行 {}: 因特效字段为 '{}' (非空或非 'karaoke')，已跳过内容处理 (样式: {}).",
-                    line_num,
-                    effect_raw,
-                    style
+                    "行 {line_num}: 因特效字段为 '{effect_raw}' (非空或非 'karaoke')，已跳过内容处理 (样式: {style})."
                 );
                 continue; // 跳过此行的主要内容处理逻辑
             }
@@ -513,12 +499,11 @@ pub fn load_and_process_ass_from_string(
                         // 检查翻译行开始时间是否与最后的主歌词行开始时间匹配
                         if processed_lines[last_idx].start_ms == start_ms {
                             // 如果是第一个检测到的翻译，记录其语言代码
-                            if first_detected_translation_lang.is_none() {
-                                if let Some(lang) = &parsed_actor.lang_code {
-                                    if !lang.is_empty() {
-                                        first_detected_translation_lang = Some(lang.clone());
-                                    }
-                                }
+                            if first_detected_translation_lang.is_none()
+                                && let Some(lang) = &parsed_actor.lang_code
+                                && !lang.is_empty()
+                            {
+                                first_detected_translation_lang = Some(lang.clone());
                             }
                             // 将翻译内容直接添加到对应的 AssLineInfo 的 content 字段中
                             // （当前 AssLineContent 枚举和 ProcessedAssData 结构需要调整以支持这种直接附加，
@@ -542,9 +527,7 @@ pub fn load_and_process_ass_from_string(
                         }
                     } else {
                         log::warn!(
-                            "行 {}: 发现主翻译行 (样式 '{}') 但之前没有找到对应的主歌词行。",
-                            line_num,
-                            style
+                            "行 {line_num}: 发现主翻译行 (样式 '{style}') 但之前没有找到对应的主歌词行。"
                         );
                     }
                 }
@@ -556,10 +539,10 @@ pub fn load_and_process_ass_from_string(
                             if bg_line_info.start_ms == start_ms {
                                 if first_detected_translation_lang.is_none() {
                                     // 也用背景翻译来推断主要翻译语言
-                                    if let Some(lang) = &parsed_actor.lang_code {
-                                        if !lang.is_empty() {
-                                            first_detected_translation_lang = Some(lang.clone());
-                                        }
+                                    if let Some(lang) = &parsed_actor.lang_code
+                                        && !lang.is_empty()
+                                    {
+                                        first_detected_translation_lang = Some(lang.clone());
                                     }
                                 }
                                 // 尝试将背景翻译附加到对应的背景歌词行的 LyricLine 结构中
@@ -589,8 +572,7 @@ pub fn load_and_process_ass_from_string(
                         }
                     } else {
                         log::warn!(
-                            "行 {}: 发现背景翻译行 (样式 'bg-ts') 但之前没有找到对应的背景歌词行。",
-                            line_num
+                            "行 {line_num}: 发现背景翻译行 (样式 'bg-ts') 但之前没有找到对应的背景歌词行。"
                         );
                     }
                 }
@@ -614,8 +596,7 @@ pub fn load_and_process_ass_from_string(
                         }
                     } else {
                         log::warn!(
-                            "行 {}: 发现主罗马音行 (样式 'roma') 但之前没有找到对应的主歌词行。",
-                            line_num
+                            "行 {line_num}: 发现主罗马音行 (样式 'roma') 但之前没有找到对应的主歌词行。"
                         );
                     }
                 }
@@ -650,8 +631,7 @@ pub fn load_and_process_ass_from_string(
                         }
                     } else {
                         log::warn!(
-                            "行 {}: 发现背景罗马音行 (样式 'bg-roma') 但之前没有找到对应的背景歌词行。",
-                            line_num
+                            "行 {line_num}: 发现背景罗马音行 (样式 'bg-roma') 但之前没有找到对应的背景歌词行。"
                         );
                     }
                 }
@@ -684,17 +664,13 @@ pub fn load_and_process_ass_from_string(
                             } else {
                                 add_line_info = false;
                                 log::warn!(
-                                    "行 {}: 样式为 '{}' 的行解析后无音节内容。",
-                                    line_num,
-                                    style
+                                    "行 {line_num}: 样式为 '{style}' 的行解析后无音节内容。"
                                 );
                             }
                         } else {
                             add_line_info = false;
                             log::warn!(
-                                "行 {}: 样式为 '{}' 的行未能解析出有效的演唱者角色。",
-                                line_num,
-                                style
+                                "行 {line_num}: 样式为 '{style}' 的行未能解析出有效的演唱者角色。"
                             );
                         }
                     } else {
@@ -718,7 +694,7 @@ pub fn load_and_process_ass_from_string(
                                     if !value_trimmed.is_empty() {
                                         language_code_val = Some(value_trimmed.clone());
                                     } else {
-                                        log::warn!("行 {}: 'lang' 元数据的值为空。", line_num);
+                                        log::warn!("行 {line_num}: 'lang' 元数据的值为空。");
                                     }
                                 }
                                 // 演唱者名称映射
@@ -729,9 +705,7 @@ pub fn load_and_process_ass_from_string(
                                             .insert(key_trimmed.to_string(), value_trimmed.clone());
                                     } else {
                                         log::warn!(
-                                            "行 {}: 演唱者 '{}' 的名称为空。",
-                                            line_num,
-                                            key_trimmed
+                                            "行 {line_num}: 演唱者 '{key_trimmed}' 的名称为空。"
                                         );
                                     }
                                 }
@@ -744,10 +718,7 @@ pub fn load_and_process_ass_from_string(
                                     if !value_trimmed.is_empty() {
                                         songwriters_val.push(value_trimmed.clone());
                                     } else {
-                                        log::warn!(
-                                            "行 {}: 'songwriter' 元数据的值为空。",
-                                            line_num
-                                        );
+                                        log::warn!("行 {line_num}: 'songwriter' 元数据的值为空。");
                                     }
                                 }
                                 // 将所有解析到的元数据存入列表
@@ -756,29 +727,22 @@ pub fn load_and_process_ass_from_string(
                                     value: value_trimmed,
                                 });
                             } else {
-                                log::warn!(
-                                    "行 {}: 元数据行的 Key 为空: '{}'",
-                                    line_num,
-                                    text_content
-                                );
+                                log::warn!("行 {line_num}: 元数据行的 Key 为空: '{text_content}'");
                             }
                         } else {
                             log::warn!(
-                                "行 {}: 元数据格式无效 (预期格式为 'key: value'): '{}'",
-                                line_num,
-                                text_content
+                                "行 {line_num}: 元数据格式无效 (预期格式为 'key: value'): '{text_content}'"
                             );
                         }
                     } else {
                         log::warn!(
-                            "行 {}: 样式为 'meta' 但不是预期的 Comment 0,0:00:00.00,0:00:00.00 格式。",
-                            line_num
+                            "行 {line_num}: 样式为 'meta' 但不是预期的 Comment 0,0:00:00.00,0:00:00.00 格式。"
                         );
                     }
                 }
                 _ => {
                     add_line_info = false;
-                    log::warn!("行 {}: 遇到未知或当前不支持的样式 '{}'。", line_num, style);
+                    log::warn!("行 {line_num}: 遇到未知或当前不支持的样式 '{style}'。");
                 }
             }
 
@@ -793,11 +757,7 @@ pub fn load_and_process_ass_from_string(
                 });
             } else if add_line_info && current_content.is_none() {
                 // 这种情况理论上不应发生，因为 add_line_info 为 true 前 current_content 应已 Some。
-                log::error!(
-                    "行 {}: 逻辑错误 - 标记为添加行但内容为空 (样式: {})。",
-                    line_num,
-                    style
-                );
+                log::error!("行 {line_num}: 逻辑错误 - 标记为添加行但内容为空 (样式: {style})。");
             }
         } else {
             // 如果行不匹配 ASS_LINE_REGEX，记录为未识别的行。

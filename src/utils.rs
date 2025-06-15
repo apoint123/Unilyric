@@ -3,10 +3,9 @@ use std::path::PathBuf;
 use crate::types::{LysSyllable, TtmlSyllable};
 
 use directories::ProjectDirs;
-use log::{error, info, trace, warn};
+use ferrous_opencc::{OpenCC, error::OpenCCError};
+use log::{error, info, trace};
 use once_cell::sync::Lazy;
-use opencc_rust_windows::{DefaultConfig, OpenCC, generate_static_dictionary};
-use tempfile::{TempDir, tempdir};
 
 #[macro_export]
 macro_rules! log_marker {
@@ -227,17 +226,17 @@ pub fn format_lrc_time_ms(ms: u64) -> String {
     let minutes = ms / 60000; // 计算分钟
     let seconds = (ms % 60000) / 1000; // 计算秒
     let milliseconds = ms % 1000; // 计算毫秒
-    format!("[{:02}:{:02}.{:03}]", minutes, seconds, milliseconds) // 格式化输出
+    format!("[{minutes:02}:{seconds:02}.{milliseconds:03}]") // 格式化输出
 }
 
 pub fn get_app_data_dir() -> Option<PathBuf> {
     if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
         let data_dir = proj_dirs.data_local_dir();
-        if !data_dir.exists() {
-            if let Err(e) = std::fs::create_dir_all(data_dir) {
-                log::error!("[UniLyric] 无法创建应用数据目录 {:?}: {}", data_dir, e);
-                return None;
-            }
+        if !data_dir.exists()
+            && let Err(e) = std::fs::create_dir_all(data_dir)
+        {
+            log::error!("[UniLyric] 无法创建应用数据目录 {data_dir:?}: {e}");
+            return None;
         }
         Some(data_dir.to_path_buf())
     } else {
@@ -282,89 +281,17 @@ pub fn preprocess_qq_translation_lrc_content(lrc_content: String) -> String {
 
 // 全局静态变量，用于存储一次性初始化后的 OpenCC 转换器实例或初始化错误。
 // Lazy 块仅在首次访问时执行。
-static OPENCC_T2S_CONVERTER: Lazy<Result<OpenCCSingleton, String>> = Lazy::new(|| {
-    trace!("[简繁转换] 首次尝试初始化 OpenCC T2S 转换器 (Lazy 模式)...");
-    OpenCCSingleton::new(DefaultConfig::T2S, "T2S")
+static OPENCC_T2S_CONVERTER: Lazy<Result<OpenCC, OpenCCError>> = Lazy::new(|| {
+    trace!("[简繁转换] 首次尝试初始化 ferrous-opencc T2S 转换器 (Lazy 模式)...");
+    OpenCC::from_config_name("t2s.json")
 });
 
-/// 用于封装 OpenCC 实例及其依赖的临时目录，以确保正确的生命周期管理。
-struct OpenCCSingleton {
-    /// 持有 TempDir 以确保其生命周期与 OpenCC 实例一致。
-    /// 当 OpenCCSingleton 被销毁时，_temp_dir 也会被销毁，临时目录随之清理。
-    _temp_dir: TempDir,
-    converter: OpenCC,
-}
-
-impl OpenCCSingleton {
-    /// 创建一个新的 OpenCCSingleton 实例。
-    ///
-    /// # Arguments
-    /// * `config` - 要使用的 OpenCC 默认配置 (例如 `DefaultConfig::T2S`)。
-    /// * `config_name_str` - 配置的名称字符串，用于日志记录。
-    fn new(config: DefaultConfig, config_name_str: &str) -> Result<Self, String> {
-        // 1. 创建临时目录
-        let temp_dir = tempdir()
-            .map_err(|e| format!("为 OpenCC {} 创建临时目录失败: {}", config_name_str, e))?;
-        let dict_path = temp_dir.path();
-        trace!(
-            "[简繁转换] OpenCC {} 的临时词典目录已创建: {}",
-            config_name_str,
-            dict_path.display()
-        );
-
-        // 2. 将静态词典文件提取到临时目录
-        if let Err(e) = generate_static_dictionary(dict_path, config) {
-            return Err(format!(
-                "为 OpenCC {} 生成静态词典文件失败: {}",
-                config_name_str, e
-            ));
-        }
-        trace!(
-            "[简繁转换] OpenCC {} 的静态词典文件已提取至临时目录。",
-            config_name_str
-        );
-
-        // 3. 构建配置文件的完整路径
-        let config_file_name = config.get_file_name();
-        let config_file_path = dict_path.join(config_file_name);
-
-        // 4. 使用提取的配置文件初始化 OpenCC 实例
-        let converter = OpenCC::new(&config_file_path).map_err(|e| {
-            format!(
-                "使用 {} 配置文件 ({}) 初始化 OpenCC 失败: {}",
-                config_name_str,
-                config_file_path.display(),
-                e
-            )
-        })?;
-
-        trace!(
-            "[简繁转换] OpenCC {} 转换器初始化成功。配置文件: {}",
-            config_name_str,
-            config_file_path.display()
-        );
-        Ok(OpenCCSingleton {
-            _temp_dir: temp_dir,
-            converter,
-            // config_name: config_name_str.to_string(),
-        })
-    }
-}
-
 /// 获取对已初始化的 T2S (繁体转简体) OpenCC 转换器的静态引用。
-///
-/// 如果初始化成功，返回 `Ok(&'static OpenCC)`。
-/// 如果初始化失败，返回 `Err(&'static String)`，其中包含错误信息。
-/// 由于 `OPENCC_T2S_CONVERTER` 是静态的 `Lazy`，其内部 `Result` 的引用也是静态的。
-fn get_t2s_converter() -> Result<&'static OpenCC, &'static String> {
-    // `Lazy::force` 会确保初始化已执行，然后 `as_ref` 将 `Result<T, E>` 转换为 `Result<&T, &E>`
-    // 由于 `OPENCC_T2S_CONVERTER` 是 `&'static Lazy<...>`，所以 `&T` 和 `&E` 也是 `&'static T` 和 `&'static E`
-    OPENCC_T2S_CONVERTER
-        .as_ref()
-        .map(|singleton| &singleton.converter)
+fn get_t2s_converter() -> Result<&'static OpenCC, &'static OpenCCError> {
+    OPENCC_T2S_CONVERTER.as_ref()
 }
 
-/// 将文本从繁体中文转换为简体中文 (使用 opencc-rust)。
+/// 将文本从繁体中文转换为简体中文 (使用 ferrous-opencc)。
 /// 如果转换失败或初始化 OpenCC 转换器失败，会记录错误并返回原始文本。
 pub fn convert_traditional_to_simplified(text: &str) -> String {
     if text.is_empty() {
@@ -373,72 +300,18 @@ pub fn convert_traditional_to_simplified(text: &str) -> String {
 
     match get_t2s_converter() {
         Ok(converter) => {
-            // 成功获取转换器
-            if text.contains('\0') {
-                warn!(
-                    "[简繁转换] 输入文本 \"{}\" 包含null字节，可能导致OpenCC处理异常。正在尝试移除null字节后转换。",
-                    text
-                );
-                let sanitized_text = text.replace('\0', "");
-                // 如果原始文本非空但净化后变空（例如，文本只包含null字节）
-                if sanitized_text.is_empty() && !text.is_empty() {
-                    warn!("[简繁转换] 移除null字节后文本变为空。返回原始文本。");
-                    return text.to_string();
-                }
-                let simplified_text: String = match converter.convert(&sanitized_text) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!("[简繁转换] OpenCC 转换失败: {}，返回原文。", e);
-                        return text.to_string();
-                    }
-                };
+            let simplified_text = converter.convert(text);
 
-                if text != simplified_text {
-                    // 比较的是原始带null的text和转换后文本
-                    trace!(
-                        "[简繁转换] 原文(null已处理): '{}' -> 简体: '{}'",
-                        sanitized_text, simplified_text
-                    );
-                } else if !sanitized_text.is_empty()
-                    && sanitized_text.chars().any(|c| c as u32 > 127 && c != ' ')
-                {
-                    // 检查是否包含非ASCII字符（排除空格），以避免对纯英文等文本记录不必要的“无变化”日志
-                    trace!(
-                        "[简繁转换] 文本(null已处理) '{}' 转换为简体后无变化。",
-                        sanitized_text
-                    );
-                }
-                simplified_text
-            } else {
-                let simplified_text: String = match converter.convert(text) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        warn!("[简繁转换] OpenCC 转换失败: {}，返回原文。", e);
-                        return text.to_string();
-                    }
-                };
-
-                if text != simplified_text {
-                    info!("[简繁转换] 原文: '{}' -> 简体: '{}'", text, simplified_text);
-                } else if !text.is_empty() && text.chars().any(|c| c as u32 > 127 && c != ' ') {
-                    // 检查是否包含非ASCII字符（排除空格）
-                    trace!(
-                        "[简繁转换] 文本 '{}' 转换为简体后无变化 (可能已是简体或无对应转换)。",
-                        text
-                    );
-                }
-                simplified_text
+            if text != simplified_text {
+                info!("[简繁转换] 原文: '{text}' -> 简体: '{simplified_text}'");
+            } else if !text.is_empty() && text.chars().any(|c| c as u32 > 127 && c != ' ') {
+                trace!("[简繁转换] 文本 '{text}' 转换为简体后无变化 (可能已是简体或无对应转换)。");
             }
+            simplified_text
         }
-        Err(e_str) => {
-            // e_str 是 &'static String
+        Err(e) => {
             // 初始化或获取转换器失败
-            // OpenCCSingleton::new 中已经记录了详细的初始化错误日志
-            // 此处仅记录获取转换器接口失败，并提示功能可能不可用
-            error!(
-                "[简繁转换] 获取 OpenCC T2S 转换器失败: {}。繁简转换功能将不可用。返回原文。",
-                e_str
-            );
+            error!("[简繁转换] 获取 OpenCC T2S 转换器失败: {e}。繁简转换功能将不可用。返回原文。");
             text.to_string()
         }
     }

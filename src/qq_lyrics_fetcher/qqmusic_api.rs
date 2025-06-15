@@ -143,14 +143,14 @@ pub async fn search_song(client: &Client, keyword: &str) -> ApiResult<(Vec<Song>
         .await
         .map_err(|e| {
             // 处理网络请求错误
-            log::error!("[QQMusicAPI] 网络错误: {}", e);
+            log::error!("[QQMusicAPI] 网络错误: {e}");
             ConvertError::NetworkRequest(e)
         })?
         .text() // 获取响应体文本
         .await
         .map_err(|e| {
             // 处理文本转换错误
-            log::error!("[QQMusicAPI] 转换错误: {}", e);
+            log::error!("[QQMusicAPI] 转换错误: {e}");
             ConvertError::NetworkRequest(e) // 复用 NetworkRequest 错误类型可能不太精确，但能工作
         })?;
 
@@ -161,11 +161,7 @@ pub async fn search_song(client: &Client, keyword: &str) -> ApiResult<(Vec<Song>
         Ok(r) => r,
         Err(e) => {
             // 处理 JSON 解析错误
-            log::error!(
-                "[QQMusicAPI] JSON 处理错误: {}. 原始响应: {}",
-                e,
-                raw_response
-            );
+            log::error!("[QQMusicAPI] JSON 处理错误: {e}. 原始响应: {raw_response}");
             return Err(ConvertError::JsonParse(e));
         }
     };
@@ -230,13 +226,13 @@ pub async fn get_lyrics_by_id(
         .send()
         .await
         .map_err(|e| {
-            log::error!("[QQMusicAPI] 网络错误: {}", e);
+            log::error!("[QQMusicAPI] 网络错误: {e}");
             ConvertError::NetworkRequest(e)
         })?
         .text()
         .await
         .map_err(|e| {
-            log::error!("[QQMusicAPI] 转换错误: {}", e);
+            log::error!("[QQMusicAPI] 转换错误: {e}");
             ConvertError::NetworkRequest(e)
         })?;
 
@@ -246,11 +242,11 @@ pub async fn get_lyrics_by_id(
     let mut temp_cleaned_xml = initial_resp_text.trim(); // 去除首尾空格
 
     // 实际的内容包含在注释中
-    if temp_cleaned_xml.starts_with("<!--") {
-        if let Some(comment_end_index) = temp_cleaned_xml.find("-->") {
-            temp_cleaned_xml = &temp_cleaned_xml[4..comment_end_index];
-            temp_cleaned_xml = temp_cleaned_xml.trim();
-        }
+    if temp_cleaned_xml.starts_with("<!--")
+        && let Some(comment_end_index) = temp_cleaned_xml.find("-->")
+    {
+        temp_cleaned_xml = &temp_cleaned_xml[4..comment_end_index];
+        temp_cleaned_xml = temp_cleaned_xml.trim();
     }
     let cleaned_xml_for_cdata_extraction = temp_cleaned_xml.to_string();
 
@@ -291,10 +287,7 @@ pub async fn get_lyrics_by_id(
                         let decrypted_text =
                             crate::qq_lyrics_fetcher::decrypto::decrypt_lyrics(&cdata_text)
                                 .map_err(|de| {
-                                    ConvertError::Internal(format!(
-                                        "解密 {} 错误: {}",
-                                        target_tag, de
-                                    ))
+                                    ConvertError::Internal(format!("解密 {target_tag} 错误: {de}"))
                                 })?;
 
                         // 将解密后的文本存入相应的变量
@@ -311,16 +304,16 @@ pub async fn get_lyrics_by_id(
                 // 处理结束标签 </tag>
                 let tag_name_bytes = e.name();
                 // 如果结束的标签是当前期望的 CDATA 目标标签，则重置目标
-                if let Some(ref target_tag) = current_cdata_target_tag {
-                    if std::str::from_utf8(tag_name_bytes.as_ref()) == Ok(target_tag.as_str()) {
-                        current_cdata_target_tag = None;
-                    }
+                if let Some(ref target_tag) = current_cdata_target_tag
+                    && std::str::from_utf8(tag_name_bytes.as_ref()) == Ok(target_tag.as_str())
+                {
+                    current_cdata_target_tag = None;
                 }
             }
             Ok(Event::Eof) => break, // XML 文档结束
             Err(e) => {
                 // XML 解析错误
-                log::error!("[QQMusicAPI] 服务器返回的XML解析错误： {}", e);
+                log::error!("[QQMusicAPI] 服务器返回的XML解析错误： {e}");
                 return Err(ConvertError::Xml(e));
             }
             _ => {} // 其他 XML 事件忽略
@@ -422,14 +415,11 @@ fn extract_lyric_content_from_qrcinfos_xml(
         Ok(r) => r,
         Err(e) => {
             log::error!(
-                "[QQMusicAPI - 提取] 正则表达式编译失败，模式: '{}'，错误: {}",
-                regex_pattern,
-                e
+                "[QQMusicAPI - 提取] 正则表达式编译失败，模式: '{regex_pattern}'，错误: {e}"
             );
             // 返回内部错误，指示正则表达式构建问题
             return Err(crate::types::ConvertError::Internal(format!(
-                "正则表达式编译失败: {}",
-                e
+                "正则表达式编译失败: {e}"
             )));
         }
     };
@@ -481,8 +471,7 @@ fn extract_lyric_content_from_qrcinfos_xml(
                     // 这种情况理论上不应发生：如果 re.captures 返回 Some，则捕获组1也应该存在。
                     // 若发生，可能表示正则表达式逻辑本身或XML结构有预料之外的细微变化。
                     log::error!(
-                        "[QQMusicAPI - 提取] 正则表达式匹配成功，但捕获组1 (LyricContent) 未捕获到任何内容。LyricType: '{}'。",
-                        target_lyric_type_str
+                        "[QQMusicAPI - 提取] 正则表达式匹配成功，但捕获组1 (LyricContent) 未捕获到任何内容。LyricType: '{target_lyric_type_str}'。"
                     );
                     Ok(String::new()) // 捕获组问题，返回空字符串
                 }

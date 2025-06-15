@@ -52,8 +52,7 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
         // 校验毫秒部分的长度和内容是否合法
         if ms_str.is_empty() || ms_str.len() > 3 || ms_str.chars().any(|c| !c.is_ascii_digit()) {
             return Err(ConvertError::InvalidTime(format!(
-                "时间戳 '{}' 中的毫秒部分 '{}' 格式无效",
-                original_time_str, ms_str
+                "时间戳 '{original_time_str}' 中的毫秒部分 '{ms_str}' 格式无效"
             )));
         }
         Ok(match ms_str.len() {
@@ -93,8 +92,7 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
                 milliseconds = 0;
             } else {
                 return Err(ConvertError::InvalidTime(format!(
-                    "时间戳 '{}' 中的秒和毫秒部分格式无效: '{}'",
-                    time_str, sec_ms_part
+                    "时间戳 '{time_str}' 中的秒和毫秒部分格式无效: '{sec_ms_part}'"
                 )));
             }
         }
@@ -121,8 +119,7 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
                 milliseconds = 0;
             } else {
                 return Err(ConvertError::InvalidTime(format!(
-                    "时间戳 '{}' 中的秒和毫秒部分格式无效: '{}'",
-                    time_str, sec_ms_part
+                    "时间戳 '{time_str}' 中的秒和毫秒部分格式无效: '{sec_ms_part}'"
                 )));
             }
         }
@@ -144,15 +141,13 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
                 milliseconds = 0;
             } else {
                 return Err(ConvertError::InvalidTime(format!(
-                    "时间戳 '{}' 中的秒和毫秒部分格式无效: '{}'",
-                    time_str, sec_ms_part
+                    "时间戳 '{time_str}' 中的秒和毫秒部分格式无效: '{sec_ms_part}'"
                 )));
             }
         }
         _ => {
             return Err(ConvertError::InvalidTime(format!(
-                "时间格式 '{}' 无效。",
-                time_str
+                "时间格式 '{time_str}' 无效。"
             )));
         }
     }
@@ -160,14 +155,12 @@ pub fn parse_any_ttml_time_ms(time_str: &str) -> Result<u64, ConvertError> {
     // 校验分钟和秒的值是否超出正常范围
     if minutes >= 60 {
         return Err(ConvertError::InvalidTime(format!(
-            "分钟值 '{}' (应小于60) 在时间戳 '{}' 中无效",
-            minutes, time_str
+            "分钟值 '{minutes}' (应小于60) 在时间戳 '{time_str}' 中无效"
         )));
     }
     if seconds >= 60 {
         return Err(ConvertError::InvalidTime(format!(
-            "秒值 '{}' (应小于60) 在时间戳 '{}' 中无效",
-            seconds, time_str
+            "秒值 '{seconds}' (应小于60) 在时间戳 '{time_str}' 中无效"
         )));
     }
 
@@ -214,23 +207,23 @@ fn extract_and_apply_parenthesized_translation(
 
     let mut final_main_text = main_translation_text.to_string();
 
-    if let Some(caps) = re.captures(main_translation_text) {
-        if let Some(bg_trans_match) = caps.get(1) {
-            let bg_trans_text = bg_trans_match.as_str().trim().to_string();
+    if let Some(caps) = re.captures(main_translation_text)
+        && let Some(bg_trans_match) = caps.get(1)
+    {
+        let bg_trans_text = bg_trans_match.as_str().trim().to_string();
 
-            if !bg_trans_text.is_empty() {
-                let bg_sec = para
-                    .background_section
-                    .get_or_insert_with(|| BackgroundSection {
-                        start_ms: para.p_start_ms,
-                        end_ms: para.p_end_ms,
-                        ..Default::default()
-                    });
+        if !bg_trans_text.is_empty() {
+            let bg_sec = para
+                .background_section
+                .get_or_insert_with(|| BackgroundSection {
+                    start_ms: para.p_start_ms,
+                    end_ms: para.p_end_ms,
+                    ..Default::default()
+                });
 
-                if bg_sec.translation.is_none() {
-                    bg_sec.translation = Some((bg_trans_text, main_translation_lang.clone()));
-                    final_main_text = re.replace(main_translation_text, "").trim().to_string();
-                }
+            if bg_sec.translation.is_none() {
+                bg_sec.translation = Some((bg_trans_text, main_translation_lang.clone()));
+                final_main_text = re.replace(main_translation_text, "").trim().to_string();
             }
         }
     }
@@ -513,12 +506,10 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
 
                         if role_attr.as_deref() == Some("x-translation")
                             && first_translation_lang_code.is_none()
+                            && let Some(lang) = &lang_attr
+                            && !lang.is_empty()
                         {
-                            if let Some(lang) = &lang_attr {
-                                if !lang.is_empty() {
-                                    first_translation_lang_code = Some(lang.clone());
-                                }
-                            }
+                            first_translation_lang_code = Some(lang.clone());
                         }
 
                         if is_line_timing_mode {
@@ -563,17 +554,15 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                 lang_attr,
                             ));
 
-                            if content_type == SpanContentType::BackgroundContainer {
-                                if let Some(para) = current_paragraph_word_mode.as_mut() {
-                                    if para.background_section.is_none() {
-                                        para.background_section = Some(BackgroundSection {
-                                            start_ms: current_span_begin_ms
-                                                .unwrap_or(para.p_start_ms),
-                                            end_ms: current_span_end_ms.unwrap_or(para.p_end_ms),
-                                            ..Default::default()
-                                        });
-                                    }
-                                }
+                            if content_type == SpanContentType::BackgroundContainer
+                                && let Some(para) = current_paragraph_word_mode.as_mut()
+                                && para.background_section.is_none()
+                            {
+                                para.background_section = Some(BackgroundSection {
+                                    start_ms: current_span_begin_ms.unwrap_or(para.p_start_ms),
+                                    end_ms: current_span_end_ms.unwrap_or(para.p_end_ms),
+                                    ..Default::default()
+                                });
                             }
                         }
                     }
@@ -642,21 +631,22 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             {
                                 detected_formatted_ttml_or_normalized_text = true;
                             }
-                            if !text_str.is_empty() && text_str.chars().all(char::is_whitespace) {
-                                if let Some(para) = current_paragraph_word_mode.as_mut() {
-                                    let target_syllables = if last_ended_syllable_span_info
-                                        == LastEndedSyllableSpanInfo::MainSyllable
-                                    {
-                                        &mut para.main_syllables
-                                    } else if let Some(bg) = para.background_section.as_mut() {
-                                        &mut bg.syllables
-                                    } else {
-                                        // 如果背景部分不存在，则忽略
-                                        continue;
-                                    };
-                                    if let Some(last_syl) = target_syllables.last_mut() {
-                                        last_syl.ends_with_space = true;
-                                    }
+                            if !text_str.is_empty()
+                                && text_str.chars().all(char::is_whitespace)
+                                && let Some(para) = current_paragraph_word_mode.as_mut()
+                            {
+                                let target_syllables = if last_ended_syllable_span_info
+                                    == LastEndedSyllableSpanInfo::MainSyllable
+                                {
+                                    &mut para.main_syllables
+                                } else if let Some(bg) = para.background_section.as_mut() {
+                                    &mut bg.syllables
+                                } else {
+                                    // 如果背景部分不存在，则忽略
+                                    continue;
+                                };
+                                if let Some(last_syl) = target_syllables.last_mut() {
+                                    last_syl.ends_with_space = true;
                                 }
                             }
                             last_ended_syllable_span_info = LastEndedSyllableSpanInfo::None;
@@ -666,19 +656,19 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         } else {
                             // 【兼容性处理】文本直接在 <p> 内部（不规范情况，如单个字成行）
                             let trimmed_text = text_str.trim();
-                            if !trimmed_text.is_empty() {
-                                if let Some(para) = current_paragraph_word_mode.as_mut() {
-                                    // 将这个文本视为一个覆盖整个 <p> 时长的音节
-                                    let syllable = TtmlSyllable {
-                                        text: trimmed_text.to_string(),
-                                        start_ms: para.p_start_ms,
-                                        end_ms: para.p_end_ms,
-                                        ends_with_space: false,
-                                    };
-                                    para.main_syllables.push(syllable);
-                                    last_ended_syllable_span_info =
-                                        LastEndedSyllableSpanInfo::MainSyllable;
-                                }
+                            if !trimmed_text.is_empty()
+                                && let Some(para) = current_paragraph_word_mode.as_mut()
+                            {
+                                // 将这个文本视为一个覆盖整个 <p> 时长的音节
+                                let syllable = TtmlSyllable {
+                                    text: trimmed_text.to_string(),
+                                    start_ms: para.p_start_ms,
+                                    end_ms: para.p_end_ms,
+                                    ends_with_space: false,
+                                };
+                                para.main_syllables.push(syllable);
+                                last_ended_syllable_span_info =
+                                    LastEndedSyllableSpanInfo::MainSyllable;
                             }
                         }
                     }
@@ -729,8 +719,8 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                 }
                             }
                         } else {
-                            if let Some(para) = current_paragraph_word_mode.take() {
-                                if !para.main_syllables.is_empty()
+                            if let Some(para) = current_paragraph_word_mode.take()
+                                && (!para.main_syllables.is_empty()
                                     || para.background_section.as_ref().is_some_and(|bs| {
                                         !bs.syllables.is_empty()
                                             || bs.translation.is_some()
@@ -738,10 +728,9 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                                     })
                                     || para.translation.is_some()
                                     || para.romanization.is_some()
-                                    || (para.p_end_ms > para.p_start_ms)
-                                {
-                                    paragraphs.push(para);
-                                }
+                                    || (para.p_end_ms > para.p_start_ms))
+                            {
+                                paragraphs.push(para);
                             }
                             span_type_stack_word_mode.clear();
                         }
@@ -755,207 +744,190 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                             let raw_accumulated_text = current_span_text_accumulator.clone();
                             current_span_text_accumulator.clear();
 
-                            if !is_line_timing_mode {
-                                if let Some(para) = current_paragraph_word_mode.as_mut() {
-                                    match span_type {
-                                        SpanContentType::Syllable => {
-                                            if let (Some(start_ms), Some(end_ms)) =
-                                                (begin_ms_opt, end_ms_opt)
-                                            {
-                                                let (core_text_str, ends_with_space) =
-                                                    if !raw_accumulated_text.is_empty()
-                                                        && raw_accumulated_text
-                                                            .chars()
-                                                            .all(char::is_whitespace)
-                                                    {
-                                                        (" ".to_string(), false)
-                                                    } else {
-                                                        let trimmed =
-                                                            raw_accumulated_text.trim_end();
-                                                        (
-                                                            trimmed.to_string(),
-                                                            raw_accumulated_text.len()
-                                                                > trimmed.len(),
-                                                        )
-                                                    };
-
-                                                if !core_text_str.is_empty()
-                                                    || ((core_text_str.is_empty()
-                                                        || core_text_str == " ")
-                                                        && end_ms > start_ms)
+                            if !is_line_timing_mode
+                                && let Some(para) = current_paragraph_word_mode.as_mut()
+                            {
+                                match span_type {
+                                    SpanContentType::Syllable => {
+                                        if let (Some(start_ms), Some(end_ms)) =
+                                            (begin_ms_opt, end_ms_opt)
+                                        {
+                                            let (core_text_str, ends_with_space) =
+                                                if !raw_accumulated_text.is_empty()
+                                                    && raw_accumulated_text
+                                                        .chars()
+                                                        .all(char::is_whitespace)
                                                 {
-                                                    let syllable = TtmlSyllable {
-                                                        text: core_text_str,
-                                                        start_ms,
-                                                        end_ms,
-                                                        ends_with_space,
-                                                    };
-                                                    match context {
-                                                        TextTargetContext::Main => {
-                                                            para.main_syllables.push(syllable);
-                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::MainSyllable;
-                                                        }
-                                                        TextTargetContext::Background => {
-                                                            let bg_sec = para
-                                                                .background_section
-                                                                .get_or_insert_with(
-                                                                    Default::default,
-                                                                );
-                                                            bg_sec.syllables.push(syllable);
-                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
-                                                        }
+                                                    (" ".to_string(), false)
+                                                } else {
+                                                    let trimmed = raw_accumulated_text.trim_end();
+                                                    (
+                                                        trimmed.to_string(),
+                                                        raw_accumulated_text.len() > trimmed.len(),
+                                                    )
+                                                };
+
+                                            if !core_text_str.is_empty()
+                                                || ((core_text_str.is_empty()
+                                                    || core_text_str == " ")
+                                                    && end_ms > start_ms)
+                                            {
+                                                let syllable = TtmlSyllable {
+                                                    text: core_text_str,
+                                                    start_ms,
+                                                    end_ms,
+                                                    ends_with_space,
+                                                };
+                                                match context {
+                                                    TextTargetContext::Main => {
+                                                        para.main_syllables.push(syllable);
+                                                        last_ended_syllable_span_info =
+                                                            LastEndedSyllableSpanInfo::MainSyllable;
+                                                    }
+                                                    TextTargetContext::Background => {
+                                                        let bg_sec = para
+                                                            .background_section
+                                                            .get_or_insert_with(Default::default);
+                                                        bg_sec.syllables.push(syllable);
+                                                        last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
                                                     }
                                                 }
                                             }
                                         }
-                                        SpanContentType::Translation
-                                        | SpanContentType::Romanization => {
-                                            let (normalized_text, was_changed) =
-                                                normalize_whitespace_and_check_changes(
-                                                    &raw_accumulated_text,
-                                                );
-                                            if was_changed
-                                                && !detected_formatted_ttml_or_normalized_text
-                                            {
-                                                detected_formatted_ttml_or_normalized_text = true;
-                                            }
-                                            if !normalized_text.is_empty() {
-                                                // 分别处理主歌词和背景歌词的上下文
-                                                match context {
-                                                    TextTargetContext::Main => {
+                                    }
+                                    SpanContentType::Translation
+                                    | SpanContentType::Romanization => {
+                                        let (normalized_text, was_changed) =
+                                            normalize_whitespace_and_check_changes(
+                                                &raw_accumulated_text,
+                                            );
+                                        if was_changed
+                                            && !detected_formatted_ttml_or_normalized_text
+                                        {
+                                            detected_formatted_ttml_or_normalized_text = true;
+                                        }
+                                        if !normalized_text.is_empty() {
+                                            // 分别处理主歌词和背景歌词的上下文
+                                            match context {
+                                                TextTargetContext::Main => {
+                                                    if span_type == SpanContentType::Translation {
+                                                        para.translation =
+                                                            Some((normalized_text, lang_attr_opt));
+                                                    } else {
+                                                        // Romanization
+                                                        para.romanization = Some(normalized_text);
+                                                    }
+                                                }
+                                                TextTargetContext::Background => {
+                                                    if let Some(bg_sec) =
+                                                        para.background_section.as_mut()
+                                                    {
                                                         if span_type == SpanContentType::Translation
                                                         {
-                                                            para.translation = Some((
+                                                            bg_sec.translation = Some((
                                                                 normalized_text,
                                                                 lang_attr_opt,
                                                             ));
                                                         } else {
                                                             // Romanization
-                                                            para.romanization =
+                                                            bg_sec.romanization =
                                                                 Some(normalized_text);
                                                         }
                                                     }
-                                                    TextTargetContext::Background => {
-                                                        if let Some(bg_sec) =
-                                                            para.background_section.as_mut()
-                                                        {
-                                                            if span_type
-                                                                == SpanContentType::Translation
-                                                            {
-                                                                bg_sec.translation = Some((
-                                                                    normalized_text,
-                                                                    lang_attr_opt,
-                                                                ));
-                                                            } else {
-                                                                // Romanization
-                                                                bg_sec.romanization =
-                                                                    Some(normalized_text);
-                                                            }
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }
-                                        SpanContentType::BackgroundContainer => {
-                                            let trimmed_direct_text = raw_accumulated_text.trim();
+                                    }
+                                    SpanContentType::BackgroundContainer => {
+                                        let trimmed_direct_text = raw_accumulated_text.trim();
 
-                                            if !trimmed_direct_text.is_empty() {
-                                                if let Some(para_mut) =
-                                                    current_paragraph_word_mode.as_mut()
-                                                {
-                                                    let bg_section_has_no_syllables = para_mut
-                                                        .background_section
-                                                        .as_ref()
-                                                        .is_none_or(|bs| bs.syllables.is_empty());
+                                        if !trimmed_direct_text.is_empty() {
+                                            if let Some(para_mut) =
+                                                current_paragraph_word_mode.as_mut()
+                                            {
+                                                let bg_section_has_no_syllables = para_mut
+                                                    .background_section
+                                                    .as_ref()
+                                                    .is_none_or(|bs| bs.syllables.is_empty());
 
-                                                    if bg_section_has_no_syllables {
-                                                        if let (
-                                                            Some(bg_start_ms),
-                                                            Some(bg_end_ms),
-                                                        ) = (begin_ms_opt, end_ms_opt)
+                                                if bg_section_has_no_syllables {
+                                                    if let (Some(bg_start_ms), Some(bg_end_ms)) =
+                                                        (begin_ms_opt, end_ms_opt)
+                                                    {
+                                                        if bg_end_ms > bg_start_ms
+                                                            || (!trimmed_direct_text.is_empty()
+                                                                && bg_end_ms == bg_start_ms)
                                                         {
-                                                            if bg_end_ms > bg_start_ms
-                                                                || (!trimmed_direct_text.is_empty()
-                                                                    && bg_end_ms == bg_start_ms)
-                                                            {
-                                                                let syllable_text_content =
-                                                                    raw_accumulated_text.clone();
+                                                            let syllable_text_content =
+                                                                raw_accumulated_text.clone();
 
-                                                                let ends_with_space_flag =
-                                                                    syllable_text_content
-                                                                        .ends_with(' ')
-                                                                        && syllable_text_content
-                                                                            .len()
-                                                                            > 1
-                                                                        && !syllable_text_content
-                                                                            .trim_end()
-                                                                            .is_empty();
+                                                            let ends_with_space_flag =
+                                                                syllable_text_content
+                                                                    .ends_with(' ')
+                                                                    && syllable_text_content.len()
+                                                                        > 1
+                                                                    && !syllable_text_content
+                                                                        .trim_end()
+                                                                        .is_empty();
 
-                                                                let syllable = TtmlSyllable {
-                                                                    text: syllable_text_content,
-                                                                    start_ms: bg_start_ms,
-                                                                    end_ms: bg_end_ms,
-                                                                    ends_with_space:
-                                                                        ends_with_space_flag,
-                                                                };
+                                                            let syllable = TtmlSyllable {
+                                                                text: syllable_text_content,
+                                                                start_ms: bg_start_ms,
+                                                                end_ms: bg_end_ms,
+                                                                ends_with_space:
+                                                                    ends_with_space_flag,
+                                                            };
 
-                                                                let bg_sec = para_mut
-                                                                    .background_section
-                                                                    .get_or_insert_with(|| {
-                                                                        BackgroundSection {
-                                                                            start_ms: bg_start_ms,
-                                                                            end_ms: bg_end_ms,
-                                                                            ..Default::default()
-                                                                        }
-                                                                    });
-                                                                bg_sec.start_ms = bg_sec
-                                                                    .start_ms
-                                                                    .min(bg_start_ms);
-                                                                bg_sec.end_ms =
-                                                                    bg_sec.end_ms.max(bg_end_ms);
+                                                            let bg_sec = para_mut
+                                                                .background_section
+                                                                .get_or_insert_with(|| {
+                                                                    BackgroundSection {
+                                                                        start_ms: bg_start_ms,
+                                                                        end_ms: bg_end_ms,
+                                                                        ..Default::default()
+                                                                    }
+                                                                });
+                                                            bg_sec.start_ms =
+                                                                bg_sec.start_ms.min(bg_start_ms);
+                                                            bg_sec.end_ms =
+                                                                bg_sec.end_ms.max(bg_end_ms);
 
-                                                                bg_sec.syllables.push(syllable);
-                                                                last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
-                                                            } else if !trimmed_direct_text
-                                                                .is_empty()
-                                                            {
-                                                                log::warn!(
-                                                                    target: "unilyric::ttml_parser",
-                                                                    "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但时间戳无效 ({}ms - {}ms)。该文本未作为音节处理。",
-                                                                    raw_accumulated_text, bg_start_ms, bg_end_ms
-                                                                );
-                                                                last_ended_syllable_span_info =
-                                                                    LastEndedSyllableSpanInfo::None;
-                                                            } else {
-                                                                last_ended_syllable_span_info =
-                                                                    LastEndedSyllableSpanInfo::None;
-                                                            }
-                                                        } else {
+                                                            bg_sec.syllables.push(syllable);
+                                                            last_ended_syllable_span_info = LastEndedSyllableSpanInfo::BackgroundSyllable;
+                                                        } else if !trimmed_direct_text.is_empty() {
                                                             log::warn!(
                                                                 target: "unilyric::ttml_parser",
-                                                                "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但该 x-bg span 缺少时间信息。该文本未作为音节处理。",
-                                                                raw_accumulated_text
+                                                                "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{raw_accumulated_text}\"，但时间戳无效 ({bg_start_ms}ms - {bg_end_ms}ms)。该文本未作为音节处理。"
                                                             );
                                                             last_ended_syllable_span_info =
                                                                 LastEndedSyllableSpanInfo::None;
+                                                        } else {
+                                                            last_ended_syllable_span_info =
+                                                                LastEndedSyllableSpanInfo::None;
                                                         }
-                                                    } else if !trimmed_direct_text.is_empty() {
+                                                    } else {
                                                         log::warn!(
                                                             target: "unilyric::ttml_parser",
-                                                            "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{}\"，但也包含嵌套音节。该直接文本被忽略。",
-                                                            raw_accumulated_text
+                                                            "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{raw_accumulated_text}\"，但该 x-bg span 缺少时间信息。该文本未作为音节处理。"
                                                         );
+                                                        last_ended_syllable_span_info =
+                                                            LastEndedSyllableSpanInfo::None;
                                                     }
-                                                } else {
-                                                    last_ended_syllable_span_info =
-                                                        LastEndedSyllableSpanInfo::None;
+                                                } else if !trimmed_direct_text.is_empty() {
+                                                    log::warn!(
+                                                        target: "unilyric::ttml_parser",
+                                                        "[TTML 处理] 背景区块 <span ttm:role=\"x-bg\"> 包含直接文本 \"{raw_accumulated_text}\"，但也包含嵌套音节。该直接文本被忽略。"
+                                                    );
                                                 }
+                                            } else {
+                                                last_ended_syllable_span_info =
+                                                    LastEndedSyllableSpanInfo::None;
                                             }
                                         }
-                                        _ => {
-                                            last_ended_syllable_span_info =
-                                                LastEndedSyllableSpanInfo::None;
-                                        }
+                                    }
+                                    _ => {
+                                        last_ended_syllable_span_info =
+                                            LastEndedSyllableSpanInfo::None;
                                     }
                                 }
                             }
@@ -971,15 +943,15 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                         current_translation_lang = None;
                     }
                     "text" if in_translation_tag => {
-                        if let Some(key) = current_text_for_key.take() {
-                            if !current_am_translation_text.is_empty() {
-                                am_translations.entry(key).or_insert_with(|| {
-                                    (
-                                        current_am_translation_text.clone(),
-                                        current_translation_lang.clone(),
-                                    )
-                                });
-                            }
+                        if let Some(key) = current_text_for_key.take()
+                            && !current_am_translation_text.is_empty()
+                        {
+                            am_translations.entry(key).or_insert_with(|| {
+                                (
+                                    current_am_translation_text.clone(),
+                                    current_translation_lang.clone(),
+                                )
+                            });
                         }
                     }
                     "metadata" if in_metadata_section => in_metadata_section = false,
@@ -995,13 +967,13 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                     "songwriters" if in_songwriters_tag => in_songwriters_tag = false,
                     "iTunesMetadata" if in_itunes_metadata => in_itunes_metadata = false,
                     "name" if in_agent_name_tag && e.name().as_ref() == b"ttm:name" => {
-                        if let Some(agent_id) = &current_agent_id_for_name {
-                            if !current_agent_name_text.trim().is_empty() {
-                                metadata.push(AssMetadata {
-                                    key: agent_id.clone(),
-                                    value: current_agent_name_text.trim().to_string(),
-                                });
-                            }
+                        if let Some(agent_id) = &current_agent_id_for_name
+                            && !current_agent_name_text.trim().is_empty()
+                        {
+                            metadata.push(AssMetadata {
+                                key: agent_id.clone(),
+                                value: current_agent_name_text.trim().to_string(),
+                            });
                         }
                         in_agent_name_tag = false;
                     }
@@ -1019,7 +991,7 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
                     reader.buffer_position(),
                     e
                 );
-                error!(target: "unilyric::ttml_parser", "{}", error_msg);
+                error!(target: "unilyric::ttml_parser", "{error_msg}");
                 return Err(ConvertError::Xml(e));
             }
             _ => {}
@@ -1028,10 +1000,10 @@ pub fn parse_ttml_from_string(ttml_content: &str) -> ParseTtmlResult {
     if !am_translations.is_empty() {
         for para in paragraphs.iter_mut() {
             if para.translation.is_none() {
-                if let Some(key) = &para.itunes_key {
-                    if let Some((trans_text, trans_lang)) = am_translations.get(key) {
-                        extract_and_apply_parenthesized_translation(para, trans_text, trans_lang);
-                    }
+                if let Some(key) = &para.itunes_key
+                    && let Some((trans_text, trans_lang)) = am_translations.get(key)
+                {
+                    extract_and_apply_parenthesized_translation(para, trans_text, trans_lang);
                 }
             } else if let Some((trans_text, trans_lang)) = para.translation.clone() {
                 extract_and_apply_parenthesized_translation(para, &trans_text, &trans_lang);

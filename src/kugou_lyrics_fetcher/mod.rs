@@ -108,11 +108,11 @@ pub async fn search_lyrics_candidates_async(
     }
 
     let hash_str_owned: String;
-    if let Some(h) = hash {
-        if !h.is_empty() {
-            hash_str_owned = h.to_string();
-            params.push(("hash", &hash_str_owned));
-        }
+    if let Some(h) = hash
+        && !h.is_empty()
+    {
+        hash_str_owned = h.to_string();
+        params.push(("hash", &hash_str_owned));
     }
 
     let response = client
@@ -179,7 +179,7 @@ pub async fn download_and_decrypt_lyrics_async(
             let decrypted_krc = decrypter::decrypt_krc_lyrics(&encrypted_content)?;
             let (_krc_lines_from_parser, embedded_metadata) =
                 krc_parser::load_krc_from_string(&decrypted_krc).map_err(|e| {
-                    KugouError::InvalidKrcData(format!("解析KRC内嵌元数据失败: {}", e))
+                    KugouError::InvalidKrcData(format!("解析KRC内嵌元数据失败: {e}"))
                 })?;
 
             let translations = krc_parser::extract_translation_from_krc(&decrypted_krc)?;
@@ -242,25 +242,24 @@ pub async fn fetch_lyrics_for_song_async(
         );
     }
 
-    if let Some(album) = &selected_song.album_name {
-        if !album.trim().is_empty() {
-            parsed_album_name = Some(album.trim().to_string());
-        }
+    if let Some(album) = &selected_song.album_name
+        && !album.trim().is_empty()
+    {
+        parsed_album_name = Some(album.trim().to_string());
     }
 
     let lyric_search_keyword = {
         let artist_part = parsed_artists_name.first().map_or("", |s| s.as_str());
         let title_part = parsed_song_name.as_deref().unwrap_or("");
         if !artist_part.is_empty() && !title_part.is_empty() {
-            format!("{} - {}", artist_part, title_part)
+            format!("{artist_part} - {title_part}")
         } else if !title_part.is_empty() {
             title_part.to_string()
         } else if !artist_part.is_empty() {
             artist_part.to_string()
         } else {
             log::warn!(
-                "[KugouFetcher] 歌名和艺术家均为空（来自API），使用原始输入进行歌词搜索: {}",
-                song_keywords
+                "[KugouFetcher] 歌名和艺术家均为空（来自API），使用原始输入进行歌词搜索: {song_keywords}"
             );
             song_keywords.to_string()
         }
@@ -286,17 +285,14 @@ pub async fn fetch_lyrics_for_song_async(
         }
         Err(e) => {
             log::warn!(
-                "[KugouFetcher] 使用关键词 '{}' 首次搜索歌词候选失败: {:?}。尝试使用原始关键词 '{}'",
-                lyric_search_keyword,
-                e,
-                song_keywords
+                "[KugouFetcher] 使用关键词 '{lyric_search_keyword}' 首次搜索歌词候选失败: {e:?}。尝试使用原始关键词 '{song_keywords}'"
             );
             search_lyrics_candidates_async(client, song_keywords, duration_ms, hash_for_search)
                 .await?
         }
     };
     if lyrics_candidates.is_empty() {
-        log::warn!("[KugouFetcher] 未找到歌词候选 : {}", lyric_search_keyword);
+        log::warn!("[KugouFetcher] 未找到歌词候选 : {lyric_search_keyword}");
         return Err(KugouError::NoCandidatesFound);
     }
     let best_lyric_candidate = lyrics_candidates

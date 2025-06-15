@@ -44,7 +44,6 @@ urlencoding = "2.1.3"
 
 directories = "6"
 once_cell = "1.19"
-opencc-rust-windows = { version = "1.2.0"}
 rand = "0.9"
 rubato = "0.16.2"
 strum = "0.27.1"
@@ -64,3 +63,4 @@ windows = { git = "https://github.com/microsoft/windows-rs.git", tag = "66", fea
     "Win32_System_Variant",
 ]}
 windows-future = { git = "https://github.com/microsoft/windows-rs.git", tag = "66" }
+ferrous-opencc = "*"

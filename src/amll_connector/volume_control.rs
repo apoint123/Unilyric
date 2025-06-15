@@ -65,24 +65,17 @@ impl Drop for ComInitializer {
 /// # Returns
 /// `Some(pid)` 如果找到，否则 `None`。
 pub fn get_pid_from_identifier(identifier: &str) -> Option<u32> {
-    log::debug!("[音量控制] 尝试从标识符 '{}' 获取 PID。", identifier);
+    log::debug!("[音量控制] 尝试从标识符 '{identifier}' 获取 PID。");
 
     // 优先尝试作为可执行文件名进行精确匹配
     if let Some(pid) = get_pid_from_executable_name(identifier) {
-        log::trace!(
-            "[音量控制] 通过可执行文件名 '{}' 直接找到 PID: {}",
-            identifier,
-            pid
-        );
+        log::trace!("[音量控制] 通过可执行文件名 '{identifier}' 直接找到 PID: {pid}");
         return Some(pid);
     }
 
     // 如果标识符包含 '!'，则尝试作为 AUMID 处理
     if identifier.contains('!') {
-        log::debug!(
-            "[音量控制] 标识符 '{}' 包含 '!'，尝试作为 AUMID 通过音频会话查找。",
-            identifier
-        );
+        log::debug!("[音量控制] 标识符 '{identifier}' 包含 '!'，尝试作为 AUMID 通过音频会话查找。");
         // AUMID 格式通常是 PackageFamilyName!ApplicationId
         let parts: Vec<&str> = identifier.split('!').collect();
         if let Some(package_family_name_from_aumid) = parts.first() {
@@ -91,32 +84,23 @@ pub fn get_pid_from_identifier(identifier: &str) -> Option<u32> {
             {
                 Ok(Some(pid)) => {
                     log::debug!(
-                        "[音量控制] 通过音频会话为 AUMID '{}' (PFN: {}) 找到 PID: {}",
-                        identifier,
-                        package_family_name_from_aumid,
-                        pid
+                        "[音量控制] 通过音频会话为 AUMID '{identifier}' (PFN: {package_family_name_from_aumid}) 找到 PID: {pid}"
                     );
                     return Some(pid);
                 }
                 Ok(None) => {
                     log::warn!(
-                        "[音量控制] 无法通过音频会话为 AUMID '{}' 找到匹配的 PID。",
-                        identifier
+                        "[音量控制] 无法通过音频会话为 AUMID '{identifier}' 找到匹配的 PID。"
                     );
                 }
                 Err(e) => {
                     log::error!(
-                        "[音量控制] 通过音频会话查找 AUMID '{}' 的 PID 时出错: {}",
-                        identifier,
-                        e
+                        "[音量控制] 通过音频会话查找 AUMID '{identifier}' 的 PID 时出错: {e}"
                     );
                 }
             }
         } else {
-            log::warn!(
-                "[音量控制] AUMID '{}' 格式无效，无法提取 PackageFamilyName。",
-                identifier
-            );
+            log::warn!("[音量控制] AUMID '{identifier}' 格式无效，无法提取 PackageFamilyName。");
         }
 
         // 作为后备：如果 AUMID 的第一部分是 .exe 文件名 (例如一些桌面应用的 AUMID)
@@ -124,22 +108,18 @@ pub fn get_pid_from_identifier(identifier: &str) -> Option<u32> {
         let exe_candidate_from_aumid = parts.first().unwrap_or(&"");
         if exe_candidate_from_aumid.to_lowercase().ends_with(".exe") {
             log::debug!(
-                "[音量控制] AUMID '{}' 的第一部分是可执行文件名 '{}'，再次尝试。",
-                identifier,
-                exe_candidate_from_aumid
+                "[音量控制] AUMID '{identifier}' 的第一部分是可执行文件名 '{exe_candidate_from_aumid}'，再次尝试。"
             );
             if let Some(pid) = get_pid_from_executable_name(exe_candidate_from_aumid) {
                 log::debug!(
-                    "[音量控制] 通过从 AUMID 提取的可执行文件名 '{}' 找到 PID: {}",
-                    exe_candidate_from_aumid,
-                    pid
+                    "[音量控制] 通过从 AUMID 提取的可执行文件名 '{exe_candidate_from_aumid}' 找到 PID: {pid}"
                 );
                 return Some(pid);
             }
         }
     }
 
-    log::warn!("[音量控制] 无法从标识符 '{}' 解析 PID。", identifier);
+    log::warn!("[音量控制] 无法从标识符 '{identifier}' 解析 PID。");
     None
 }
 
@@ -157,7 +137,7 @@ fn get_pid_from_executable_name(executable_name: &str) -> Option<u32> {
             return None;
         }
         Err(e) => {
-            log::error!("[音量控制] CreateToolhelp32Snapshot 调用失败: {:?}", e);
+            log::error!("[音量控制] CreateToolhelp32Snapshot 调用失败: {e:?}");
             return None;
         }
     };
@@ -181,7 +161,7 @@ fn get_pid_from_executable_name(executable_name: &str) -> Option<u32> {
     if unsafe { Process32FirstW(snapshot_handle, &mut process_entry) }.is_err() {
         let err = windows::core::Error::from_win32();
         if err.code() != ERROR_NO_MORE_FILES.to_hresult() {
-            log::warn!("[音量控制] Process32FirstW 失败或快照为空: {:?}", err);
+            log::warn!("[音量控制] Process32FirstW 失败或快照为空: {err:?}");
         } else {
             log::trace!("[音量控制] Process32FirstW: 快照为空或无法获取第一个进程。");
         }
@@ -196,16 +176,16 @@ fn get_pid_from_executable_name(executable_name: &str) -> Option<u32> {
             .count();
         let current_exe_name_os = OsString::from_wide(&current_exe_name_wide[..len]);
 
-        if let Some(current_exe_name_str) = current_exe_name_os.to_str() {
-            if current_exe_name_str.eq_ignore_ascii_case(executable_name) {
-                return Some(process_entry.th32ProcessID);
-            }
+        if let Some(current_exe_name_str) = current_exe_name_os.to_str()
+            && current_exe_name_str.eq_ignore_ascii_case(executable_name)
+        {
+            return Some(process_entry.th32ProcessID);
         }
 
         if unsafe { Process32NextW(snapshot_handle, &mut process_entry) }.is_err() {
             let err = windows::core::Error::from_win32();
             if err.code() != ERROR_NO_MORE_FILES.to_hresult() {
-                log::error!("[音量控制] Process32NextW 失败: {:?}", err);
+                log::error!("[音量控制] Process32NextW 失败: {err:?}");
             } else {
                 log::trace!("[音量控制] Process32NextW: 没有更多进程了。");
             }
@@ -222,48 +202,39 @@ fn find_pid_for_aumid_via_audio_sessions(
     full_aumid_for_log: &str,
 ) -> Result<Option<u32>, String> {
     log::trace!(
-        "[音量控制] find_pid_for_aumid: 目标 PFN='{}', 完整 AUMID='{}'",
-        target_pfn_from_aumid,
-        full_aumid_for_log
+        "[音量控制] find_pid_for_aumid: 目标 PFN='{target_pfn_from_aumid}', 完整 AUMID='{full_aumid_for_log}'"
     );
     // 音频会话操作通常需要在单线程单元 (STA) 中执行
     ComInitializer::initialize_com(true)
-        .map_err(|e| format!("COM 初始化失败 (STA), AUMID PID : {:?}", e))?;
+        .map_err(|e| format!("COM 初始化失败 (STA), AUMID PID : {e:?}"))?;
 
     unsafe {
         let device_enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
-                .map_err(|e| format!("创建 IMMDeviceEnumerator 失败: {:?}", e))?;
+                .map_err(|e| format!("创建 IMMDeviceEnumerator 失败: {e:?}"))?;
 
         let default_device = device_enumerator
             .GetDefaultAudioEndpoint(eRender, eConsole)
-            .map_err(|e| format!("获取默认音频端点失败: {:?}", e))?;
+            .map_err(|e| format!("获取默认音频端点失败: {e:?}"))?;
 
         let session_manager: IAudioSessionManager2 = default_device
             .Activate(CLSCTX_ALL, None)
-            .map_err(|e| format!("激活 IAudioSessionManager2 失败: {:?}", e))?;
+            .map_err(|e| format!("激活 IAudioSessionManager2 失败: {e:?}"))?;
 
         let session_enumerator: IAudioSessionEnumerator = session_manager
             .GetSessionEnumerator()
-            .map_err(|e| format!("获取 IAudioSessionEnumerator 失败: {:?}", e))?;
+            .map_err(|e| format!("获取 IAudioSessionEnumerator 失败: {e:?}"))?;
 
         let count = session_enumerator
             .GetCount()
-            .map_err(|e| format!("获取会话数量失败: {:?}", e))?;
-        log::trace!(
-            "[音量控制] find_pid_for_aumid: 系统中发现 {} 个音频会话。",
-            count
-        );
+            .map_err(|e| format!("获取会话数量失败: {e:?}"))?;
+        log::trace!("[音量控制] find_pid_for_aumid: 系统中发现 {count} 个音频会话。");
 
         for i in 0..count {
             let session_control: IAudioSessionControl = match session_enumerator.GetSession(i) {
                 Ok(sc) => sc,
                 Err(e) => {
-                    log::warn!(
-                        "[音量控制] find_pid_for_aumid: 获取会话 {} 失败: {:?}. 跳过。",
-                        i,
-                        e
-                    );
+                    log::warn!("[音量控制] find_pid_for_aumid: 获取会话 {i} 失败: {e:?}. 跳过。");
                     continue;
                 }
             };
@@ -272,65 +243,51 @@ fn find_pid_for_aumid_via_audio_sessions(
                 Ok(sc2) => sc2,
                 Err(e) => {
                     log::warn!(
-                        "[音量控制] find_pid_for_aumid: 转换到 IAudioSessionControl2 失败 (会话 {}): {:?}. 跳过。",
-                        i,
-                        e
+                        "[音量控制] find_pid_for_aumid: 转换到 IAudioSessionControl2 失败 (会话 {i}): {e:?}. 跳过。"
                     );
                     continue;
                 }
             };
 
             // 仅处理活动的音频会话
-            if let Ok(current_state) = session_control2.GetState() {
-                if current_state == AudioSessionStateActive {
-                    // 直接与常量比较
-                    if let Ok(pid) = session_control2.GetProcessId() {
-                        if pid == 0 {
-                            continue;
-                        } // 跳过 PID 为 0 的会话 (通常是系统声音)
+            if let Ok(current_state) = session_control2.GetState()
+                && current_state == AudioSessionStateActive
+            {
+                // 直接与常量比较
+                if let Ok(pid) = session_control2.GetProcessId() {
+                    if pid == 0 {
+                        continue;
+                    } // 跳过 PID 为 0 的会话 (通常是系统声音)
 
-                        // 尝试从 IconPath 提取 PFN 进行匹配
-                        if let Ok(icon_path_pwstr) = session_control2.GetIconPath() {
-                            if !icon_path_pwstr.is_null() {
-                                match icon_path_pwstr.to_string() {
-                                    Ok(icon_path_str_val) if !icon_path_str_val.is_empty() => {
-                                        log::trace!(
-                                            "[音量控制] find_pid_for_aumid: 会话 PID {}, IconPath: '{}'",
-                                            pid,
-                                            icon_path_str_val
+                    // 尝试从 IconPath 提取 PFN 进行匹配
+                    if let Ok(icon_path_pwstr) = session_control2.GetIconPath()
+                        && !icon_path_pwstr.is_null()
+                    {
+                        match icon_path_pwstr.to_string() {
+                            Ok(icon_path_str_val) if !icon_path_str_val.is_empty() => {
+                                log::trace!(
+                                    "[音量控制] find_pid_for_aumid: 会话 PID {pid}, IconPath: '{icon_path_str_val}'"
+                                );
+                                if let Some(pfn_from_icon) =
+                                    extract_pfn_from_uwp_icon_path(&icon_path_str_val)
+                                {
+                                    log::trace!(
+                                        "[音量控制] find_pid_for_aumid: 从 IconPath '{icon_path_str_val}' 提取的 PFN: '{pfn_from_icon}'"
+                                    );
+                                    if pfn_from_icon.eq_ignore_ascii_case(target_pfn_from_aumid) {
+                                        log::debug!(
+                                            "[音量控制] find_pid_for_aumid: 找到匹配! AUMID PFN '{target_pfn_from_aumid}' == IconPath PFN '{pfn_from_icon}'. PID: {pid}"
                                         );
-                                        if let Some(pfn_from_icon) =
-                                            extract_pfn_from_uwp_icon_path(&icon_path_str_val)
-                                        {
-                                            log::trace!(
-                                                "[音量控制] find_pid_for_aumid: 从 IconPath '{}' 提取的 PFN: '{}'",
-                                                icon_path_str_val,
-                                                pfn_from_icon
-                                            );
-                                            if pfn_from_icon
-                                                .eq_ignore_ascii_case(target_pfn_from_aumid)
-                                            {
-                                                log::debug!(
-                                                    "[音量控制] find_pid_for_aumid: 找到匹配! AUMID PFN '{}' == IconPath PFN '{}'. PID: {}",
-                                                    target_pfn_from_aumid,
-                                                    pfn_from_icon,
-                                                    pid
-                                                );
-                                                return Ok(Some(pid));
-                                            }
-                                        }
+                                        return Ok(Some(pid));
                                     }
-                                    Ok(_) => log::trace!(
-                                        "[音量控制] find_pid_for_aumid: 会话 PID {} 的 IconPath 为空字符串。",
-                                        pid
-                                    ),
-                                    Err(e) => log::warn!(
-                                        "[音量控制] find_pid_for_aumid: 转换 IconPath (PID {}) 到 String 失败: {:?}",
-                                        pid,
-                                        e
-                                    ),
                                 }
                             }
+                            Ok(_) => log::trace!(
+                                "[音量控制] find_pid_for_aumid: 会话 PID {pid} 的 IconPath 为空字符串。"
+                            ),
+                            Err(e) => log::warn!(
+                                "[音量控制] find_pid_for_aumid: 转换 IconPath (PID {pid}) 到 String 失败: {e:?}"
+                            ),
                         }
                     }
                 }
@@ -387,7 +344,7 @@ fn extract_pfn_from_uwp_icon_path(icon_path: &str) -> Option<String> {
                         }
                     }
                     let name_part = &pfn_candidate_full[..name_end_pos];
-                    return Some(format!("{}_{}", name_part, publisher_id_candidate));
+                    return Some(format!("{name_part}_{publisher_id_candidate}"));
                 }
             }
         }
@@ -415,20 +372,15 @@ pub fn set_process_volume_by_pid(
         );
         return Ok(());
     }
-    if let Some(vol_f32) = volume_level {
-        if !(0.0..=1.0).contains(&vol_f32) {
-            return Err(format!("音量级别 {} (f32) 超出范围 (0.0-1.0)。", vol_f32));
-        }
+    if let Some(vol_f32) = volume_level
+        && !(0.0..=1.0).contains(&vol_f32)
+    {
+        return Err(format!("音量级别 {vol_f32} (f32) 超出范围 (0.0-1.0)。"));
     }
 
-    log::debug!(
-        "[音量控制] 尝试为 PID {} 设置音量: {:?}, 静音: {:?}",
-        target_pid,
-        volume_level,
-        mute
-    );
+    log::debug!("[音量控制] 尝试为 PID {target_pid} 设置音量: {volume_level:?}, 静音: {mute:?}");
     ComInitializer::initialize_com(true)
-        .map_err(|e| format!("COM 初始化失败 (STA), set_volume: {}", e))?;
+        .map_err(|e| format!("COM 初始化失败 (STA), set_volume: {e}"))?;
 
     unsafe {
         let device_enumerator: IMMDeviceEnumerator =
@@ -465,10 +417,9 @@ pub fn set_process_volume_by_pid(
                                 Ok(sav) => sav,
                                 Err(e) => {
                                     let err_msg = format!(
-                                        "set_volume: 转换到 ISimpleAudioVolume 失败 (PID {}): {}",
-                                        pid, e
+                                        "set_volume: 转换到 ISimpleAudioVolume 失败 (PID {pid}): {e}"
                                     );
-                                    log::error!("[音量控制] {}", err_msg);
+                                    log::error!("[音量控制] {err_msg}");
                                     return Err(err_msg);
                                 }
                             };
@@ -478,9 +429,7 @@ pub fn set_process_volume_by_pid(
                                     .SetMasterVolume(vol_f32, &GUID::default())
                                     .map_err(|e| e.to_string())?;
                                 log::trace!(
-                                    "[音量控制] PID {} 的音量已设置为: {} (f32)",
-                                    target_pid,
-                                    vol_f32
+                                    "[音量控制] PID {target_pid} 的音量已设置为: {vol_f32} (f32)"
                                 );
                             }
 
@@ -488,22 +437,16 @@ pub fn set_process_volume_by_pid(
                                 simple_audio_volume
                                     .SetMute(m, &GUID::default())
                                     .map_err(|e| e.to_string())?;
-                                log::trace!(
-                                    "[音量控制] PID {} 的静音状态已设置为: {}",
-                                    target_pid,
-                                    m
-                                );
+                                log::trace!("[音量控制] PID {target_pid} 的静音状态已设置为: {m}");
                             }
                             return Ok(());
                         } else {
                             log::debug!(
-                                "[音量控制] set_volume: PID {} 匹配，但会话状态 {:?} 非活动，跳过。",
-                                pid,
-                                current_state
+                                "[音量控制] set_volume: PID {pid} 匹配，但会话状态 {current_state:?} 非活动，跳过。"
                             );
                         }
                     } else {
-                        log::warn!("[音量控制] set_volume: 无法获取 PID {} 的会话状态。", pid);
+                        log::warn!("[音量控制] set_volume: 无法获取 PID {pid} 的会话状态。");
                     }
                 }
                 Ok(other_pid) => {
@@ -517,15 +460,15 @@ pub fn set_process_volume_by_pid(
                     }
                 }
                 Err(e) if e.code() == AUDCLNT_S_NO_CURRENT_PROCESS => {
-                    log::trace!("[音量控制] 会话 {} 没有关联的进程。", i);
+                    log::trace!("[音量控制] 会话 {i} 没有关联的进程。");
                 }
                 Err(e) => {
-                    log::warn!("[音量控制] 获取会话 {} 的 PID 失败: {}", i, e);
+                    log::warn!("[音量控制] 获取会话 {i} 的 PID 失败: {e}");
                 }
             }
         }
     }
-    Err(format!("未找到 PID {} 对应的会话来设置音量。", target_pid))
+    Err(format!("未找到 PID {target_pid} 对应的会话来设置音量。"))
 }
 
 /// 获取指定 PID 进程的音频会话音量和静音状态。
@@ -534,9 +477,9 @@ pub fn set_process_volume_by_pid(
 /// `Ok((volume, is_muted))` 其中 volume 是 f64 (0.0-1.0)，is_muted 是布尔值。
 /// 否则返回错误信息字符串。
 pub fn get_process_volume_by_pid(target_pid: u32) -> Result<(f32, bool), String> {
-    log::debug!("[音量控制] 尝试获取 PID {} 的音量和静音状态。", target_pid);
+    log::debug!("[音量控制] 尝试获取 PID {target_pid} 的音量和静音状态。");
     ComInitializer::initialize_com(true)
-        .map_err(|e| format!("COM 初始化失败 (STA), get_volume: {}", e))?;
+        .map_err(|e| format!("COM 初始化失败 (STA), get_volume: {e}"))?;
 
     unsafe {
         let device_enumerator: IMMDeviceEnumerator =
@@ -562,40 +505,33 @@ pub fn get_process_volume_by_pid(target_pid: u32) -> Result<(f32, bool), String>
                 Err(_) => continue,
             };
 
-            if let Ok(pid) = session_control2.GetProcessId() {
-                if pid == target_pid {
-                    if let Ok(current_state) = session_control2.GetState() {
-                        if current_state == windows::Win32::Media::Audio::AudioSessionStateActive {
-                            // 使用导入的常量
-                            let simple_audio_volume: ISimpleAudioVolume =
-                                session_control2.cast().map_err(|e| {
-                                    format!("转换到 ISimpleAudioVolume 失败 (PID {}): {}", pid, e)
-                                })?;
+            if let Ok(pid) = session_control2.GetProcessId()
+                && pid == target_pid
+                && let Ok(current_state) = session_control2.GetState()
+                && current_state == windows::Win32::Media::Audio::AudioSessionStateActive
+            {
+                // 使用导入的常量
+                let simple_audio_volume: ISimpleAudioVolume = session_control2
+                    .cast()
+                    .map_err(|e| format!("转换到 ISimpleAudioVolume 失败 (PID {pid}): {e}"))?;
 
-                            let volume_f32 = simple_audio_volume
-                                .GetMasterVolume()
-                                .map_err(|e| e.to_string())?; // 直接是 f32
-                            let muted = simple_audio_volume
-                                .GetMute()
-                                .map_err(|e| e.to_string())?
-                                .as_bool();
+                let volume_f32 = simple_audio_volume
+                    .GetMasterVolume()
+                    .map_err(|e| e.to_string())?; // 直接是 f32
+                let muted = simple_audio_volume
+                    .GetMute()
+                    .map_err(|e| e.to_string())?
+                    .as_bool();
 
-                            log::trace!(
-                                "[音量控制] PID {} 的当前音量: {} (f32), 静音状态: {}",
-                                target_pid,
-                                volume_f32,
-                                muted
-                            );
-                            return Ok((volume_f32, muted)); // 直接返回 f32
-                        }
-                    }
-                }
+                log::trace!(
+                    "[音量控制] PID {target_pid} 的当前音量: {volume_f32} (f32), 静音状态: {muted}"
+                );
+                return Ok((volume_f32, muted)); // 直接返回 f32
             }
         }
     }
     Err(format!(
-        "未找到 PID {} 对应的活动音频会话来获取音量。",
-        target_pid
+        "未找到 PID {target_pid} 对应的活动音频会话来获取音量。"
     ))
 }
 
@@ -632,7 +568,7 @@ fn log_session_details_if_relevant(
             .unwrap_or_else(|| "N/A".to_string());
 
         let state_str = unsafe { session_control2.GetState() }
-            .map(|s| format!("{:?}", s))
+            .map(|s| format!("{s:?}"))
             .unwrap_or_else(|_| "N/A".to_string());
 
         let is_target_str = if pid == target_pid_context {
@@ -642,13 +578,7 @@ fn log_session_details_if_relevant(
         };
 
         log::trace!(
-            "[音量控制] 会话索引: {}, PID: {} {}, 显示名称: '{}', 图标路径: '{}', 状态: {}",
-            index,
-            pid,
-            is_target_str,
-            display_name_str,
-            icon_path_str,
-            state_str,
+            "[音量控制] 会话索引: {index}, PID: {pid} {is_target_str}, 显示名称: '{display_name_str}', 图标路径: '{icon_path_str}', 状态: {state_str}",
         );
     }
 }

@@ -118,9 +118,7 @@ fn process_and_send_audio_data(
         && target_channels_for_output == 2
     {
         log::debug!(
-            "[音频处理] 将 {} 声道音频数据降混为 {} 声道。",
-            channels_in_audio_data,
-            target_channels_for_output
+            "[音频处理] 将 {channels_in_audio_data} 声道音频数据降混为 {target_channels_for_output} 声道。"
         );
         final_samples_f32_for_conversion = audio_f32_interleaved
             .chunks_exact(channels_in_audio_data) // 按原始帧 (包含所有声道) 分割
@@ -135,9 +133,7 @@ fn process_and_send_audio_data(
     } else if channels_in_audio_data == 1 && target_channels_for_output == 2 {
         // 从单声道复制到立体声 (每个单声道样本复制一次以填充左右声道)
         log::debug!(
-            "[音频处理] 将 {} 声道音频数据扩展为 {} 声道。",
-            channels_in_audio_data,
-            target_channels_for_output
+            "[音频处理] 将 {channels_in_audio_data} 声道音频数据扩展为 {target_channels_for_output} 声道。"
         );
         final_samples_f32_for_conversion = audio_f32_interleaved
             .iter()
@@ -145,9 +141,7 @@ fn process_and_send_audio_data(
             .collect();
     } else {
         log::warn!(
-            "[音频处理] 不支持的声道转换: 从 {} 声道到 {} 声道。将直接使用原始声道数据。",
-            channels_in_audio_data,
-            target_channels_for_output,
+            "[音频处理] 不支持的声道转换: 从 {channels_in_audio_data} 声道到 {target_channels_for_output} 声道。将直接使用原始声道数据。",
         );
         final_samples_f32_for_conversion = audio_f32_interleaved;
     }
@@ -180,7 +174,7 @@ fn process_and_send_audio_data(
             .is_err()
         {
             let err_msg = "[音频处理] 发送音频数据包失败。通道可能已关闭，捕获停止。".to_string();
-            log::error!("{}", err_msg);
+            log::error!("{err_msg}");
             return Err(err_msg); // 返回错误，指示发送失败，这通常会导致捕获循环终止
         }
     }
@@ -231,7 +225,7 @@ impl AudioCapturer {
                         ComThreadInitializer // 返回 Guard 对象
                     }
                     Err(e) => {
-                        log::error!("[音频捕获线程] COM (STA) 初始化失败: {:?}。线程即将退出。", e);
+                        log::error!("[音频捕获线程] COM (STA) 初始化失败: {e:?}。线程即将退出。");
                         // 尝试通过发送一个空数据包来通知主工作线程 COM 初始化失败
                         if update_tx.send(ConnectorUpdate::AudioDataPacket(Vec::new())).is_err(){
                              log::error!("[音频捕获线程] 发送空包以通知COM初始化失败时出错。");
@@ -249,17 +243,17 @@ impl AudioCapturer {
                     if AvSetMmThreadCharacteristicsW(&task_name_hstring, &mut task_index).is_err() {
                         log::warn!("[音频捕获线程] 无法设置线程特性为 'Pro Audio'。可能需要管理员权限或特定服务正在运行。");
                     } else {
-                        log::debug!("[音频捕获线程] 线程特性已成功设置为 'Pro Audio' (任务索引: {}).", task_index);
+                        log::debug!("[音频捕获线程] 线程特性已成功设置为 'Pro Audio' (任务索引: {task_index}).");
                     }
                 }
 
                 // 执行核心的捕获循环逻辑
                 if let Err(e) = AudioCapturer::capture_loop_impl(stop_signal_clone, update_tx) {
-                    log::error!("[音频捕获线程] 捕获循环遇到错误: {}。线程即将退出。", e);
+                    log::error!("[音频捕获线程] 捕获循环遇到错误: {e}。线程即将退出。");
                 }
                 log::debug!("[音频捕获线程] 音频捕获线程已结束 (ID: {:?})。", thread::current().id());
             })
-            .map_err(|e| format!("无法启动音频捕获线程: {:?}", e))?,
+            .map_err(|e| format!("无法启动音频捕获线程: {e:?}"))?,
         );
         log::debug!("[音频捕获器] 音频捕获线程已成功请求启动。");
         Ok(())
@@ -279,7 +273,7 @@ impl AudioCapturer {
             );
             match handle.join() {
                 Ok(_) => log::debug!("[音频捕获器] 音频捕获线程已成功停止。"),
-                Err(e) => log::error!("[音频捕获器] 等待音频捕获线程结束时发生错误: {:?}", e),
+                Err(e) => log::error!("[音频捕获器] 等待音频捕获线程结束时发生错误: {e:?}"),
             }
         } else {
             log::debug!("[音频捕获器] 音频捕获线程未在运行或已被请求停止。");
@@ -359,12 +353,7 @@ impl AudioCapturer {
             let original_block_align = wave_format.nBlockAlign; // 每个音频帧的字节数
 
             log::debug!(
-                "[音频捕获线程] 原始捕获格式: 采样率={}Hz, 声道数={}, 位深度={}, 格式标签={}, 块对齐={}",
-                original_sample_rate,
-                original_channels_usize,
-                original_bits_per_sample,
-                original_format_tag,
-                original_block_align
+                "[音频捕获线程] 原始捕获格式: 采样率={original_sample_rate}Hz, 声道数={original_channels_usize}, 位深度={original_bits_per_sample}, 格式标签={original_format_tag}, 块对齐={original_block_align}"
             );
 
             // --- 步骤 2: 校验原始音频格式 ---
@@ -386,10 +375,9 @@ impl AudioCapturer {
 
             if !is_source_float || original_bits_per_sample != 32 {
                 let err_msg = format!(
-                    "不支持的原始音频格式: 标签={}, 位深度={}. 程序期望捕获 32 位 IEEE 浮点数格式的音频。",
-                    original_format_tag, original_bits_per_sample
+                    "不支持的原始音频格式: 标签={original_format_tag}, 位深度={original_bits_per_sample}. 程序期望捕获 32 位 IEEE 浮点数格式的音频。"
                 );
-                log::error!("{}", err_msg);
+                log::error!("{err_msg}");
                 return Err(err_msg);
             }
 
@@ -408,8 +396,7 @@ impl AudioCapturer {
                 )
                 .map_err(|e| format!("IAudioClient Initialize (环回模式) 失败: {}", e.message()))?;
             log::debug!(
-                "[音频捕获线程] IAudioClient 初始化成功 (环回模式，缓冲区时长约 {}ms)。",
-                WASAPI_BUFFER_DURATION_MS
+                "[音频捕获线程] IAudioClient 初始化成功 (环回模式，缓冲区时长约 {WASAPI_BUFFER_DURATION_MS}ms)。"
             );
 
             // --- 步骤 4: 获取 IAudioCaptureClient 服务 ---
@@ -424,9 +411,7 @@ impl AudioCapturer {
                 .Start()
                 .map_err(|e| format!("启动音频流 (IAudioClient Start) 失败: {}", e.message()))?;
             log::debug!(
-                "[音频捕获线程] 音频捕获流已启动。目标输出格式: {}Hz, {}声道 (u16 PCM)。",
-                TARGET_SAMPLE_RATE,
-                TARGET_CHANNELS
+                "[音频捕获线程] 音频捕获流已启动。目标输出格式: {TARGET_SAMPLE_RATE}Hz, {TARGET_CHANNELS}声道 (u16 PCM)。"
             );
 
             // --- 步骤 6: 初始化重采样器 (如果需要) ---
@@ -435,10 +420,7 @@ impl AudioCapturer {
 
             if original_sample_rate != TARGET_SAMPLE_RATE {
                 log::debug!(
-                    "[音频捕获线程] 检测到采样率不匹配，需要进行重采样: {}Hz -> {}Hz (声道数: {})",
-                    original_sample_rate,
-                    TARGET_SAMPLE_RATE,
-                    original_channels_usize
+                    "[音频捕获线程] 检测到采样率不匹配，需要进行重采样: {original_sample_rate}Hz -> {TARGET_SAMPLE_RATE}Hz (声道数: {original_channels_usize})"
                 );
                 // 配置重采样器参数
                 let params = SincInterpolationParameters {
@@ -465,19 +447,17 @@ impl AudioCapturer {
                     initial_chunk_size_for_resampler, // 提供给重采样器的初始期望块大小 (帧)
                     original_channels_usize,          // 输入音频的声道数
                 )
-                .map_err(|e| format!("创建 Rubato 重采样器失败: {:?}", e))?;
+                .map_err(|e| format!("创建 Rubato 重采样器失败: {e:?}"))?;
 
                 // 获取重采样器实际期望的下一个输入块的大小 (帧数)
                 resampler_input_chunk_size_frames = rs_instance.input_frames_next();
                 log::debug!(
-                    "[音频捕获线程] Rubato 重采样器初始化成功。期望输入块大小: {} 帧。",
-                    resampler_input_chunk_size_frames
+                    "[音频捕获线程] Rubato 重采样器初始化成功。期望输入块大小: {resampler_input_chunk_size_frames} 帧。"
                 );
                 resampler = Some(rs_instance);
             } else {
                 log::debug!(
-                    "[音频捕获线程] 原始采样率与目标采样率一致 ({_samplerate}Hz)，无需重采样。",
-                    _samplerate = original_sample_rate
+                    "[音频捕获线程] 原始采样率与目标采样率一致 ({original_sample_rate}Hz)，无需重采样。"
                 );
             }
 
@@ -520,10 +500,7 @@ impl AudioCapturer {
                 if packet_length_frames == 0 {
                     continue; // 没有新数据，继续下一次轮询。
                 }
-                log::trace!(
-                    "[音频捕获线程] 检测到 {} 帧可用数据。",
-                    packet_length_frames
-                );
+                log::trace!("[音频捕获线程] 检测到 {packet_length_frames} 帧可用数据。");
 
                 // 获取音频数据缓冲区。
                 let mut p_data: *mut u8 = std::ptr::null_mut(); // 指向捕获数据的指针
@@ -545,8 +522,7 @@ impl AudioCapturer {
                 // 检查是否为静音数据包。如果是，则忽略它。
                 if dw_flags & (AUDCLNT_BUFFERFLAGS_SILENT.0 as u32) != 0 {
                     log::trace!(
-                        "[音频捕获线程] 收到静音数据包 ({} 帧)，已忽略。",
-                        num_frames_actually_captured
+                        "[音频捕获线程] 收到静音数据包 ({num_frames_actually_captured} 帧)，已忽略。"
                     );
                     // 即使是静音数据，也需要释放缓冲区。
                     capture_client
@@ -586,8 +562,7 @@ impl AudioCapturer {
                         }
                     }
                     log::trace!(
-                        "[音频捕获线程] 成功捕获并转换 {} 帧数据到 f32 交错格式。",
-                        num_frames_actually_captured
+                        "[音频捕获线程] 成功捕获并转换 {num_frames_actually_captured} 帧数据到 f32 交错格式。"
                     );
 
                     let mut data_to_send_this_cycle_interleaved: Vec<f32> = Vec::new();
@@ -602,8 +577,7 @@ impl AudioCapturer {
                                 .push(sample_value);
                         }
                         log::trace!(
-                            "[音频捕获线程] {} 帧新数据已去交错并追加到累积缓冲区。",
-                            num_frames_actually_captured
+                            "[音频捕获线程] {num_frames_actually_captured} 帧新数据已去交错并追加到累积缓冲区。"
                         );
 
                         // ii. 循环处理累积缓冲区中所有完整的块，直到累积数据不足一个完整块
@@ -650,15 +624,12 @@ impl AudioCapturer {
                                         }
                                     }
                                     log::trace!(
-                                        "[音频捕获线程] 重采样一个块: {} 输入帧 -> {} 输出帧。",
-                                        resampler_input_chunk_size_frames, // _frames_read_by_resampler 应该等于此值
-                                        frames_written_by_resampler
+                                        "[音频捕获线程] 重采样一个块: {resampler_input_chunk_size_frames} 输入帧 -> {frames_written_by_resampler} 输出帧。"
                                     );
                                 }
                                 Err(e) => {
                                     log::error!(
-                                        "[音频捕获线程] 重采样处理失败 (块处理): {:?}。将清空累积数据并跳过此块。",
-                                        e
+                                        "[音频捕获线程] 重采样处理失败 (块处理): {e:?}。将清空累积数据并跳过此块。"
                                     );
                                     // 发生错误时，清空所有累积数据以避免错误传播或处理不一致的数据。
                                     for channel_buffer in accumulated_audio_planar.iter_mut() {
@@ -719,8 +690,7 @@ impl AudioCapturer {
                 {
                     let first_channel_len = accumulated_audio_planar[0].len();
                     log::debug!(
-                        "[音频捕获线程] 处理流末尾，累积缓冲区中剩余音频数据 (例如，声道0有 {} 样本)...",
-                        first_channel_len
+                        "[音频捕获线程] 处理流末尾，累积缓冲区中剩余音频数据 (例如，声道0有 {first_channel_len} 样本)..."
                     );
 
                     // 准备输入和输出切片给重采样器
@@ -746,18 +716,14 @@ impl AudioCapturer {
                     ) {
                         Ok((frames_read_by_resampler, frames_written_by_resampler)) => {
                             log::debug!(
-                                "[音频捕获线程] 流末尾数据重采样完成: {} 帧读取, {} 帧写入。",
-                                frames_read_by_resampler,
-                                frames_written_by_resampler
+                                "[音频捕获线程] 流末尾数据重采样完成: {frames_read_by_resampler} 帧读取, {frames_written_by_resampler} 帧写入。"
                             );
 
                             if frames_read_by_resampler != first_channel_len
                                 && first_channel_len > 0
                             {
                                 log::warn!(
-                                    "[音频捕获线程] 流末尾重采样读取的帧数 ({}) 与提供的帧数 ({}) 不匹配。这可能发生在输入不足一个完整块时。",
-                                    frames_read_by_resampler,
-                                    first_channel_len
+                                    "[音频捕获线程] 流末尾重采样读取的帧数 ({frames_read_by_resampler}) 与提供的帧数 ({first_channel_len}) 不匹配。这可能发生在输入不足一个完整块时。"
                                 );
                             }
 
@@ -774,8 +740,7 @@ impl AudioCapturer {
                                 }
                                 // 发送最后处理的数据
                                 log::debug!(
-                                    "[音频捕获线程] 发送流末尾最后 {} 帧重采样数据...",
-                                    frames_written_by_resampler
+                                    "[音频捕获线程] 发送流末尾最后 {frames_written_by_resampler} 帧重采样数据..."
                                 );
                                 process_and_send_audio_data(
                                     last_resampled_data_interleaved,
@@ -794,16 +759,12 @@ impl AudioCapturer {
                         }) => {
                             // 这种情况在处理流末尾时很可能发生，因为剩余数据可能不足一个块。
                             log::warn!(
-                                "[音频捕获线程] 处理流末尾剩余数据重采样时，输入缓冲区大小不足 (声道 {}, 期望 {}, 实际 {})。部分末尾数据可能未被处理。",
-                                channel,
-                                expected,
-                                actual
+                                "[音频捕获线程] 处理流末尾剩余数据重采样时，输入缓冲区大小不足 (声道 {channel}, 期望 {expected}, 实际 {actual})。部分末尾数据可能未被处理。"
                             );
                         }
                         Err(e) => {
                             log::error!(
-                                "[音频捕获线程] 处理流末尾剩余数据时发生重采样错误 (其他类型): {:?}。部分末尾数据可能未被处理。",
-                                e
+                                "[音频捕获线程] 处理流末尾剩余数据时发生重采样错误 (其他类型): {e:?}。部分末尾数据可能未被处理。"
                             );
                         }
                     }

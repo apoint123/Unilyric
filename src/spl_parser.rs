@@ -71,18 +71,17 @@ fn parse_spl_timestamp_to_ms(timestamp_str: &str) -> Result<u64, ConvertError> {
     // SPL 时间戳必须由三部分组成：分、秒、毫秒
     if parts.len() != 3 {
         return Err(ConvertError::InvalidTime(format!(
-            "无效的SPL时间戳格式: {}",
-            timestamp_str
+            "无效的SPL时间戳格式: {timestamp_str}"
         )));
     }
 
     // 解析分钟部分
     let minutes: u64 = parts[0].parse().map_err(|e| {
-        ConvertError::InvalidTime(format!("时间戳 '{}' 中的分钟无效: {}", timestamp_str, e))
+        ConvertError::InvalidTime(format!("时间戳 '{timestamp_str}' 中的分钟无效: {e}"))
     })?;
     // 解析秒钟部分
     let seconds: u64 = parts[1].parse().map_err(|e| {
-        ConvertError::InvalidTime(format!("时间戳 '{}' 中的秒钟无效: {}", timestamp_str, e))
+        ConvertError::InvalidTime(format!("时间戳 '{timestamp_str}' 中的秒钟无效: {e}"))
     })?;
 
     // 解析毫秒部分
@@ -93,30 +92,24 @@ fn parse_spl_timestamp_to_ms(timestamp_str: &str) -> Result<u64, ConvertError> {
         1 => {
             fraction_str.parse::<u64>().map_err(|e| {
                 ConvertError::InvalidTime(format!(
-                    "时间戳中的第一位秒钟 '{}' 无效: {}",
-                    timestamp_str, e
+                    "时间戳中的第一位秒钟 '{timestamp_str}' 无效: {e}"
                 ))
             })? * 100
         } // 1位毫秒，乘以100
         2 => {
             fraction_str.parse::<u64>().map_err(|e| {
                 ConvertError::InvalidTime(format!(
-                    "时间戳中的第二位秒钟 '{}' 无效: {}",
-                    timestamp_str, e
+                    "时间戳中的第二位秒钟 '{timestamp_str}' 无效: {e}"
                 ))
             })? * 10
         } // 2位毫秒，乘以10
         3 => fraction_str.parse::<u64>().map_err(|e| {
-            ConvertError::InvalidTime(format!(
-                "时间戳中的第三位秒钟 '{}' 无效: {}",
-                timestamp_str, e
-            ))
+            ConvertError::InvalidTime(format!("时间戳中的第三位秒钟 '{timestamp_str}' 无效: {e}"))
         })?, // 3位毫秒，直接使用
         // SPL规范允许最多6位毫秒，但通常只使用前3位。这里截取前3位进行解析。
         4..=6 => fraction_str[0..3].parse::<u64>().map_err(|e| {
             ConvertError::InvalidTime(format!(
-                "时间戳中的第四至六位秒钟 '{}' 无效: {}",
-                timestamp_str, e
+                "时间戳中的第四至六位秒钟 '{timestamp_str}' 无效: {e}"
             ))
         })?, // 4到6位毫秒，取前3位
         // 其他长度的毫秒部分视为无效
@@ -158,12 +151,7 @@ fn extract_leading_timestamps(line_text: &str, line_num_for_log: usize) -> (Vec<
             Ok(ms) => timestamps_ms.push(ms), // 解析成功，添加到列表中
             Err(e) => {
                 // 解析失败，记录警告日志，包含行号、错误的时间戳和错误信息
-                log::warn!(
-                    "[SPL 处理] 行 {}: 无效的行首时间戳 '{}': {}",
-                    line_num_for_log,
-                    ts_str,
-                    e
-                );
+                log::warn!("[SPL 处理] 行 {line_num_for_log}: 无效的行首时间戳 '{ts_str}': {e}");
             }
         }
         // 更新 `remaining_text`，移除已匹配的时间戳部分，并去除可能的前导空格
@@ -215,9 +203,7 @@ pub fn load_spl_from_string(
             // 如果一个无时间戳行出现在文件开头，或者前面是空行，它就是孤立的。
             // 记录警告并跳过这种孤立的无时间戳行。
             log::warn!(
-                "[SPL 处理] 行 {}: 跳过无行首时间戳的行: '{}'",
-                current_log_line_num,
-                trimmed_line_str
+                "[SPL 处理] 行 {current_log_line_num}: 跳过无行首时间戳的行: '{trimmed_line_str}'"
             );
             continue;
         }
@@ -317,27 +303,27 @@ pub fn load_spl_from_string(
         }
 
         // 步骤2: 如果步骤1没有找到结束时间戳，则检查下一行是否为纯时间戳行
-        if explicit_block_end_ms.is_none() {
-            if let Some((_peek_line_idx, peek_raw_line_str)) = line_iterator.peek() {
-                let peek_trimmed_line = peek_raw_line_str.trim();
-                // 确保peek的行不是空行（虽然理论上外层循环已处理）
-                if !peek_trimmed_line.is_empty() {
-                    let (peek_line_timestamps, peek_line_remaining_text) =
-                        extract_leading_timestamps(peek_trimmed_line, _peek_line_idx + 1);
+        if explicit_block_end_ms.is_none()
+            && let Some((_peek_line_idx, peek_raw_line_str)) = line_iterator.peek()
+        {
+            let peek_trimmed_line = peek_raw_line_str.trim();
+            // 确保peek的行不是空行（虽然理论上外层循环已处理）
+            if !peek_trimmed_line.is_empty() {
+                let (peek_line_timestamps, peek_line_remaining_text) =
+                    extract_leading_timestamps(peek_trimmed_line, _peek_line_idx + 1);
 
-                    // 如果下一行有行首时间戳，并且去除这些时间戳后文本为空
-                    if !peek_line_timestamps.is_empty() && peek_line_remaining_text.is_empty() {
-                        // 将下一行的第一个时间戳作为当前块的结束时间
-                        explicit_block_end_ms = Some(peek_line_timestamps[0]);
-                        // 消耗掉这个纯时间戳行，因为它已经被用于确定上一行的结束时间
-                        line_iterator.next();
-                        log::info!(
-                            "[SPL 处理] 行 {}: 使用下一行 '{}' 的时间戳 {}ms 作为结束时间。",
-                            current_log_line_num,
-                            peek_trimmed_line,
-                            peek_line_timestamps[0]
-                        );
-                    }
+                // 如果下一行有行首时间戳，并且去除这些时间戳后文本为空
+                if !peek_line_timestamps.is_empty() && peek_line_remaining_text.is_empty() {
+                    // 将下一行的第一个时间戳作为当前块的结束时间
+                    explicit_block_end_ms = Some(peek_line_timestamps[0]);
+                    // 消耗掉这个纯时间戳行，因为它已经被用于确定上一行的结束时间
+                    line_iterator.next();
+                    log::info!(
+                        "[SPL 处理] 行 {}: 使用下一行 '{}' 的时间戳 {}ms 作为结束时间。",
+                        current_log_line_num,
+                        peek_trimmed_line,
+                        peek_line_timestamps[0]
+                    );
                 }
             }
         }
@@ -422,13 +408,7 @@ pub fn parse_spl_main_text_to_syllables(
             || inline_timestamp_ms > line_overall_end_time_ms
         {
             log::warn!(
-                "[SPL 处理] 第 ~{} 行：时间戳 {}ms (从 '{}' 解析) 顺序错误或越界。当前开始时间 {}ms，行结束时间 {}ms。文本: '{}'。",
-                line_num_for_log,
-                inline_timestamp_ms,
-                ts_str_with_brackets,
-                current_segment_start_ms,
-                line_overall_end_time_ms,
-                segment_text_str
+                "[SPL 处理] 第 ~{line_num_for_log} 行：时间戳 {inline_timestamp_ms}ms (从 '{ts_str_with_brackets}' 解析) 顺序错误或越界。当前开始时间 {current_segment_start_ms}ms，行结束时间 {line_overall_end_time_ms}ms。文本: '{segment_text_str}'。"
             );
             // 如果需要严格忽略，可以考虑：
             // 1. continue; (忽略这个时间戳和它之前的文本段，可能导致文本丢失)

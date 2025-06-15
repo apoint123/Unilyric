@@ -207,7 +207,7 @@ impl LyricFormat {
             "LQE" | "LYRICIFYQUICKEXPORT" => Some(LyricFormat::Lqe),
             "KRC" => Some(LyricFormat::Krc),
             _ => {
-                log::error!("[UniLyric] 未知的格式: {}", s);
+                log::error!("[UniLyric] 未知的格式: {s}");
                 None
             }
         }
@@ -519,7 +519,7 @@ impl fmt::Display for CanonicalMetadataKey {
             CanonicalMetadataKey::Version => write!(f, "Version"),
             CanonicalMetadataKey::AppleMusicId => write!(f, "AppleMusicId"),
             CanonicalMetadataKey::KrcInternalTranslation => write!(f, "KrcInternalTranslation"),
-            CanonicalMetadataKey::Custom(s) => write!(f, "Custom({})", s),
+            CanonicalMetadataKey::Custom(s) => write!(f, "Custom({s})"),
         }
     }
 }
@@ -716,7 +716,7 @@ impl FromStr for AutoSearchSource {
             "kugou" => Ok(AutoSearchSource::Kugou),
             "netease" | "ncm" => Ok(AutoSearchSource::Netease),
             "amll" | "amlldb" => Ok(AutoSearchSource::AmllDb),
-            _ => Err(format!("未知的自动搜索源标识符: {}", s)),
+            _ => Err(format!("未知的自动搜索源标识符: {s}")),
         }
     }
 }
@@ -878,7 +878,7 @@ pub fn string_to_search_order(order_str: &str) -> Vec<AutoSearchSource> {
                 ordered_sources.push(source);
             }
         } else {
-            log::warn!("[设置] 加载搜索顺序时发现未知源ID: {}", id_str);
+            log::warn!("[设置] 加载搜索顺序时发现未知源ID: {id_str}");
         }
     }
 

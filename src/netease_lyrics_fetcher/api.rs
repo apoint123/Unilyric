@@ -82,7 +82,7 @@ impl NeteaseClient {
             PUBKEY_STR_API,
             MODULUS_STR_API,
         )
-        .map_err(|e| NeteaseError::Crypto(format!("生成encSecKey失败: {}", e)))?;
+        .map_err(|e| NeteaseError::Crypto(format!("生成encSecKey失败: {e}")))?;
 
         Ok(Self {
             http_client,
@@ -178,10 +178,7 @@ impl NeteaseClient {
         cookie_header_map.insert("appver", "8.0.0".to_string()); // 应用版本
         cookie_header_map.insert("buildver", (current_time_ms / 1000).to_string()); // 构建版本 (秒级时间戳)
         cookie_header_map.insert("channel", "".to_string()); //渠道
-        cookie_header_map.insert(
-            "requestId",
-            format!("{}_{:04}", current_time_ms, random_suffix),
-        ); // 请求ID
+        cookie_header_map.insert("requestId", format!("{current_time_ms}_{random_suffix:04}")); // 请求ID
         // MUSIC_U 是登录凭证，如果需要登录才能访问的接口，这里需要填入有效值
         cookie_header_map.insert("MUSIC_U", "".to_string());
         cookie_header_map.insert("resolution", "1920x1080".to_string()); // 分辨率
@@ -190,7 +187,7 @@ impl NeteaseClient {
         // 将 Cookie Map 转换为字符串
         let cookie_str = cookie_header_map
             .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
+            .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join("; ");
 
@@ -210,8 +207,8 @@ impl NeteaseClient {
 
     /// 使用 WEAPI 接口获取指定歌曲 ID 的歌词。
     pub async fn fetch_lyrics_weapi(&self, song_id: i64) -> Result<LyricResponse> {
-        let url = format!("{}/weapi/song/lyric?csrf_token=", BASE_URL_NETEASE); // WEAPI 歌词接口 URL
-        log::info!("[NeteaseAPI WEAPI] 正在获取歌词，歌曲ID: {}", song_id);
+        let url = format!("{BASE_URL_NETEASE}/weapi/song/lyric?csrf_token="); // WEAPI 歌词接口 URL
+        log::info!("[NeteaseAPI WEAPI] 正在获取歌词，歌曲ID: {song_id}");
 
         // 构建 WEAPI 请求的 payload
         let mut payload = HashMap::new();
@@ -238,16 +235,16 @@ impl NeteaseClient {
             );
             return Err(NeteaseError::ApiError {
                 code: lyric_result.code,
-                message: Some(format!("获取歌词失败，歌曲ID: {}", song_id)),
+                message: Some(format!("获取歌词失败，歌曲ID: {song_id}")),
             });
         }
         // 检查是否明确无歌词
         if lyric_result.nolyric {
-            log::info!("[NeteaseAPI WEAPI] 歌曲无歌词，歌曲ID: {}", song_id);
+            log::info!("[NeteaseAPI WEAPI] 歌曲无歌词，歌曲ID: {song_id}");
             return Err(NeteaseError::NoLyrics);
         }
 
-        log::info!("[NeteaseAPI WEAPI] 成功获取歌词，歌曲ID: {}.", song_id);
+        log::info!("[NeteaseAPI WEAPI] 成功获取歌词，歌曲ID: {song_id}.");
         // 记录获取到的歌词类型
         if lyric_result
             .lrc
@@ -289,7 +286,7 @@ impl NeteaseClient {
         let url_path = "/api/song/lyric/v1"; // EAPI 歌词接口的路径部分
         // EAPI 的主机名可能与 WEAPI 不同，这里使用 interface3.music.163.com
         let full_url = "https://interface3.music.163.com/eapi/song/lyric/v1".to_string();
-        log::info!("[NeteaseAPI EAPI] 正在获取歌词，歌曲ID: {}", song_id);
+        log::info!("[NeteaseAPI EAPI] 正在获取歌词，歌曲ID: {song_id}");
 
         // 构建 EAPI 请求的 payload
         let mut payload = HashMap::new();
@@ -316,18 +313,15 @@ impl NeteaseClient {
             );
             return Err(NeteaseError::ApiError {
                 code: lyric_result.code,
-                message: Some(format!("获取歌词失败，歌曲ID: {}", song_id)),
+                message: Some(format!("获取歌词失败，歌曲ID: {song_id}")),
             });
         }
         if lyric_result.nolyric {
-            log::info!("[NeteaseAPI EAPI] 歌曲无歌词，歌曲ID: {}", song_id);
+            log::info!("[NeteaseAPI EAPI] 歌曲无歌词，歌曲ID: {song_id}");
             return Err(NeteaseError::NoLyrics);
         }
 
-        log::info!(
-            "[NeteaseAPI EAPI] 成功获取歌曲ID {} 的歌词。正在检查逐字歌词...",
-            song_id
-        );
+        log::info!("[NeteaseAPI EAPI] 成功获取歌曲ID {song_id} 的歌词。正在检查逐字歌词...");
         let mut found_word_by_word = false;
         // 检查 yrc 字段
         if let Some(yrc_val) = &lyric_result.yrc {
@@ -393,10 +387,7 @@ impl NeteaseClient {
         eapi_payload_header.insert("buildver", (current_time_ms / 1000).to_string());
         eapi_payload_header.insert("channel", "".to_string());
         eapi_payload_header.insert("resolution", "1920x1080".to_string());
-        eapi_payload_header.insert(
-            "requestId",
-            format!("{}_{:04}", current_time_ms, random_suffix),
-        );
+        eapi_payload_header.insert("requestId", format!("{current_time_ms}_{random_suffix:04}"));
         eapi_payload_header.insert("versioncode", "140".to_string());
         eapi_payload_header.insert("MUSIC_U", "".to_string());
 
@@ -443,7 +434,7 @@ impl NeteaseClient {
         // 直接发送 GET 请求
         let response = self
             .http_client
-            .get(format!("{}/api/search/get/web", BASE_URL_NETEASE)) // 旧的 Web 搜索 API
+            .get(format!("{BASE_URL_NETEASE}/api/search/get/web")) // 旧的 Web 搜索 API
             .query(&[
                 // 将参数作为 URL query string
                 ("s", keywords),
@@ -502,7 +493,7 @@ impl NeteaseClient {
                     }
                     Err(weapi_err) => {
                         // WEAPI 也失败
-                        log::warn!("[NeteaseAPI] WEAPI 后备尝试也失败: {:?}", weapi_err);
+                        log::warn!("[NeteaseAPI] WEAPI 后备尝试也失败: {weapi_err:?}");
                         Err(eapi_err)
                     }
                 }
@@ -529,7 +520,7 @@ impl NeteaseClient {
                     }
                     Err(weapi_err) => {
                         // WEAPI 也失败
-                        log::warn!("[NeteaseAPI] WEAPI 后备尝试也失败: {:?}", weapi_err);
+                        log::warn!("[NeteaseAPI] WEAPI 后备尝试也失败: {weapi_err:?}");
                         Err(eapi_err)
                     }
                 }

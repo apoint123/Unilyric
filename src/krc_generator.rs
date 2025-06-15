@@ -60,11 +60,7 @@ pub fn generate_krc_from_ttml_data(
         }
 
         // 写入行级别的时间戳：[开始时间,持续时间]
-        write!(
-            krc_output,
-            "[{},{}]",
-            line_tag_start_ms, line_tag_duration_ms
-        )?;
+        write!(krc_output, "[{line_tag_start_ms},{line_tag_duration_ms}]")?;
 
         // 获取该行第一个音节的实际开始时间，用于计算后续音节的相对偏移
         // 如果段落的 p_start_ms 早于第一个音节的 start_ms，则以第一个音节的 start_ms 为基准计算偏移
@@ -90,12 +86,11 @@ pub fn generate_krc_from_ttml_data(
                 // 第三个参数固定为0
                 write!(
                     krc_output,
-                    "<{},{},0>{}",
-                    syl_offset_ms, syl_duration_ms, effective_text
+                    "<{syl_offset_ms},{syl_duration_ms},0>{effective_text}"
                 )?;
             } else if syl_duration_ms > 0 {
                 // 如果音节无文本但有持续时间（例如，静默或纯空格音节），也写入时间戳
-                write!(krc_output, "<{},{},0>", syl_offset_ms, syl_duration_ms)?;
+                write!(krc_output, "<{syl_offset_ms},{syl_duration_ms},0>")?;
             }
 
             // 如果音节后标记需要空格 (ends_with_space is true)
@@ -118,6 +113,6 @@ pub fn generate_krc_from_ttml_data(
     Ok(if final_output.is_empty() {
         String::new()
     } else {
-        format!("{}\n", final_output)
+        format!("{final_output}\n")
     })
 }

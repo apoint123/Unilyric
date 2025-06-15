@@ -98,28 +98,25 @@ pub async fn search_and_fetch_first_netease_lyrics(
 
     if let Some(yrc_val) = &lyrics_data.yrc {
         // 主YRC
-        if let Some(lyric_obj) = yrc_val.as_object() {
-            if let Some(lyric_str_val) = lyric_obj.get("lyric") {
-                if let Some(lyric_str) = lyric_str_val.as_str() {
-                    if !lyric_str.is_empty() {
-                        karaoke_lrc_content = Some(lyric_str.to_string());
-                        source_of_karaoke = "YRC";
-                        log::info!("[NeteaseLyricsFetcher] 加载 YRC 逐字歌词");
-                    }
-                }
-            }
+        if let Some(lyric_obj) = yrc_val.as_object()
+            && let Some(lyric_str_val) = lyric_obj.get("lyric")
+            && let Some(lyric_str) = lyric_str_val.as_str()
+            && !lyric_str.is_empty()
+        {
+            karaoke_lrc_content = Some(lyric_str.to_string());
+            source_of_karaoke = "YRC";
+            log::info!("[NeteaseLyricsFetcher] 加载 YRC 逐字歌词");
         }
     }
     if karaoke_lrc_content.is_none() {
         // 如果主YRC没有，尝试KLyric
-        if let Some(klyric_content_obj) = &lyrics_data.klyric {
-            if let Some(klyric_str) = &klyric_content_obj.lyric {
-                if !klyric_str.is_empty() {
-                    karaoke_lrc_content = Some(klyric_str.clone());
-                    source_of_karaoke = "klyric";
-                    log::info!("[NeteaseLyricsFetcher] 加载逐字歌词");
-                }
-            }
+        if let Some(klyric_content_obj) = &lyrics_data.klyric
+            && let Some(klyric_str) = &klyric_content_obj.lyric
+            && !klyric_str.is_empty()
+        {
+            karaoke_lrc_content = Some(klyric_str.clone());
+            source_of_karaoke = "klyric";
+            log::info!("[NeteaseLyricsFetcher] 加载逐字歌词");
         }
     }
 

@@ -65,16 +65,16 @@ impl WebsocketServer {
         let listener = match TcpListener::bind(&addr).await {
             Ok(l) => l,
             Err(e) => {
-                error!("[WebSocketServer] 无法绑定到地址 {}: {}", addr, e);
+                error!("[WebSocketServer] 无法绑定到地址 {addr}: {e}");
                 return;
             }
         };
-        info!("[WebSocketServer] 正在监听: {}", addr);
+        info!("[WebSocketServer] 正在监听: {addr}");
 
         loop {
             tokio::select! {
                 Ok((stream, client_addr)) = listener.accept() => {
-                    info!("[WebSocketServer] 新的客户端连接: {}", client_addr);
+                    info!("[WebSocketServer] 新的客户端连接: {client_addr}");
                     let clients_arc = Arc::clone(&self.clients);
                     tokio::spawn(handle_connection(stream, client_addr, clients_arc));
                 }
@@ -116,10 +116,7 @@ impl WebsocketServer {
         let json_string = match serde_json::to_string(&message_to_client_view) {
             Ok(json) => json,
             Err(e) => {
-                error!(
-                    "[WebSocketServer] 序列化 ClientViewMessage 到JSON失败: {}",
-                    e
-                );
+                error!("[WebSocketServer] 序列化 ClientViewMessage 到JSON失败: {e}");
                 return;
             }
         };
@@ -129,7 +126,7 @@ impl WebsocketServer {
 
         for (addr, client_tx) in clients_guard.iter() {
             if let Err(e) = client_tx.send(ws_message.clone()) {
-                warn!("[WebSocketServer] 发送消息给客户端 {} 失败: {}", addr, e);
+                warn!("[WebSocketServer] 发送消息给客户端 {addr} 失败: {e}");
                 // Consider removing client if send fails repeatedly
             }
         }
@@ -143,14 +140,11 @@ async fn handle_connection(stream: TcpStream, client_addr: std::net::SocketAddr,
     let ws_stream = match accept_async(stream).await {
         Ok(ws) => ws,
         Err(e) => {
-            error!(
-                "[WebSocketServer] WebSocket握手失败 (客户端 {}): {}",
-                client_addr, e
-            );
+            error!("[WebSocketServer] WebSocket握手失败 (客户端 {client_addr}): {e}");
             return;
         }
     };
-    info!("[WebSocketServer] WebSocket 连接已建立: {}", client_addr);
+    info!("[WebSocketServer] WebSocket 连接已建立: {client_addr}");
 
     let (tx, mut rx) = mpsc::unbounded_channel();
     clients.lock().await.insert(client_addr, tx);
@@ -192,6 +186,6 @@ async fn handle_connection(stream: TcpStream, client_addr: std::net::SocketAddr,
         _ = receive_loop => {},
     }
 
-    info!("[WebSocketServer] 客户端 {} 断开连接。", client_addr);
+    info!("[WebSocketServer] 客户端 {client_addr} 断开连接。");
     clients.lock().await.remove(&client_addr);
 }

@@ -52,7 +52,7 @@ pub(crate) async fn fetch_qq_music_lyrics_core(
     http_client: &reqwest::Client,
     query: &str,
 ) -> Result<ProcessedLyricsSourceData, LyricFetchError> {
-    debug!("[CoreFetch/QQ] 开始获取QQ音乐歌词，查询: '{}'", query);
+    debug!("[CoreFetch/QQ] 开始获取QQ音乐歌词，查询: '{query}'");
 
     match tokio::time::timeout(
         std::time::Duration::from_secs(15),
@@ -95,7 +95,7 @@ pub(crate) async fn fetch_qq_music_lyrics_core(
                     platform_meta.insert("qqMusicId".to_string(), s_id);
                 }
 
-                debug!("[CoreFetch/QQ] 成功处理QQ音乐歌词 '{}'", query);
+                debug!("[CoreFetch/QQ] 成功处理QQ音乐歌词 '{query}'");
                 Ok(ProcessedLyricsSourceData {
                     format: LyricFormat::Qrc,
                     main_lyrics: main_qrc,
@@ -110,7 +110,7 @@ pub(crate) async fn fetch_qq_music_lyrics_core(
             }
         }
         Ok(Err(fetcher_error)) => {
-            warn!("[CoreFetch/QQ] 获取QQ音乐歌词失败: {}", fetcher_error);
+            warn!("[CoreFetch/QQ] 获取QQ音乐歌词失败: {fetcher_error}");
             match fetcher_error {
                 QQLyricsFetcherError::SongInfoMissing
                 | QQLyricsFetcherError::LyricNotFoundForSelectedSong => {
@@ -126,28 +126,27 @@ pub(crate) async fn fetch_qq_music_lyrics_core(
                             Err(LyricFetchError::NetworkError(e.to_string()))
                         }
                         ConvertError::JsonParse(e) => {
-                            Err(LyricFetchError::ParseError(format!("JSON 处理错误: {}", e)))
+                            Err(LyricFetchError::ParseError(format!("JSON 处理错误: {e}")))
                         }
                         ConvertError::RequestRejected => {
                             Err(LyricFetchError::NetworkError("请求已拒绝".to_string()))
                         }
                         ConvertError::LyricNotFound => Err(LyricFetchError::NotFound),
                         ConvertError::Io(e) => {
-                            Err(LyricFetchError::InternalError(format!("I/O 错误: {}", e)))
+                            Err(LyricFetchError::InternalError(format!("I/O 错误: {e}")))
                         }
                         ConvertError::FromUtf8(e) => {
-                            Err(LyricFetchError::ParseError(format!("UTF-8 错误: {}", e)))
+                            Err(LyricFetchError::ParseError(format!("UTF-8 错误: {e}")))
                         }
                         _ => Err(LyricFetchError::InternalError(format!(
-                            "QQ API 错误: {}",
-                            uni_lyric_convert_error
+                            "QQ API 错误: {uni_lyric_convert_error}"
                         ))),
                     }
                 }
             }
         }
         Err(_timeout_error) => {
-            warn!("[CoreFetch/QQ] 获取QQ音乐歌词超时 '{}'", query);
+            warn!("[CoreFetch/QQ] 获取QQ音乐歌词超时 '{query}'");
             Err(LyricFetchError::Timeout)
         }
     }
@@ -157,7 +156,7 @@ pub(crate) async fn fetch_kugou_music_lyrics_core(
     http_client: &reqwest::Client,
     query: &str,
 ) -> Result<ProcessedLyricsSourceData, LyricFetchError> {
-    debug!("[CoreFetch/Kugou] 开始获取酷狗音乐歌词 '{}'", query);
+    debug!("[CoreFetch/Kugou] 开始获取酷狗音乐歌词 '{query}'");
 
     match tokio::time::timeout(
         std::time::Duration::from_secs(20),
@@ -167,7 +166,7 @@ pub(crate) async fn fetch_kugou_music_lyrics_core(
     {
         Ok(Ok(fetched_krc_data)) => {
             if fetched_krc_data.krc_content.is_empty() {
-                warn!("[CoreFetch/Kugou] KRC 内容为空 '{}'", query);
+                warn!("[CoreFetch/Kugou] KRC 内容为空 '{query}'");
                 return Err(LyricFetchError::NotFound);
             }
 
@@ -201,10 +200,7 @@ pub(crate) async fn fetch_kugou_music_lyrics_core(
             })
         }
         Ok(Err(fetcher_error)) => {
-            warn!(
-                "[CoreFetch/Kugou] 获取酷狗音乐歌词时失败 '{}': {}",
-                query, fetcher_error
-            );
+            warn!("[CoreFetch/Kugou] 获取酷狗音乐歌词时失败 '{query}': {fetcher_error}");
             match fetcher_error {
                 crate::kugou_lyrics_fetcher::error::KugouError::LyricsNotFound(_)
                 | crate::kugou_lyrics_fetcher::error::KugouError::NoCandidatesFound
@@ -215,7 +211,7 @@ pub(crate) async fn fetch_kugou_music_lyrics_core(
                     Err(LyricFetchError::NetworkError(e.to_string()))
                 }
                 crate::kugou_lyrics_fetcher::error::KugouError::Json(e) => {
-                    Err(LyricFetchError::ParseError(format!("JSON: {}", e)))
+                    Err(LyricFetchError::ParseError(format!("JSON: {e}")))
                 }
                 crate::kugou_lyrics_fetcher::error::KugouError::InvalidKrcData(s) => {
                     Err(LyricFetchError::ParseError(s))
@@ -224,13 +220,12 @@ pub(crate) async fn fetch_kugou_music_lyrics_core(
                     Err(LyricFetchError::ParseError(e.to_string()))
                 }
                 _ => Err(LyricFetchError::InternalError(format!(
-                    "Kugou fetcher error: {}",
-                    fetcher_error
+                    "Kugou fetcher error: {fetcher_error}"
                 ))),
             }
         }
         Err(_timeout_error) => {
-            warn!("[CoreFetch/Kugou] 获取酷狗音乐歌词超时 '{}'", query);
+            warn!("[CoreFetch/Kugou] 获取酷狗音乐歌词超时 '{query}'");
             Err(LyricFetchError::Timeout)
         }
     }
@@ -241,10 +236,7 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
     netease_client_arc: Arc<std::sync::Mutex<Option<netease_lyrics_fetcher::api::NeteaseClient>>>,
     query: &str,
 ) -> Result<ProcessedLyricsSourceData, LyricFetchError> {
-    debug!(
-        "[CoreFetch/Netease] 开始获取网易云音乐歌词，查询: '{}'",
-        query
-    );
+    debug!("[CoreFetch/Netease] 开始获取网易云音乐歌词，查询: '{query}'");
 
     let client_instance_for_fetch: netease_lyrics_fetcher::api::NeteaseClient;
     {
@@ -259,10 +251,9 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
                     *client_option_guard = Some(new_client);
                 }
                 Err(e) => {
-                    warn!("[CoreFetch/Netease] NeteaseClient 初始化失败: {}", e);
+                    warn!("[CoreFetch/Netease] NeteaseClient 初始化失败: {e}");
                     return Err(LyricFetchError::ApiClientError(format!(
-                        "NeteaseClient init failed: {}",
-                        e
+                        "NeteaseClient init failed: {e}"
                     )));
                 }
             }
@@ -315,11 +306,8 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
                 .as_ref()
                 .filter(|s| !s.is_empty())
             {
-                info!("[CoreFetch/Netease] 找到 YRC 歌词 '{}'.", query);
-                debug!(
-                    "[CoreFetch/Netease] 成功处理网易云音乐歌词 (YRC) '{}'",
-                    query
-                );
+                info!("[CoreFetch/Netease] 找到 YRC 歌词 '{query}'.");
+                debug!("[CoreFetch/Netease] 成功处理网易云音乐歌词 (YRC) '{query}'");
                 Ok(ProcessedLyricsSourceData {
                     format: LyricFormat::Yrc,
                     main_lyrics: yrc_content.clone(),
@@ -339,14 +327,8 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
                 .filter(|s| !s.is_empty())
             {
                 // 如果没有 YRC，但有 LRC，则将其作为 LyricFormat::Lrc 返回
-                debug!(
-                    "[CoreFetch/Netease] 仅找到 LRC 歌词 '{}', 将使用此LRC。",
-                    query
-                );
-                debug!(
-                    "[CoreFetch/Netease] 成功处理网易云音乐歌词 (LRC) '{}'",
-                    query
-                );
+                debug!("[CoreFetch/Netease] 仅找到 LRC 歌词 '{query}', 将使用此LRC。");
+                debug!("[CoreFetch/Netease] 成功处理网易云音乐歌词 (LRC) '{query}'");
                 Ok(ProcessedLyricsSourceData {
                     format: LyricFormat::Lrc,         // 格式设置为 LRC
                     main_lyrics: lrc_content.clone(), // 使用 LRC 内容
@@ -362,18 +344,12 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
                 })
             } else {
                 // 如果 YRC 和 LRC 都没有
-                error!(
-                    "[CoreFetch/Netease] 未找到有效的 YRC 或 LRC 主歌词 '{}'",
-                    query
-                );
+                error!("[CoreFetch/Netease] 未找到有效的 YRC 或 LRC 主歌词 '{query}'");
                 Err(LyricFetchError::NotFound)
             }
         }
         Ok(Err(fetcher_error)) => {
-            error!(
-                "[CoreFetch/Netease] 获取网易云音乐歌词时失败 '{}': {}",
-                query, fetcher_error
-            );
+            error!("[CoreFetch/Netease] 获取网易云音乐歌词时失败 '{query}': {fetcher_error}");
             match fetcher_error {
                 netease_lyrics_fetcher::error::NeteaseError::SongNotFound(_) => {
                     Err(LyricFetchError::NotFound)
@@ -385,22 +361,21 @@ pub(crate) async fn fetch_netease_music_lyrics_core(
                     Err(LyricFetchError::NetworkError(e.to_string()))
                 }
                 netease_lyrics_fetcher::error::NeteaseError::ApiError { code: _, message } => {
-                    Err(LyricFetchError::ApiClientError(format!("{:?}", message)))
+                    Err(LyricFetchError::ApiClientError(format!("{message:?}")))
                 }
                 netease_lyrics_fetcher::error::NeteaseError::Crypto(s) => {
-                    Err(LyricFetchError::ParseError(format!("加密错误: {}", s)))
+                    Err(LyricFetchError::ParseError(format!("加密错误: {s}")))
                 }
                 netease_lyrics_fetcher::error::NeteaseError::Json(e) => {
-                    Err(LyricFetchError::ParseError(format!("JSON: {}", e)))
+                    Err(LyricFetchError::ParseError(format!("JSON: {e}")))
                 }
                 _ => Err(LyricFetchError::InternalError(format!(
-                    "Netease fetcher error: {}",
-                    fetcher_error
+                    "Netease fetcher error: {fetcher_error}"
                 ))),
             }
         }
         Err(_timeout_error) => {
-            warn!("[CoreFetch/Netease] 获取网易云音乐歌词超时 '{}'", query);
+            warn!("[CoreFetch/Netease] 获取网易云音乐歌词超时 '{query}'");
             Err(LyricFetchError::Timeout)
         }
     }
@@ -414,8 +389,7 @@ pub(crate) async fn fetch_amll_db_lyrics_for_smtc_match_core(
     smtc_artists: &[String],
 ) -> Result<ProcessedLyricsSourceData, LyricFetchError> {
     debug!(
-        "[CoreFetch/AMLL Auto] 开始SMTC匹配搜索。SMTC标题: '{}', SMTC艺术家: {:?}",
-        smtc_title, smtc_artists
+        "[CoreFetch/AMLL Auto] 开始SMTC匹配搜索。SMTC标题: '{smtc_title}', SMTC艺术家: {smtc_artists:?}"
     );
 
     // 步骤 1: 获取锁，调用同步辅助函数查找匹配项，然后立即释放锁
@@ -507,16 +481,13 @@ pub(crate) async fn fetch_amll_db_lyrics_for_smtc_match_core(
                         Err(LyricFetchError::NetworkError(e.to_string()))
                     }
                     ConvertError::JsonParse(e) => Err(LyricFetchError::ParseError(format!(
-                        "JSON (index parsing) error: {}",
-                        e
+                        "JSON (index parsing) error: {e}"
                     ))),
                     ConvertError::Io(e) => Err(LyricFetchError::InternalError(format!(
-                        "I/O error (cache): {}",
-                        e
+                        "I/O error (cache): {e}"
                     ))),
                     _ => Err(LyricFetchError::InternalError(format!(
-                        "AMLL fetcher error (auto): {}",
-                        fetcher_error
+                        "AMLL fetcher error (auto): {fetcher_error}"
                     ))),
                 }
             }
@@ -530,8 +501,7 @@ pub(crate) async fn fetch_amll_db_lyrics_for_smtc_match_core(
         }
     } else {
         debug!(
-            "[CoreFetch/AMLL Auto] 未找到SMTC匹配的AMLL条目。SMTC标题: '{}', SMTC艺术家: {:?}",
-            smtc_title, smtc_artists
+            "[CoreFetch/AMLL Auto] 未找到SMTC匹配的AMLL条目。SMTC标题: '{smtc_title}', SMTC艺术家: {smtc_artists:?}"
         );
         Err(LyricFetchError::NotFound)
     }
@@ -563,13 +533,11 @@ fn find_best_smtc_match_in_index_sync(
             .iter()
             .find(|(key, _)| key == "musicName")
             .map(|(_, values)| values)
-        {
-            if music_names_vec
+            && music_names_vec
                 .iter()
                 .any(|name| name.to_lowercase().contains(&lower_smtc_title))
-            {
-                title_matched = true;
-            }
+        {
+            title_matched = true;
         }
 
         if title_matched && !lower_smtc_artists.is_empty() {
@@ -799,8 +767,7 @@ pub(crate) fn set_other_sources_not_attempted(
             if matches!(*guard, AutoSearchStatus::Searching) {
                 *guard = AutoSearchStatus::NotAttempted;
                 log::trace!(
-                    "[AppFetchCore SetNotAttempted] {} 状态已更新为 NotAttempted。",
-                    name_for_log
+                    "[AppFetchCore SetNotAttempted] {name_for_log} 状态已更新为 NotAttempted。"
                 );
             } else {
                 log::debug!(
@@ -810,10 +777,7 @@ pub(crate) fn set_other_sources_not_attempted(
                 );
             }
         } else {
-            log::debug!(
-                "[AppFetchCore SetNotAttempted] 跳过 {} 因为它是成功源。",
-                name_for_log
-            );
+            log::debug!("[AppFetchCore SetNotAttempted] 跳过 {name_for_log} 因为它是成功源。");
         }
     }
 }
@@ -968,9 +932,7 @@ pub fn initial_auto_fetch_and_send_lyrics(app: &mut UniLyricApp, track_info: Now
                 }
                 Err(e) => {
                     log::error!(
-                        "[AppFetchCore AutoFetch] 读取本地缓存文件 {:?} 失败: {}",
-                        ttml_file_path,
-                        e
+                        "[AppFetchCore AutoFetch] 读取本地缓存文件 {ttml_file_path:?} 失败: {e}"
                     );
                     // 不在这里发送 FetchError，让后续流程继续尝试在线源
                     // 但 local_cache_hit 仍然是 false
@@ -1109,11 +1071,11 @@ pub fn initial_auto_fetch_and_send_lyrics(app: &mut UniLyricApp, track_info: Now
 
         for (current_source_id, current_status_arc, fetch_future) in sources_to_try_ordered.into_iter() {
             let current_source_display_name = current_source_id.display_name();
-            log::trace!("[AppFetchCore AutoFetch TASK] 正在尝试源: '{}'", current_source_display_name);
+            log::trace!("[AppFetchCore AutoFetch TASK] 正在尝试源: '{current_source_display_name}'");
 
             match fetch_future.await {
                 Ok(processed_data) => {
-                    log::trace!("[AppFetchCore AutoFetch TASK] 源: '{}' 成功获取数据。", current_source_display_name);
+                    log::trace!("[AppFetchCore AutoFetch TASK] 源: '{current_source_display_name}' 成功获取数据。");
                     any_success_this_cycle_in_task = true;
                     let result_to_send = AutoFetchResult::Success {
                         source: current_source_id,
@@ -1135,12 +1097,12 @@ pub fn initial_auto_fetch_and_send_lyrics(app: &mut UniLyricApp, track_info: Now
                             break;
                         }
                     } else {
-                        log::error!("[AppFetchCore AutoFetch TASK] 源: '{}' 发送结果到主线程失败。", current_source_display_name);
+                        log::error!("[AppFetchCore AutoFetch TASK] 源: '{current_source_display_name}' 发送结果到主线程失败。");
                         *current_status_arc.lock().unwrap() = AutoSearchStatus::Error("发送结果失败".to_string());
                     }
                 }
                 Err(fetch_error) => {
-                    log::info!("[AppFetchCore AutoFetch TASK] 源: '{}' 下载失败: {}", current_source_display_name, fetch_error);
+                    log::info!("[AppFetchCore AutoFetch TASK] 源: '{current_source_display_name}' 下载失败: {fetch_error}");
                     match fetch_error {
                         LyricFetchError::NotFound => {
                             *current_status_arc.lock().unwrap() = AutoSearchStatus::NotFound;
@@ -1161,15 +1123,14 @@ pub fn initial_auto_fetch_and_send_lyrics(app: &mut UniLyricApp, track_info: Now
 
         // AMLL Player 通信逻辑 (与 app.rs 中版本一致)
         let final_config_is_enabled = media_connector_config_for_task.lock().unwrap().enabled;
-        if final_config_is_enabled && !any_success_this_cycle_in_task && !local_cache_hit {
-            if let Some(tx) = &media_connector_command_tx_for_task {
+        if final_config_is_enabled && !any_success_this_cycle_in_task && !local_cache_hit
+            && let Some(tx) = &media_connector_command_tx_for_task {
                 log::info!("[AppFetchCore AutoFetch TASK] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
                 let empty_ttml_body = ws_protocol::Body::SetLyricFromTTML { data: "".into() };
                 if tx.send(crate::amll_connector::ConnectorCommand::SendProtocolBody(empty_ttml_body)).is_err() {
                     log::error!("[AppFetchCore AutoFetch TASK] 发送空TTML (SendProtocolBody) 失败。");
                 }
             }
-        }
     });
 }
 

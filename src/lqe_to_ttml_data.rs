@@ -26,7 +26,7 @@ fn parse_lyrics(section: &LqeSection) -> Result<Vec<TtmlParagraph>, ConvertError
                 spl_to_ttml_data::convert_spl_to_ttml_data(&raw_spl_lines, Vec::new())?;
             Ok(paragraphs)
         }
-        Some(fmt) => Err(ConvertError::Internal(format!("不支持的格式: {:?}", fmt))),
+        Some(fmt) => Err(ConvertError::Internal(format!("不支持的格式: {fmt:?}"))),
         None => Err(ConvertError::Internal("歌词格式未指定.".to_string())),
     }
 }

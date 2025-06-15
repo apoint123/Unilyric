@@ -37,7 +37,7 @@ pub fn generate_yrc_from_ttml_data(
         if line_duration_ms == 0 && para.main_syllables.is_empty() {
             continue;
         }
-        write!(yrc_output, "[{},{}]", line_start_ms, line_duration_ms)?;
+        write!(yrc_output, "[{line_start_ms},{line_duration_ms}]")?;
 
         let num_main_syllables = para.main_syllables.len();
         for (idx, ttml_syl) in para.main_syllables.iter().enumerate() {
@@ -65,6 +65,6 @@ pub fn generate_yrc_from_ttml_data(
     Ok(if final_output.is_empty() {
         String::new()
     } else {
-        format!("{}\n", final_output)
+        format!("{final_output}\n")
     })
 }

@@ -55,14 +55,14 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
             .parse()
             .map_err(|_| ConvertError::InvalidQrcLineTimestamp {
                 line_num,
-                timestamp_str: format!("[{},{}]", line_start_ms_str, line_duration_ms_str),
+                timestamp_str: format!("[{line_start_ms_str},{line_duration_ms_str}]"),
             })?;
     let line_duration_ms: u64 =
         line_duration_ms_str
             .parse()
             .map_err(|_| ConvertError::InvalidQrcLineTimestamp {
                 line_num,
-                timestamp_str: format!("[{},{}]", line_start_ms_str, line_duration_ms_str),
+                timestamp_str: format!("[{line_start_ms_str},{line_duration_ms_str}]"),
             })?;
 
     // 获取行时间戳之后的内容，这部分包含音节文本和音节时间戳
@@ -92,7 +92,7 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
                 .map_err(|e| ConvertError::InvalidLysSyllable {
                     line_num,
                     text: text_slice.to_string(),
-                    message: format!("音节开始时间无效 '{}': {}", syl_start_ms_str, e),
+                    message: format!("音节开始时间无效 '{syl_start_ms_str}': {e}"),
                 })?;
         let syl_duration_ms: u64 =
             syl_duration_ms_str
@@ -100,7 +100,7 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
                 .map_err(|e| ConvertError::InvalidLysSyllable {
                     line_num,
                     text: text_slice.to_string(),
-                    message: format!("音节持续时长无效 '{}': {}", syl_duration_ms_str, e),
+                    message: format!("音节持续时长无效 '{syl_duration_ms_str}': {e}"),
                 })?;
 
         // 创建 LysSyllable 结构并添加到列表中
@@ -120,9 +120,7 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
         if !remaining_text.trim().is_empty() {
             // QRC 格式要求所有文本都必须有关联的时间戳，所以行尾不应有多余文本
             log::warn!(
-                "行 {}: 在最后一个音节时间戳标记后发现未处理的文本: '{}' ，已忽略",
-                line_num,
-                remaining_text
+                "行 {line_num}: 在最后一个音节时间戳标记后发现未处理的文本: '{remaining_text}' ，已忽略"
             );
         }
     }
@@ -131,10 +129,7 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
     if syllables.is_empty() && !content_after_line_ts.trim().is_empty() {
         return Err(ConvertError::InvalidQrcFormat {
             line_num,
-            message: format!(
-                "无法从内容 '{}' 中解析出任何有效音节时间戳。",
-                content_after_line_ts
-            ),
+            message: format!("无法从内容 '{content_after_line_ts}' 中解析出任何有效音节时间戳。"),
         });
     }
 
@@ -230,10 +225,7 @@ pub fn load_qrc_from_string(
                 _ => {
                     // 其他未识别的元数据标签
                     log::warn!(
-                        "行 {}: 未知的 QRC/LYS 元数据类型 '{}' (内容: '{}')",
-                        line_num,
-                        key,
-                        value
+                        "行 {line_num}: 未知的 QRC/LYS 元数据类型 '{key}' (内容: '{value}')"
                     );
                     // 也可以选择将未知标签作为自定义元数据存储
                     // qrc_metadata_vec.push(AssMetadata { key: key.to_string(), value });
@@ -255,19 +247,19 @@ pub fn load_qrc_from_string(
                         .is_empty()
                     {
                         // 如果行内容（除去行时间戳的部分）不为空，但没有解析出音节，记录警告
-                        log::warn!("行 {}: '{}' 解析后没有有效音节。", line_num, trimmed_line);
+                        log::warn!("行 {line_num}: '{trimmed_line}' 解析后没有有效音节。");
                     }
                     // 如果行内容也为空（纯时间戳行），则通常忽略
                 }
                 Err(e) => {
                     // 解析单行失败，记录错误
-                    log::error!("解析 QRC 行 {} ('{}') 失败: {}", line_num, trimmed_line, e);
+                    log::error!("解析 QRC 行 {line_num} ('{trimmed_line}') 失败: {e}");
                 }
             }
         }
         // 如果行既不是元数据也不是有效的歌词行格式
         else {
-            log::warn!("行 {}: 无法识别的 QRC 行: '{}'", line_num, trimmed_line);
+            log::warn!("行 {line_num}: 无法识别的 QRC 行: '{trimmed_line}'");
         }
     }
     // 返回解析结果

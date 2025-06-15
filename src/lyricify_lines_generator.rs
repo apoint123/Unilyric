@@ -65,25 +65,19 @@ pub fn generate_from_ttml_data(paragraphs: &[TtmlParagraph]) -> Result<String, C
             && p.main_syllables.len() == 1
             && p.main_syllables[0].text == full_line_text
         {
-            log::warn!(
-                "[Lyricify Lines 生成] 行 \"{}\" 的起始和结束时间均为0",
-                full_line_text
-            );
+            log::warn!("[Lyricify Lines 生成] 行 \"{full_line_text}\" 的起始和结束时间均为0");
         }
         // 检查2：结束时间小于或等于开始时间
         if end_ms <= start_ms {
             log::warn!(
-                "[Lyricify Lines 生成] 行 \"{}\" 的结束时间 {} 小于或等于开始时间 {}",
-                full_line_text,
-                end_ms,
-                start_ms,
+                "[Lyricify Lines 生成] 行 \"{full_line_text}\" 的结束时间 {end_ms} 小于或等于开始时间 {start_ms}",
             );
             // 注意：即使时间戳有问题，当前实现仍然会按原样输出它们。
         }
 
         // 格式化并写入 LYL 行到输出字符串
         // 格式为：[开始时间,结束时间]文本
-        if let Err(e) = writeln!(output, "[{},{}]{}", start_ms, end_ms, full_line_text) {
+        if let Err(e) = writeln!(output, "[{start_ms},{end_ms}]{full_line_text}") {
             return Err(ConvertError::Format(e)); // 如果写入失败，返回错误
         }
     }

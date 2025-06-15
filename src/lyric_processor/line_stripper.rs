@@ -95,11 +95,10 @@ pub fn strip_descriptive_metadata_blocks(
                 if let Some(end_bracket_idx) = text_after_prefix.find(']') {
                     text_after_prefix = text_after_prefix[end_bracket_idx + 1..].trim_start();
                 }
-            } else if text_after_prefix.starts_with('(') {
-                if let Some(end_paren_idx) = text_after_prefix.find(')') {
+            } else if text_after_prefix.starts_with('(')
+                && let Some(end_paren_idx) = text_after_prefix.find(')') {
                     text_after_prefix = text_after_prefix[end_paren_idx + 1..].trim_start();
                 }
-            }
 
             // 根据是否区分大小写，预处理待检查的文本
             // Cow<str> (Clone-on-Write) 用于在不区分大小写时持有小写版本的字符串，区分大小写时则借用原字符串切片
@@ -159,20 +158,15 @@ pub fn strip_descriptive_metadata_blocks(
         // 根据头部扫描结果，确定歌词实际开始的段落索引
         let first_lyric_paragraph_index = if let Some(last_match_idx) = last_matching_header_index {
             debug!(
-                "[行处理器] 最后匹配的头部元数据位于索引 {}。将移除此行及之前所有行。",
-                last_match_idx
+                "[行处理器] 最后匹配的头部元数据位于索引 {last_match_idx}。将移除此行及之前所有行。"
             );
             last_match_idx + 1 // 歌词从匹配到的元数据行的下一行开始
         } else {
-            debug!(
-                "[行处理器] 在前 {} 行中未找到头部元数据。",
-                current_header_scan_limit
-            );
+            debug!("[行处理器] 在前 {current_header_scan_limit} 行中未找到头部元数据。");
             0 // 没有头部元数据，歌词从第一行开始
         };
         debug!(
-            "[行处理器] --- 完成头部关键词扫描。歌词起始段落索引: {} ---",
-            first_lyric_paragraph_index
+            "[行处理器] --- 完成头部关键词扫描。歌词起始段落索引: {first_lyric_paragraph_index} ---"
         );
 
         // 扫描尾部元数据
@@ -215,8 +209,7 @@ pub fn strip_descriptive_metadata_blocks(
                 }
             }
             debug!(
-                "[行处理器] --- 完成尾部关键词扫描。歌词结束段落索引(不含): {} ---",
-                last_lyric_paragraph_exclusive_index
+                "[行处理器] --- 完成尾部关键词扫描。歌词结束段落索引(不含): {last_lyric_paragraph_exclusive_index} ---"
             );
         } else {
             debug!("[行处理器] 跳过尾部扫描，因为头部扫描已移除所有段落或开始时就没有段落。");
@@ -257,8 +250,7 @@ pub fn strip_descriptive_metadata_blocks(
     // --- 阶段 2: 基于正则表达式移除任意匹配的行 ---
     if enable_regex_stripping && !regex_patterns.is_empty() && !processed_paragraphs.is_empty() {
         debug!(
-            "[行处理器] --- 开始正则表达式扫描。表达式: {:?}, 区分大小写: {} ---",
-            regex_patterns, regex_case_sensitive
+            "[行处理器] --- 开始正则表达式扫描。表达式: {regex_patterns:?}, 区分大小写: {regex_case_sensitive} ---"
         );
         // 编译用户提供的所有正则表达式
         let compiled_regexes: Vec<Regex> = regex_patterns
@@ -276,7 +268,7 @@ pub fn strip_descriptive_metadata_blocks(
                     .build()
                     .map_err(|e| {
                         // 如果编译失败，记录警告
-                        warn!("[行处理器] 编译正则表达式 '{}' 失败: {}", pattern_str, e);
+                        warn!("[行处理器] 编译正则表达式 '{pattern_str}' 失败: {e}");
                         e
                     })
                     .ok() // 转换 Result 为 Option，编译失败的表达式将被忽略
@@ -302,10 +294,7 @@ pub fn strip_descriptive_metadata_blocks(
                 true // 未匹配任何正则，保留该段落 (retain 返回 true)
             });
             if regex_removed_count > 0 {
-                debug!(
-                    "[行处理器] 正则表达式移除操作移除了 {} 段落。",
-                    regex_removed_count
-                );
+                debug!("[行处理器] 正则表达式移除操作移除了 {regex_removed_count} 段落。");
             } else {
                 debug!("[行处理器] 正则表达式移除操作没有移除任何段落。");
             }
@@ -326,10 +315,7 @@ pub fn strip_descriptive_metadata_blocks(
             processed_paragraphs.len()
         );
     } else {
-        debug!(
-            "[行处理器] 总计没有段落被移除。数量仍为 {}。",
-            original_count
-        );
+        debug!("[行处理器] 总计没有段落被移除。数量仍为 {original_count}。");
     }
 
     processed_paragraphs // 返回处理后的段落列表

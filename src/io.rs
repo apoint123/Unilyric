@@ -22,10 +22,7 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
                         fmt
                     );
                 } else {
-                    log::warn!(
-                        "[Unilyric] 无法从文件扩展名 '{}' 判断源格式。请手动选择。",
-                        ext_str
-                    );
+                    log::warn!("[Unilyric] 无法从文件扩展名 '{ext_str}' 判断源格式。请手动选择。");
                 }
             } else {
                 log::warn!(
@@ -89,7 +86,7 @@ pub fn handle_save_file(app: &mut UniLyricApp) {
     }
 
     let target_ext = app.target_format.to_extension_str();
-    let default_filename = format!("Converted.{}", target_ext);
+    let default_filename = format!("Converted.{target_ext}");
 
     let dialog = rfd::FileDialog::new()
         .add_filter(
@@ -153,9 +150,9 @@ fn load_lrc_file_from_path(app: &mut UniLyricApp, path: PathBuf, lrc_type: LrcCo
             load_lrc_from_content(app, content, lrc_type, &source_desc);
         }
         Err(e) => {
-            log::error!("[Unilyric] 读取LRC文件 '{}' 失败: {}", source_desc, e);
+            log::error!("[Unilyric] 读取LRC文件 '{source_desc}' 失败: {e}");
             app.toasts.add(egui_toast::Toast {
-                text: format!("读取LRC文件失败: {}", e).into(),
+                text: format!("读取LRC文件失败: {e}").into(),
                 kind: egui_toast::ToastKind::Error,
                 options: egui_toast::ToastOptions::default()
                     .duration_in_seconds(3.0)
@@ -216,7 +213,7 @@ fn load_lrc_from_content(
                                     if let Err(e) =
                                         store.add("translation_language", item.value.clone())
                                     {
-                                        log::info!("从LRC加载翻译语言失败: {}", e);
+                                        log::info!("从LRC加载翻译语言失败: {e}");
                                     }
                                 } else if let Err(e) = store.add(&item.key, item.value.clone()) {
                                     log::info!("未能从LRC添加元数据键 {}：{}", item.key, e);
@@ -268,10 +265,7 @@ fn load_lrc_from_content(
                 }
             }
             log::info!(
-                "[Unilyric] 已从 '{}' 加载 {} LRC ({} 行)。",
-                source_description,
-                log_type_str,
-                num_lines
+                "[Unilyric] 已从 '{source_description}' 加载 {log_type_str} LRC ({num_lines} 行)。"
             );
 
             app.rebuild_editable_metadata_from_store();
@@ -291,13 +285,9 @@ fn load_lrc_from_content(
             }
         }
         Err(e) => {
-            log::error!(
-                "[Unilyric] 从 '{}' 解析LRC内容失败: {}",
-                source_description,
-                e
-            );
+            log::error!("[Unilyric] 从 '{source_description}' 解析LRC内容失败: {e}");
             app.toasts.add(egui_toast::Toast {
-                text: format!("LRC文件解析失败: {}", e).into(),
+                text: format!("LRC文件解析失败: {e}").into(),
                 kind: egui_toast::ToastKind::Error,
                 options: egui_toast::ToastOptions::default()
                     .duration_in_seconds(3.0)

@@ -58,19 +58,14 @@ pub fn convert_spl_to_ttml_data(
                         // 下一个块的开始时间不合理（例如早于或等于当前块的开始时间）。
                         // 这种情况不应作为隐式结束时间，回退到估算。
                         log::warn!(
-                            "[SPL 处理] 块 {} (开始于 {}ms): 下一个块的开始时间 {}ms 不适用于作为隐式结束时间。将使用开始时间加5秒作为结束时间。",
-                            idx,
-                            block_main_start_ms,
-                            next_block_start_ms
+                            "[SPL 处理] 块 {idx} (开始于 {block_main_start_ms}ms): 下一个块的开始时间 {next_block_start_ms}ms 不适用于作为隐式结束时间。将使用开始时间加5秒作为结束时间。"
                         );
                         block_main_start_ms + 5000 // 默认时长5秒
                     }
                 } else {
                     // 下一个块存在，但没有有效的开始时间（理论上不太可能发生，因为解析器应确保）。
                     log::warn!(
-                        "[SPL 处理] 块 {} (开始于 {}ms): 下一个块没有有效的开始时间。将使用开始时间加5秒作为结束时间。",
-                        idx,
-                        block_main_start_ms
+                        "[SPL 处理] 块 {idx} (开始于 {block_main_start_ms}ms): 下一个块没有有效的开始时间。将使用开始时间加5秒作为结束时间。"
                     );
                     block_main_start_ms + 5000 // 默认时长5秒
                 }
@@ -115,7 +110,7 @@ pub fn convert_spl_to_ttml_data(
                 .explicit_block_end_ms
                 .is_none_or(|end_ms| end_ms <= block_main_start_ms)
             {
-                log::trace!("[SPL 转 TTML] 跳过空的 SPL 块索引 {}", idx);
+                log::trace!("[SPL 转 TTML] 跳过空的 SPL 块索引 {idx}");
                 continue; // 处理下一个 spl_block
             }
         }
@@ -152,10 +147,7 @@ pub fn convert_spl_to_ttml_data(
                 // 如果推断的结束时间早于开始时间（可能由于音节处理或默认值问题），
                 // 尝试使用最后一个音节的持续时间来修正，或者如果无音节，则至少等于开始时间。
                 log::warn!(
-                    "[SPL 处理] 块 {} (行开始于 {}ms): 推断的段落结束时间 {}ms 早于开始时间。将进行校正。",
-                    idx,
-                    line_start_time_ms_for_para,
-                    p_end_ms_for_para
+                    "[SPL 处理] 块 {idx} (行开始于 {line_start_time_ms_for_para}ms): 推断的段落结束时间 {p_end_ms_for_para}ms 早于开始时间。将进行校正。"
                 );
                 p_end_ms_for_para = line_start_time_ms_for_para
                     + processed_main_syllables

@@ -120,7 +120,7 @@ async fn get_cover_data(
                         Ok(Some(bytes)) // 返回包含数据的 Option
                     }
                     Ok(Err(e)) => { // 读取操作的异步部分失败
-                        log::error!("[SMTC Handler] 读取封面数据时出错 (ReadAsync): {:?}", e);
+                        log::error!("[SMTC Handler] 读取封面数据时出错 (ReadAsync): {e:?}");
                         Err(e)
                     }
                     Err(_) => { // 读取操作超时
@@ -134,7 +134,7 @@ async fn get_cover_data(
             }
         }
         Ok(Err(e)) => { // 打开流的异步操作本身失败
-            log::error!("[SMTC Handler] 打开封面时出错 (OpenReadAsync): {:?}", e);
+            log::error!("[SMTC Handler] 打开封面时出错 (OpenReadAsync): {e:?}");
             Err(e)
         }
         Err(_) => { // 打开流的操作超时
@@ -168,7 +168,7 @@ async fn process_media_properties(
         match tokio_timeout(SMTC_ASYNC_OPERATION_TIMEOUT, media_props_op.into_future()).await {
             Ok(Ok(props)) => props,
             Ok(Err(e)) => {
-                log::error!("[SMTC Handler] 获取媒体属性时出错: {:?}", e);
+                log::error!("[SMTC Handler] 获取媒体属性时出错: {e:?}");
                 return Err(e);
             }
             Err(_) => {
@@ -187,37 +187,24 @@ async fn process_media_properties(
     let album_title = crate::utils::convert_traditional_to_simplified(&original_album_title);
 
     if original_title != title {
-        log::info!(
-            "[SMTC Handler] 标题繁转简: '{}' -> '{}'",
-            original_title,
-            title
-        );
+        log::info!("[SMTC Handler] 标题繁转简: '{original_title}' -> '{title}'");
     }
     if original_artist != artist {
-        log::info!(
-            "[SMTC Handler] 艺术家繁转简: '{}' -> '{}'",
-            original_artist,
-            artist
-        );
+        log::info!("[SMTC Handler] 艺术家繁转简: '{original_artist}' -> '{artist}'");
     }
     if original_album_title != album_title {
-        log::info!(
-            "[SMTC Handler] 专辑繁转简: '{}' -> '{}'",
-            original_album_title,
-            album_title
-        );
+        log::info!("[SMTC Handler] 专辑繁转简: '{original_album_title}' -> '{album_title}'");
     }
 
     let mut fetched_cover_data_bytes: Option<Vec<u8>> = None;
     let mut new_cover_data_hash: Option<u64> = None;
 
-    if let Ok(thumbnail_ref) = media_props.Thumbnail() {
-        if let Ok(Some(bytes)) = get_cover_data(&thumbnail_ref).await {
-            if !bytes.is_empty() {
-                new_cover_data_hash = Some(calculate_cover_hash(&bytes));
-                fetched_cover_data_bytes = Some(bytes);
-            }
-        }
+    if let Ok(thumbnail_ref) = media_props.Thumbnail()
+        && let Ok(Some(bytes)) = get_cover_data(&thumbnail_ref).await
+        && !bytes.is_empty()
+    {
+        new_cover_data_hash = Some(calculate_cover_hash(&bytes));
+        fetched_cover_data_bytes = Some(bytes);
     }
 
     let info_to_send: NowPlayingInfo;
@@ -300,16 +287,13 @@ async fn process_playback_info(
                     new_duration_ms_if_changed = Some(duration_from_timeline);
                 }
                 log::trace!(
-                    "[SMTC Handler process_playback_info] 播放状态已改变。获取到新的时间轴信息: 位置={:?}, 总时长={:?}",
-                    new_position_ms_if_changed,
-                    new_duration_ms_if_changed
+                    "[SMTC Handler process_playback_info] 播放状态已改变。获取到新的时间轴信息: 位置={new_position_ms_if_changed:?}, 总时长={new_duration_ms_if_changed:?}"
                 );
             }
             Err(e) => {
                 // 如果获取失败，记录警告，后续逻辑会使用之前缓存的时间
                 log::warn!(
-                    "[SMTC Handler process_playback_info] 播放状态改变后，获取时间轴属性失败: {:?}",
-                    e
+                    "[SMTC Handler process_playback_info] 播放状态改变后，获取时间轴属性失败: {e:?}"
                 );
             }
         }
@@ -386,10 +370,10 @@ async fn process_timeline_properties(
         if smtc_duration_ms > 0 {
             state.song_duration_ms = smtc_duration_ms;
         }
-        if let Ok(playback_info) = session.GetPlaybackInfo() {
-            if let Ok(controls) = playback_info.Controls() {
-                update_playback_controls_state(&mut state, Some(&controls));
-            }
+        if let Ok(playback_info) = session.GetPlaybackInfo()
+            && let Ok(controls) = playback_info.Controls()
+        {
+            update_playback_controls_state(&mut state, Some(&controls));
         }
 
         // Corrected NowPlayingInfo construction
@@ -438,7 +422,7 @@ async fn register_session_event_listeners_tokio(
                 .map_err(|e| {
                     WinError::new(
                         E_ABORT_HRESULT,
-                        format!("发送 SMTC 媒体属性变更信号失败: {}", e),
+                        format!("发送 SMTC 媒体属性变更信号失败: {e}"),
                     )
                 })?;
             Ok(())
@@ -453,7 +437,7 @@ async fn register_session_event_listeners_tokio(
                 .map_err(|e| {
                     WinError::new(
                         E_ABORT_HRESULT,
-                        format!("发送 SMTC 播放信息变更信号失败: {}", e),
+                        format!("发送 SMTC 播放信息变更信号失败: {e}"),
                     )
                 })?;
             Ok(())
@@ -468,7 +452,7 @@ async fn register_session_event_listeners_tokio(
                 .map_err(|e| {
                     WinError::new(
                         E_ABORT_HRESULT,
-                        format!("发送 SMTC 进度条属性变更信号失败: {}", e),
+                        format!("发送 SMTC 进度条属性变更信号失败: {e}"),
                     )
                 })?;
             Ok(())
@@ -503,11 +487,11 @@ fn generate_display_name(app_user_model_id: &str) -> String {
     }
     let mut name_intermediate = app_user_model_id.to_string();
     // 尝试移除 ".exe" 后缀 (不区分大小写)
-    if let Some(idx) = name_intermediate.to_lowercase().rfind(".exe") {
-        if idx == name_intermediate.len() - 4 {
-            // 确保 ".exe" 在末尾
-            name_intermediate.truncate(idx);
-        }
+    if let Some(idx) = name_intermediate.to_lowercase().rfind(".exe")
+        && idx == name_intermediate.len() - 4
+    {
+        // 确保 ".exe" 在末尾
+        name_intermediate.truncate(idx);
     }
     // 尝试按 '!' 分割 (通常用于 UWP 应用 ID)，取 '!' 后面的部分
     let name_after_bang = name_intermediate
@@ -581,8 +565,7 @@ async fn setup_event_listeners_for_session(
         .map(|h_id| hstring_to_string(&h_id))
         .unwrap_or_else(|_| "未知ID (获取失败)".to_string());
     log::trace!(
-        "[SMTC Handler] 正在为媒体会话 '{}' 设置事件监听器和获取初始状态 (v2)...",
-        session_id_for_log
+        "[SMTC Handler] 正在为媒体会话 '{session_id_for_log}' 设置事件监听器和获取初始状态 (v2)..."
     );
 
     // 重置共享状态，因为我们要开始监听一个新会话（或重新监听）
@@ -598,9 +581,7 @@ async fn setup_event_listeners_for_session(
         process_media_properties(&session_to_monitor, connector_update_tx, player_state_arc).await
     {
         log::error!(
-            "[SMTC Handler] (Setup) 处理会话 '{}' 的初始媒体属性时出错: {:?}",
-            session_id_for_log,
-            e
+            "[SMTC Handler] (Setup) 处理会话 '{session_id_for_log}' 的初始媒体属性时出错: {e:?}"
         );
     }
     // 2. 获取并处理初始播放信息 (这将发送另一个 NowPlayingInfo，包含最新的播放状态和时间)
@@ -610,9 +591,7 @@ async fn setup_event_listeners_for_session(
         process_playback_info(&session_to_monitor, connector_update_tx, player_state_arc).await
     {
         log::error!(
-            "[SMTC Handler] (Setup) 处理会话 '{}' 的初始播放信息时出错: {:?}",
-            session_id_for_log,
-            e
+            "[SMTC Handler] (Setup) 处理会话 '{session_id_for_log}' 的初始播放信息时出错: {e:?}"
         );
     }
     // 3. （可选）可以再调用一次 process_timeline_properties 来确保时间轴信息是最新的，
@@ -626,16 +605,13 @@ async fn setup_event_listeners_for_session(
         Ok(tokens) => *listener_tokens_storage = Some(tokens),
         Err(e) => {
             log::error!(
-                "[SMTC Handler] (Setup) 为会话 '{}' 注册事件监听器失败: {:?}",
-                session_id_for_log,
-                e
+                "[SMTC Handler] (Setup) 为会话 '{session_id_for_log}' 注册事件监听器失败: {e:?}"
             );
             return Err(e);
         }
     }
     log::trace!(
-        "[SMTC Handler] (Setup) 已成功为会话 '{}' 设置事件监听器并获取了初始状态。",
-        session_id_for_log
+        "[SMTC Handler] (Setup) 已成功为会话 '{session_id_for_log}' 设置事件监听器并获取了初始状态。"
     );
     Ok(())
 }
@@ -668,8 +644,8 @@ pub fn run_smtc_listener(
     {
         Ok(r) => r,
         Err(e) => {
-            let err_msg = format!("SMTC处理器创建 Tokio 运行时失败: {}", e);
-            log::error!("{}", err_msg);
+            let err_msg = format!("SMTC处理器创建 Tokio 运行时失败: {e}");
+            log::error!("{err_msg}");
             // 尝试通知 Worker 发生了错误
             let _ = connector_update_tx.send(ConnectorUpdate::WebsocketStatusChanged(
                 WebsocketStatus::错误(err_msg.clone()), // 使用 WebsocketStatus::错误 来传递一般性错误
@@ -711,7 +687,7 @@ pub fn run_smtc_listener(
                     "SMTC处理器 Tokio worker 线程 COM 初始化失败: HRESULT 0x{:08X}",
                     e.code().0 // 获取 HRESULT 错误码
                 );
-                log::error!("{}", err_msg);
+                log::error!("{err_msg}");
                 let _ = connector_update_tx.send(ConnectorUpdate::WebsocketStatusChanged(
                     WebsocketStatus::错误(err_msg),
                 ));
@@ -735,9 +711,9 @@ pub fn run_smtc_listener(
                         m
                     }
                     Ok(Err(e)) => { // 异步操作失败
-                        log::error!("[SMTC Handler 异步块] 获取 MediaSessionManager 的异步操作失败: {:?}", e);
+                        log::error!("[SMTC Handler 异步块] 获取 MediaSessionManager 的异步操作失败: {e:?}");
                         let _ = connector_update_tx.send(ConnectorUpdate::WebsocketStatusChanged(
-                            WebsocketStatus::错误(format!("SMTC管理器初始化(异步)失败: {:?}", e)),
+                            WebsocketStatus::错误(format!("SMTC管理器初始化(异步)失败: {e:?}")),
                         ));
                         return;
                     }
@@ -751,9 +727,9 @@ pub fn run_smtc_listener(
                 }
             }
             Err(e) => { // RequestAsync() 本身同步返回错误
-                log::error!("[SMTC Handler 异步块] 请求 MediaSessionManager 失败 (同步错误): {:?}", e);
+                log::error!("[SMTC Handler 异步块] 请求 MediaSessionManager 失败 (同步错误): {e:?}");
                 let _ = connector_update_tx.send(ConnectorUpdate::WebsocketStatusChanged(
-                    WebsocketStatus::错误(format!("SMTC管理器请求(同步)失败: {:?}", e)),
+                    WebsocketStatus::错误(format!("SMTC管理器请求(同步)失败: {e:?}")),
                 ));
                 return;
             }
@@ -780,7 +756,7 @@ pub fn run_smtc_listener(
                     log::error!("[SMTC Handler 异步块] 发送初始 SMTC 会话列表更新失败。");
                 }
             }
-            Err(e) => { log::error!("[SMTC Handler 异步块] 获取初始 SMTC 会话列表失败: {:?}", e); }
+            Err(e) => { log::error!("[SMTC Handler 异步块] 获取初始 SMTC 会话列表失败: {e:?}"); }
         }
 
         // 初始尝试监听系统当前的默认会话
@@ -797,10 +773,10 @@ pub fn run_smtc_listener(
                 &player_state_arc, &mut current_listener_tokens
             ).await {
                 let session_id_for_log = initial_session.SourceAppUserModelId().map(|h| hstring_to_string(&h)).unwrap_or_else(|_| "未知ID".to_string());
-                log::error!("[SMTC Handler 异步块] 初始设置监听会话 '{}' 失败: {:?}", session_id_for_log, e);
+                log::error!("[SMTC Handler 异步块] 初始设置监听会话 '{session_id_for_log}' 失败: {e:?}");
             } else {
                 let session_id_for_log = initial_session.SourceAppUserModelId().map(|h| hstring_to_string(&h)).unwrap_or_else(|_| "未知ID".to_string());
-                log::debug!("[SMTC Handler 异步块] 成功设置为初始监听会话 '{}'。", session_id_for_log);
+                log::debug!("[SMTC Handler 异步块] 成功设置为初始监听会话 '{session_id_for_log}'。");
                 current_monitored_session = Some(initial_session); // 保存当前监听的会话
             }
         } else { // 获取当前会话失败
@@ -818,11 +794,11 @@ pub fn run_smtc_listener(
         match manager.SessionsChanged(&TypedEventHandler::new(move |_, _| {
             // 当事件触发时，发送 Sessions 信号到内部事件处理循环
             signal_tx_for_manager.try_send(SmtcEventSignal::Sessions)
-                .map_err(|e| WinError::new(E_ABORT_HRESULT, format!("发送 SessionsChanged 信号失败: {}", e)))?;
+                .map_err(|e| WinError::new(E_ABORT_HRESULT, format!("发送 SessionsChanged 信号失败: {e}")))?;
             Ok(())
         })) {
             Ok(token) => { manager_sessions_changed_token = Some(token); log::debug!("[SMTC Handler 异步块] 已成功为会话管理器注册 SessionsChanged 事件监听器。"); }
-            Err(e) => { log::error!("[SMTC Handler 异步块] 为会话管理器注册 SessionsChanged 事件监听器失败: {:?}", e); }
+            Err(e) => { log::error!("[SMTC Handler 异步块] 为会话管理器注册 SessionsChanged 事件监听器失败: {e:?}"); }
         };
 
         // 用于生成音量缓动任务的唯一 ID，方便日志追踪
@@ -845,7 +821,7 @@ pub fn run_smtc_listener(
             if let Ok(command) = control_rx.try_recv() {
                 match command {
                     ConnectorCommand::SelectSmtcSession(target_id) => { // 选择要监听的 SMTC 会话
-                        log::debug!("[SMTC Handler 异步块] 收到命令: 选择 SMTC 会话 (目标ID: '{}')", target_id);
+                        log::debug!("[SMTC Handler 异步块] 收到命令: 选择 SMTC 会话 (目标ID: '{target_id}')");
                         let mut target_guard = target_session_id_arc.lock().await; // 异步锁定目标 ID
                         let new_target = if target_id.is_empty() { None } else { Some(target_id) }; // 如果 ID 为空，则表示自动选择
                         if *target_guard != new_target { // 如果目标 ID 发生变化
@@ -858,11 +834,11 @@ pub fn run_smtc_listener(
                                 log::warn!("[SMTC Handler 异步块] (SelectSmtcSession) 发送内部 SessionsChanged 信号失败，可能无法立即切换会话。");
                             }
                         } else { // 目标 ID 未变
-                            log::debug!("[SMTC Handler 异步块] 目标会话 ID 已是 {:?} (或等效的自动选择)，无需重复处理。", new_target);
+                            log::debug!("[SMTC Handler 异步块] 目标会话 ID 已是 {new_target:?} (或等效的自动选择)，无需重复处理。");
                         }
                     }
                     ConnectorCommand::MediaControl(media_cmd) => { // 媒体控制命令 (播放、暂停、下一首等)
-                        log::trace!("[SMTC Handler 异步块] 收到媒体控制命令: {:?}", media_cmd);
+                        log::trace!("[SMTC Handler 异步块] 收到媒体控制命令: {media_cmd:?}");
                         if let Some(session) = &current_monitored_session { // 确保当前有正在监听的会话
                             match media_cmd {
                                 SmtcControlCommand::Play | SmtcControlCommand::Pause | SmtcControlCommand::SkipNext |
@@ -892,37 +868,36 @@ pub fn run_smtc_listener(
                                         if let Ok(op) = op_res { // 异步操作创建成功
                                             // 为异步操作设置超时
                                             match tokio_timeout(SMTC_ASYNC_OPERATION_TIMEOUT, op.into_future()).await {
-                                                Ok(Ok(success)) => { if !success { log::warn!("[SMTC Handler 异步块] SMTC 命令 {:?} 执行后报告失败 (success=false)。", media_cmd); } }
-                                                Ok(Err(e)) => log::error!("[SMTC Handler 异步块] 执行 SMTC 命令 {:?} 的异步操作时出错: {:?}", media_cmd, e),
-                                                Err(_) => log::warn!("[SMTC Handler 异步块] 执行 SMTC 命令 {:?} 超时。", media_cmd),
+                                                Ok(Ok(success)) => { if !success { log::warn!("[SMTC Handler 异步块] SMTC 命令 {media_cmd:?} 执行后报告失败 (success=false)。"); } }
+                                                Ok(Err(e)) => log::error!("[SMTC Handler 异步块] 执行 SMTC 命令 {media_cmd:?} 的异步操作时出错: {e:?}"),
+                                                Err(_) => log::warn!("[SMTC Handler 异步块] 执行 SMTC 命令 {media_cmd:?} 超时。"),
                                             }
                                         } else if let Err(e) = op_res { // 异步操作创建失败
-                                            log::error!("[SMTC Handler 异步块] 准备 SMTC 命令 {:?} 失败 (API调用返回错误): {:?}", media_cmd, e);
+                                            log::error!("[SMTC Handler 异步块] 准备 SMTC 命令 {media_cmd:?} 失败 (API调用返回错误): {e:?}");
                                         }
                                     } else { // SMTC 不允许执行此操作
-                                        log::warn!("[SMTC Handler 异步块] 无法执行命令 {:?}，当前 SMTC 状态未启用此操作。", media_cmd);
+                                        log::warn!("[SMTC Handler 异步块] 无法执行命令 {media_cmd:?}，当前 SMTC 状态未启用此操作。");
                                     }
                                 }
                                 SmtcControlCommand::SetVolume(target_volume_level_f32) => { // 设置音量命令
                                     let task_id = next_easing_task_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed); // 获取唯一任务 ID
                                     log::debug!(
-                                        "[SMTC Handler 异步块] 任务ID[{}]: 收到 SetVolume 命令，目标音量: {:.2}",
-                                        task_id, target_volume_level_f32
+                                        "[SMTC Handler 异步块] 任务ID[{task_id}]: 收到 SetVolume 命令，目标音量: {target_volume_level_f32:.2}"
                                     );
 
                                     let mut easing_task_guard = active_volume_easing_task.lock().await; // 锁定当前音量缓动任务句柄
                                     if let Some(old_handle) = easing_task_guard.take() { // 如果存在旧的缓动任务
-                                        log::trace!("[SMTC Handler 异步块] 任务ID[{}]: 检测到旧的音量缓动任务，正在尝试取消...", task_id);
+                                        log::trace!("[SMTC Handler 异步块] 任务ID[{task_id}]: 检测到旧的音量缓动任务，正在尝试取消...");
                                         old_handle.abort(); // 取消旧任务
                                     } else {
-                                        log::trace!("[SMTC Handler 异步块] 任务ID[{}]: 没有活动的旧音量缓动任务。", task_id);
+                                        log::trace!("[SMTC Handler 异步块] 任务ID[{task_id}]: 没有活动的旧音量缓动任务。");
                                     }
 
                                     // 创建一个新的 Tokio 任务来执行音量缓动
                                     let session_clone_for_task = session.clone(); // 克隆会话对象用于新任务
                                     let connector_update_tx_clone = connector_update_tx.clone(); // 克隆更新通道用于新任务
                                     let new_easing_task = tokio::spawn(async move {
-                                        log::trace!("[音量缓动任务][ID:{}] 启动。", task_id);
+                                        log::trace!("[音量缓动任务][ID:{task_id}] 启动。");
                                         let animation_duration_ms = 250.0f32; // 缓动总时长 (毫秒)
                                         let steps = 15u32; // 缓动步数
                                         let step_duration_ms = animation_duration_ms / steps as f32; // 每一步的持续时间
@@ -931,7 +906,7 @@ pub fn run_smtc_listener(
                                         let target_identifier = match session_clone_for_task.SourceAppUserModelId() {
                                             Ok(id_hstr) if !id_hstr.is_empty() => hstring_to_string(&id_hstr),
                                             _ => {
-                                                log::warn!("[音量缓动任务][ID:{}] SetVolume: 无法获取当前会话的 SourceAppUserModelId。", task_id);
+                                                log::warn!("[音量缓动任务][ID:{task_id}] SetVolume: 无法获取当前会话的 SourceAppUserModelId。");
                                                 return; // 无法获取标识符，则无法控制音量
                                             }
                                         };
@@ -939,7 +914,7 @@ pub fn run_smtc_listener(
                                         let pid = match volume_control::get_pid_from_identifier(&target_identifier) {
                                             Some(p) => p,
                                             None => {
-                                                log::warn!("[音量缓动任务][ID:{}] SetVolume: 无法为目标应用 '{}' 找到 PID。", task_id, target_identifier);
+                                                log::warn!("[音量缓动任务][ID:{task_id}] SetVolume: 无法为目标应用 '{target_identifier}' 找到 PID。");
                                                 return; // 找不到 PID，无法控制音量
                                             }
                                         };
@@ -950,21 +925,20 @@ pub fn run_smtc_listener(
                                         }).await { // 等待阻塞操作完成
                                             Ok(Ok((vol, _muted))) => vol, // 获取成功
                                             Ok(Err(e)) => { // get_process_volume_by_pid 内部返回错误
-                                                log::error!("[音量缓动任务][ID:{}] 获取初始音量失败 (内部错误): {}.", task_id, e);
+                                                log::error!("[音量缓动任务][ID:{task_id}] 获取初始音量失败 (内部错误): {e}.");
                                                 return;
                                             }
                                             Err(e) => { // spawn_blocking 本身失败 (例如任务被取消)
-                                                log::error!("[音量缓动任务][ID:{}] 获取初始音量的 spawn_blocking 操作失败 (JoinError): {}.", task_id, e);
+                                                log::error!("[音量缓动任务][ID:{task_id}] 获取初始音量的 spawn_blocking 操作失败 (JoinError): {e}.");
                                                 if e.is_cancelled() {
-                                                    log::debug!("[音量缓动任务][ID:{}] 音量缓动任务在获取初始音量时被取消。", task_id);
+                                                    log::debug!("[音量缓动任务][ID:{task_id}] 音量缓动任务在获取初始音量时被取消。");
                                                 }
                                                 return;
                                             }
                                         };
 
                                         log::trace!(
-                                            "[音量缓动任务][ID:{}] 开始音量缓动: 从 {:.2} 到 {:.2}, 应用PID: {}, 时长: {:.0}ms",
-                                            task_id, initial_volume_f32, target_volume_level_f32, pid, animation_duration_ms
+                                            "[音量缓动任务][ID:{task_id}] 开始音量缓动: 从 {initial_volume_f32:.2} 到 {target_volume_level_f32:.2}, 应用PID: {pid}, 时长: {animation_duration_ms:.0}ms"
                                         );
 
                                         // 执行缓动动画的每一帧
@@ -997,27 +971,27 @@ pub fn run_smtc_listener(
                                                                     is_muted: final_mute,
                                                                 };
                                                                 if update_tx_for_final_update.send(update_msg).is_err() {
-                                                                    log::error!("[音量缓动任务][ID:{}] 发送最终音量已更改更新失败。", task_id);
+                                                                    log::error!("[音量缓动任务][ID:{task_id}] 发送最终音量已更改更新失败。");
                                                                 }
                                                             }
-                                                            Ok(Err(e_get)) => log::error!("[音量缓动任务][ID:{}] 缓动结束后获取 PID {} 的音量状态失败 (内部错误): {}", task_id, pid_for_get_final, e_get),
+                                                            Ok(Err(e_get)) => log::error!("[音量缓动任务][ID:{task_id}] 缓动结束后获取 PID {pid_for_get_final} 的音量状态失败 (内部错误): {e_get}"),
                                                             Err(e_join) =>  {
-                                                                log::error!("[音量缓动任务][ID:{}] 缓动结束后获取音量状态的 spawn_blocking 操作失败 (JoinError): {}", task_id, e_join);
+                                                                log::error!("[音量缓动任务][ID:{task_id}] 缓动结束后获取音量状态的 spawn_blocking 操作失败 (JoinError): {e_join}");
                                                                 if e_join.is_cancelled() {
-                                                                    log::debug!("[音量缓动任务][ID:{}] 音量缓动任务在获取最终音量时被取消。", task_id);
+                                                                    log::debug!("[音量缓动任务][ID:{task_id}] 音量缓动任务在获取最终音量时被取消。");
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
                                                 Ok(Err(e)) => { // set_process_volume_by_pid 内部返回错误
-                                                    log::error!("[音量缓动任务][ID:{}] 步骤 {}/{}: 设置 PID {} 音量失败 (内部错误): {}. 中断缓动。", task_id, s_u32, steps, pid, e);
+                                                    log::error!("[音量缓动任务][ID:{task_id}] 步骤 {s_u32}/{steps}: 设置 PID {pid} 音量失败 (内部错误): {e}. 中断缓动。");
                                                     return; // 中断缓动
                                                 }
                                                 Err(e) => { // spawn_blocking 本身失败
-                                                    log::error!("[音量缓动任务][ID:{}] 步骤 {}/{}: 设置音量的 spawn_blocking 操作失败 (JoinError): {}. 中断缓动。", task_id, s_u32, steps, e);
+                                                    log::error!("[音量缓动任务][ID:{task_id}] 步骤 {s_u32}/{steps}: 设置音量的 spawn_blocking 操作失败 (JoinError): {e}. 中断缓动。");
                                                     if e.is_cancelled() {
-                                                        log::debug!("[音量缓动任务][ID:{}] 音量缓动任务在设置音量时被取消。", task_id);
+                                                        log::debug!("[音量缓动任务][ID:{task_id}] 音量缓动任务在设置音量时被取消。");
                                                     }
                                                     return; // 中断缓动
                                                 }
@@ -1029,24 +1003,24 @@ pub fn run_smtc_listener(
                                                 tokio_sleep(TokioDuration::from_secs_f32(step_duration_ms / 1000.0)).await;
                                             }
                                         }
-                                        log::trace!("[音量缓动任务][ID:{}] 音量缓动完成或被中断。目标音量: {:.2}", task_id, target_volume_level_f32);
+                                        log::trace!("[音量缓动任务][ID:{task_id}] 音量缓动完成或被中断。目标音量: {target_volume_level_f32:.2}");
                                     });
                                     *easing_task_guard = Some(new_easing_task); // 保存新的缓动任务句柄
                                 }
                                 // 其他 SmtcControlCommand 类型不在此处处理
                             }
                         } else { // 没有活动的 SMTC 会话
-                            log::warn!("[SMTC Handler 异步块] 收到媒体控制命令 {:?}，但当前没有活动的 SMTC 会话可供控制。", media_cmd);
+                            log::warn!("[SMTC Handler 异步块] 收到媒体控制命令 {media_cmd:?}，但当前没有活动的 SMTC 会话可供控制。");
                         }
                     }
-                    _ => { log::warn!("[SMTC Handler 异步块] 收到未处理的连接器命令: {:?}", command); }
+                    _ => { log::warn!("[SMTC Handler 异步块] 收到未处理的连接器命令: {command:?}"); }
                 }
             }
 
             // 处理内部 SMTC 事件信号 (带100毫秒超时，实现非阻塞轮询)
             match tokio::time::timeout(TokioDuration::from_millis(100), smtc_event_signal_rx.recv()).await {
                 Ok(Some(signal)) => { // 收到内部事件信号
-                    log::trace!("[SMTC Handler 异步块] 收到内部 SMTC 事件信号: {:?}", signal);
+                    log::trace!("[SMTC Handler 异步块] 收到内部 SMTC 事件信号: {signal:?}");
                     if signal == SmtcEventSignal::Sessions { // SMTC 会话列表发生变化
                         log::debug!("[SMTC Handler 异步块] 开始处理 SessionsChanged 事件...");
                         // 1. 获取并发送最新的所有可用会话列表给 Worker
@@ -1056,27 +1030,26 @@ pub fn run_smtc_listener(
                                     log::error!("[SMTC Handler 异步块] (SessionsChanged) 发送 SMTC 会话列表更新失败。");
                                 }
                             }
-                            Err(e) => { log::error!("[SMTC Handler 异步块] (SessionsChanged) 获取所有 SMTC 会话列表失败: {:?}", e); }
+                            Err(e) => { log::error!("[SMTC Handler 异步块] (SessionsChanged) 获取所有 SMTC 会话列表失败: {e:?}"); }
                         }
 
                         // 2. 根据 target_session_id_arc (用户或程序指定的期望会话ID) 确定要监听哪个会话
                         let desired_session_id_opt: Option<String> = target_session_id_arc.lock().await.clone(); // 获取期望的会话ID
-                        log::debug!("[SMTC Handler 异步块] (SessionsChanged) 当前期望的目标会话 ID: {:?}", desired_session_id_opt);
+                        log::debug!("[SMTC Handler 异步块] (SessionsChanged) 当前期望的目标会话 ID: {desired_session_id_opt:?}");
 
                         let mut new_session_to_monitor: Option<MediaSession> = None; // 将要监听的新会话
                         if let Some(ref desired_id) = desired_session_id_opt { // 如果指定了期望的会话ID
-                            log::debug!("[SMTC Handler 异步块] (SessionsChanged) 用户期望监听特定会话 ID: '{}'", desired_id);
+                            log::debug!("[SMTC Handler 异步块] (SessionsChanged) 用户期望监听特定会话 ID: '{desired_id}'");
                             if let Ok(sessions_from_manager) = manager.GetSessions() { // 获取当前所有活动会话
                                 for s_obj in sessions_from_manager { // 遍历查找匹配的会话
-                                    if let Ok(id_hstr) = s_obj.SourceAppUserModelId() {
-                                        if hstring_to_string(&id_hstr) == *desired_id {
+                                    if let Ok(id_hstr) = s_obj.SourceAppUserModelId()
+                                        && hstring_to_string(&id_hstr) == *desired_id {
                                             new_session_to_monitor = Some(s_obj); // 找到匹配的会话
                                             break;
                                         }
-                                    }
                                 }
                                 if new_session_to_monitor.is_none() { // 如果没有找到用户指定的会话
-                                    log::warn!("[SMTC Handler 异步块] (SessionsChanged) 用户选择的会话 ID '{}' 未在当前活动会话列表中找到。", desired_id);
+                                    log::warn!("[SMTC Handler 异步块] (SessionsChanged) 用户选择的会话 ID '{desired_id}' 未在当前活动会话列表中找到。");
                                     // 通知 Worker，用户选择的会话消失了
                                     if connector_update_tx.send(ConnectorUpdate::SelectedSmtcSessionVanished(desired_id.clone())).is_err() {
                                         log::error!("[SMTC Handler 异步块] 发送“选定会话消失”更新失败。");
@@ -1099,15 +1072,14 @@ pub fn run_smtc_listener(
                         let new_target_id_to_monitor = new_session_to_monitor.as_ref().and_then(|s| s.SourceAppUserModelId().ok().map(|h| hstring_to_string(&h)));
 
                         if current_monitored_id != new_target_id_to_monitor { // 如果目标会话发生变化
-                            log::trace!("[SMTC Handler 异步块] (SessionsChanged) 检测到需要切换监听的媒体会话 (从 {:?} 切换到 {:?})。", current_monitored_id, new_target_id_to_monitor);
+                            log::trace!("[SMTC Handler 异步块] (SessionsChanged) 检测到需要切换监听的媒体会话 (从 {current_monitored_id:?} 切换到 {new_target_id_to_monitor:?})。");
 
                             // 1. 如果当前正在监听一个会话，则取消注册其事件监听器
                             if let Some(old_session) = current_monitored_session.take() { // .take() 会移出 Option 中的值
-                                if let Some(tokens) = current_listener_tokens.take() {
-                                    if let Err(e) = unregister_session_event_listeners(&old_session, tokens) {
-                                        log::warn!("[SMTC Handler 异步块] (SessionsChanged) 取消注册旧会话的事件监听器失败: {:?}", e);
+                                if let Some(tokens) = current_listener_tokens.take()
+                                    && let Err(e) = unregister_session_event_listeners(&old_session, tokens) {
+                                        log::warn!("[SMTC Handler 异步块] (SessionsChanged) 取消注册旧会话的事件监听器失败: {e:?}");
                                     }
-                                }
                             }
 
                             // 2. 重置共享播放器状态，并发送一个临时的“切换中”或“无会话”更新
@@ -1129,10 +1101,10 @@ pub fn run_smtc_listener(
                                     session_obj_to_monitor.clone(), &connector_update_tx, &smtc_event_signal_tx,
                                     &player_state_arc, &mut current_listener_tokens
                                 ).await { // 设置新会话的监听
-                                    log::error!("[SMTC Handler 异步块] (SessionsChanged) 设置新会话 '{}' 的监听失败: {:?}", sid, e);
+                                    log::error!("[SMTC Handler 异步块] (SessionsChanged) 设置新会话 '{sid}' 的监听失败: {e:?}");
                                     current_monitored_session = None; // 设置失败，则当前无监听会话
                                 } else {
-                                    log::trace!("[SMTC Handler 异步块] (SessionsChanged) 已成功切换到监听新会话 '{}'。", sid);
+                                    log::trace!("[SMTC Handler 异步块] (SessionsChanged) 已成功切换到监听新会话 '{sid}'。");
                                     current_monitored_session = Some(session_obj_to_monitor); // 保存新监听的会话
                                 }
                             } else { // 没有可监听的新会话
@@ -1146,23 +1118,23 @@ pub fn run_smtc_listener(
                         match signal {
                             SmtcEventSignal::MediaProperties => { // 媒体属性变更
                                 if let Err(e) = process_media_properties(session, &connector_update_tx, &player_state_arc).await {
-                                    log::error!("[SMTC Handler 异步块] 处理 MediaPropertiesChanged 事件时出错: {:?}", e);
+                                    log::error!("[SMTC Handler 异步块] 处理 MediaPropertiesChanged 事件时出错: {e:?}");
                                 }
                             }
                             SmtcEventSignal::PlaybackInfo => { // 播放信息变更
                                 if let Err(e) = process_playback_info(session, &connector_update_tx, &player_state_arc).await {
-                                    log::error!("[SMTC Handler 异步块] 处理 PlaybackInfoChanged 事件时出错: {:?}", e);
+                                    log::error!("[SMTC Handler 异步块] 处理 PlaybackInfoChanged 事件时出错: {e:?}");
                                 }
                             }
                             SmtcEventSignal::TimelineProperties => { // 进度条属性变更
                                 if let Err(e) = process_timeline_properties(session, &connector_update_tx, &player_state_arc).await {
-                                    log::error!("[SMTC Handler 异步块] 处理 TimelinePropertiesChanged 事件时出错: {:?}", e);
+                                    log::error!("[SMTC Handler 异步块] 处理 TimelinePropertiesChanged 事件时出错: {e:?}");
                                 }
                             }
                             SmtcEventSignal::Sessions => { /* Sessions 信号已在上面单独处理 */ }
                         }
                     } else { // 收到其他事件，但没有活动的会话可处理
-                        log::warn!("[SMTC Handler 异步块] 收到事件 {:?} 但当前没有活动的媒体会话可供处理。可能需要重新评估会话状态。", signal);
+                        log::warn!("[SMTC Handler 异步块] 收到事件 {signal:?} 但当前没有活动的媒体会话可供处理。可能需要重新评估会话状态。");
                         // 尝试触发一次 SessionsChanged 处理，以期恢复或找到一个会话
                         if smtc_event_signal_tx.try_send(SmtcEventSignal::Sessions).is_err() {
                             log::warn!("[SMTC Handler 异步块] (无活动会话时) 发送内部 SessionsChanged 信号以尝试恢复会话状态失败。");
@@ -1189,20 +1161,17 @@ pub fn run_smtc_listener(
         }
 
         // 取消注册当前监听会话的事件监听器 (如果有)
-        if let Some(session_to_clean) = current_monitored_session.take() {
-            if let Some(tokens_to_clean) = current_listener_tokens.take() {
-                if let Err(e) = unregister_session_event_listeners(&session_to_clean, tokens_to_clean) {
-                    log::error!("[SMTC Handler 异步块] 清理会话事件监听器时出错: {:?}", e);
+        if let Some(session_to_clean) = current_monitored_session.take()
+            && let Some(tokens_to_clean) = current_listener_tokens.take()
+                && let Err(e) = unregister_session_event_listeners(&session_to_clean, tokens_to_clean) {
+                    log::error!("[SMTC Handler 异步块] 清理会话事件监听器时出错: {e:?}");
                 }
-            }
-        }
 
         // 取消注册会话管理器的 SessionsChanged 事件监听器 (如果有)
-        if let Some(token_val) = manager_sessions_changed_token.take() {
-            if let Err(e) = manager.RemoveSessionsChanged(token_val) {
-                log::error!("[SMTC Handler 异步块] 清理管理器 SessionsChanged 事件监听器时出错: {:?}", e);
+        if let Some(token_val) = manager_sessions_changed_token.take()
+            && let Err(e) = manager.RemoveSessionsChanged(token_val) {
+                log::error!("[SMTC Handler 异步块] 清理管理器 SessionsChanged 事件监听器时出错: {e:?}");
             }
-        }
         log::trace!("[SMTC Handler 异步块] SMTC 监听器异步块执行完成，资源已清理。");
         // _com_guard 会在此异步块结束时自动 Drop，从而调用 CoUninitialize
     }); // rt.block_on 结束

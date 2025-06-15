@@ -19,22 +19,22 @@ fn strip_outer_parentheses(text: &str) -> String {
     let mut end_byte_idx = text.len(); // 清理后文本的结束字节索引
 
     // 检查第一个字符是否是开括号
-    if let Some((_, first_char)) = char_iter.peek() {
-        if *first_char == '(' || *first_char == '（' {
-            // 支持半角和全角括号
-            char_iter.next(); // 消耗掉开括号
-            // 更新起始索引为开括号之后的字符的索引
-            start_byte_idx = char_iter.peek().map_or(text.len(), |(idx, _)| *idx);
-        }
+    if let Some((_, first_char)) = char_iter.peek()
+        && (*first_char == '(' || *first_char == '（')
+    {
+        // 支持半角和全角括号
+        char_iter.next(); // 消耗掉开括号
+        // 更新起始索引为开括号之后的字符的索引
+        start_byte_idx = char_iter.peek().map_or(text.len(), |(idx, _)| *idx);
     }
 
     // 检查最后一个字符是否是闭括号
-    if !text.is_empty() {
-        if let Some((idx, char_val)) = text.char_indices().next_back() {
-            // 从后向前迭代
-            if char_val == ')' || char_val == '）' {
-                end_byte_idx = idx; // 更新结束索引为闭括号之前的字符的索引
-            }
+    if !text.is_empty()
+        && let Some((idx, char_val)) = text.char_indices().next_back()
+    {
+        // 从后向前迭代
+        if char_val == ')' || char_val == '）' {
+            end_byte_idx = idx; // 更新结束索引为闭括号之前的字符的索引
         }
     }
 
@@ -69,13 +69,13 @@ fn convert_ttml_syllable_to_qrc_syllable_internal(
 
         if num_bg_syllables_in_line == 1 {
             // 如果行内只有一个背景音节，则用 () 包裹
-            current_text = format!("({})", cleaned_text);
+            current_text = format!("({cleaned_text})");
         } else if is_first_bg_syllable {
             // 如果是第一个背景音节（且行内不止一个），则在前面加 (
-            current_text = format!("({}", cleaned_text);
+            current_text = format!("({cleaned_text}");
         } else if is_last_bg_syllable {
             // 如果是最后一个背景音节（且行内不止一个），则在后面加 )
-            current_text = format!("{})", cleaned_text);
+            current_text = format!("{cleaned_text})");
         } else {
             // 中间的背景音节，直接使用清理后的文本
             current_text = cleaned_text;
@@ -120,7 +120,7 @@ pub fn generate_qrc_from_ttml_data(
             let line_duration_ms = line_end_ms.saturating_sub(line_start_ms);
 
             // 写入行级别的时间戳：[开始时间,持续时间]
-            write!(qrc_output, "[{},{}]", line_start_ms, line_duration_ms)?;
+            write!(qrc_output, "[{line_start_ms},{line_duration_ms}]")?;
 
             let num_main_syllables = para.main_syllables.len();
             // 遍历该行中的所有主音节
@@ -136,8 +136,7 @@ pub fn generate_qrc_from_ttml_data(
                     // 写入音节：文本(开始时间,持续时间)
                     write!(
                         qrc_output,
-                        "{}({},{})",
-                        syl_text, syl_start_ms_abs, syl_duration_ms
+                        "{syl_text}({syl_start_ms_abs},{syl_duration_ms})"
                     )?;
                 }
 
@@ -150,38 +149,36 @@ pub fn generate_qrc_from_ttml_data(
         }
 
         // 处理背景歌词部分 (如果存在)
-        if let Some(bg_section) = &para.background_section {
-            if !bg_section.syllables.is_empty() {
-                // 背景歌词也按主歌词的方式处理行时间和音节时间
-                let line_start_ms = bg_section.syllables.first().unwrap().start_ms;
-                let line_end_ms = bg_section.syllables.last().unwrap().end_ms;
-                let line_duration_ms = line_end_ms.saturating_sub(line_start_ms);
+        if let Some(bg_section) = &para.background_section
+            && !bg_section.syllables.is_empty()
+        {
+            // 背景歌词也按主歌词的方式处理行时间和音节时间
+            let line_start_ms = bg_section.syllables.first().unwrap().start_ms;
+            let line_end_ms = bg_section.syllables.last().unwrap().end_ms;
+            let line_duration_ms = line_end_ms.saturating_sub(line_start_ms);
 
-                write!(qrc_output, "[{},{}]", line_start_ms, line_duration_ms)?;
+            write!(qrc_output, "[{line_start_ms},{line_duration_ms}]")?;
 
-                let num_bg_syllables = bg_section.syllables.len();
-                for (idx, ttml_syl_bg) in bg_section.syllables.iter().enumerate() {
-                    // 背景音节的文本通常已经包含了括号，例如 "(背景词)"
-                    // 这是由 convert_ttml_syllable_to_qrc_syllable_internal (如果被调用) 或其他转换逻辑处理的
-                    // 在当前版本的 qrc_generator.rs 中，背景文本的括号应由上游（如TTML解析或转换到TTML的逻辑）处理好。
-                    let syl_text_bg = &ttml_syl_bg.text;
-                    let syl_start_ms_abs_bg = ttml_syl_bg.start_ms;
-                    let syl_duration_ms_bg =
-                        ttml_syl_bg.end_ms.saturating_sub(ttml_syl_bg.start_ms);
+            let num_bg_syllables = bg_section.syllables.len();
+            for (idx, ttml_syl_bg) in bg_section.syllables.iter().enumerate() {
+                // 背景音节的文本通常已经包含了括号，例如 "(背景词)"
+                // 这是由 convert_ttml_syllable_to_qrc_syllable_internal (如果被调用) 或其他转换逻辑处理的
+                // 在当前版本的 qrc_generator.rs 中，背景文本的括号应由上游（如TTML解析或转换到TTML的逻辑）处理好。
+                let syl_text_bg = &ttml_syl_bg.text;
+                let syl_start_ms_abs_bg = ttml_syl_bg.start_ms;
+                let syl_duration_ms_bg = ttml_syl_bg.end_ms.saturating_sub(ttml_syl_bg.start_ms);
 
-                    if !syl_text_bg.is_empty() || syl_duration_ms_bg > 0 {
-                        write!(
-                            qrc_output,
-                            "{}({},{})",
-                            syl_text_bg, syl_start_ms_abs_bg, syl_duration_ms_bg
-                        )?;
-                    }
-                    if ttml_syl_bg.ends_with_space && idx < num_bg_syllables - 1 {
-                        qrc_output.push_str(" (0,0)");
-                    }
+                if !syl_text_bg.is_empty() || syl_duration_ms_bg > 0 {
+                    write!(
+                        qrc_output,
+                        "{syl_text_bg}({syl_start_ms_abs_bg},{syl_duration_ms_bg})"
+                    )?;
                 }
-                writeln!(qrc_output)?; // 背景歌词行结束后换行
+                if ttml_syl_bg.ends_with_space && idx < num_bg_syllables - 1 {
+                    qrc_output.push_str(" (0,0)");
+                }
             }
+            writeln!(qrc_output)?; // 背景歌词行结束后换行
         }
     }
     // 移除字符串末尾可能多余的换行符
@@ -190,6 +187,6 @@ pub fn generate_qrc_from_ttml_data(
     if final_output.is_empty() {
         Ok(String::new())
     } else {
-        Ok(format!("{}\n", final_output))
+        Ok(format!("{final_output}\n"))
     }
 }

@@ -33,10 +33,7 @@ pub(crate) fn merge_lrc_content_line_by_line_with_primary_paragraphs(
     language_code: Option<String>,
 ) -> Result<(), ConvertError> {
     if lrc_content_str.is_empty() || primary_paragraphs.is_empty() {
-        trace!(
-            "[LyricsMerger] 逐行合并：LRC内容或主段落为空，跳过。类型: {:?}",
-            content_type
-        );
+        trace!("[LyricsMerger] 逐行合并：LRC内容或主段落为空，跳过。类型: {content_type:?}");
         return Ok(());
     }
     debug!(
@@ -50,7 +47,7 @@ pub(crate) fn merge_lrc_content_line_by_line_with_primary_paragraphs(
         match lrc_parser::parse_lrc_text_to_lines(lrc_content_str) {
             Ok(result) => result,
             Err(e) => {
-                error!("[LyricsMerger] 逐行合并时解析LRC内容失败: {}", e);
+                error!("[LyricsMerger] 逐行合并时解析LRC内容失败: {e}");
                 return Err(e);
             }
         };
@@ -68,10 +65,7 @@ pub(crate) fn merge_lrc_content_line_by_line_with_primary_paragraphs(
     lrc_lines_for_merge.sort_by_key(|line| line.timestamp_ms);
 
     if lrc_lines_for_merge.is_empty() {
-        info!(
-            "[LyricsMerger] 逐行合并：LRC解析后有效行数为0，不执行合并。类型: {:?}",
-            content_type
-        );
+        info!("[LyricsMerger] 逐行合并：LRC解析后有效行数为0，不执行合并。类型: {content_type:?}");
         return Ok(());
     }
 
@@ -98,10 +92,7 @@ pub(crate) fn merge_lrc_content_line_by_line_with_primary_paragraphs(
             break;
         }
     }
-    debug!(
-        "[LyricsMerger] 逐行合并LRC内容完成，类型: {:?}",
-        content_type
-    );
+    debug!("[LyricsMerger] 逐行合并LRC内容完成，类型: {content_type:?}");
     Ok(())
 }
 
@@ -120,10 +111,7 @@ pub(crate) fn merge_secondary_qrc_into_paragraphs_internal(
     content_type: LrcContentType,
 ) -> Result<(), ConvertError> {
     if qrc_content.is_empty() || primary_paragraphs.is_empty() {
-        trace!(
-            "[LyricsMerger] 合并QRC：QRC内容或主段落为空，跳过。类型: {:?}",
-            content_type
-        );
+        trace!("[LyricsMerger] 合并QRC：QRC内容或主段落为空，跳过。类型: {content_type:?}");
         return Ok(());
     }
     debug!(
@@ -136,16 +124,13 @@ pub(crate) fn merge_secondary_qrc_into_paragraphs_internal(
         match qrc_parser::load_qrc_from_string(qrc_content) {
             Ok(result) => result,
             Err(e) => {
-                error!("[LyricsMerger] 合并QRC时解析QRC内容失败: {}", e);
+                error!("[LyricsMerger] 合并QRC时解析QRC内容失败: {e}");
                 return Err(e);
             }
         };
 
     if secondary_qrc_lines.is_empty() {
-        info!(
-            "[LyricsMerger] 合并QRC：QRC解析后行数为0，不执行合并。类型: {:?}",
-            content_type
-        );
+        info!("[LyricsMerger] 合并QRC：QRC解析后行数为0，不执行合并。类型: {content_type:?}");
         return Ok(());
     }
 
@@ -212,7 +197,7 @@ pub(crate) fn merge_secondary_qrc_into_paragraphs_internal(
             qrc_search_start_idx = matched_idx + 1;
         }
     }
-    debug!("[LyricsMerger] 合并QRC内容完成，类型: {:?}", content_type);
+    debug!("[LyricsMerger] 合并QRC内容完成，类型: {content_type:?}");
     Ok(())
 }
 
@@ -233,10 +218,7 @@ pub(crate) fn merge_lrc_lines_into_paragraphs_internal(
     language_code_from_lrc_meta: Option<String>,
 ) -> Result<(), ConvertError> {
     if lrc_content.is_empty() || primary_paragraphs.is_empty() {
-        info!(
-            "[LyricsMerger] 时间戳合并LRC：LRC内容或主段落为空，跳过。类型: {:?}",
-            content_type
-        );
+        info!("[LyricsMerger] 时间戳合并LRC：LRC内容或主段落为空，跳过。类型: {content_type:?}");
         return Ok(());
     }
     debug!(
@@ -249,7 +231,7 @@ pub(crate) fn merge_lrc_lines_into_paragraphs_internal(
         match lrc_parser::parse_lrc_text_to_lines(lrc_content) {
             Ok(result) => result,
             Err(e) => {
-                error!("[LyricsMerger] 时间戳合并LRC时解析LRC内容失败: {}", e);
+                error!("[LyricsMerger] 时间戳合并LRC时解析LRC内容失败: {e}");
                 return Err(e);
             }
         };
@@ -266,8 +248,7 @@ pub(crate) fn merge_lrc_lines_into_paragraphs_internal(
 
     if lrc_lines_for_merge.is_empty() {
         info!(
-            "[LyricsMerger] 时间戳合并LRC：LRC解析后有效行数为0，不执行合并。类型: {:?}",
-            content_type
+            "[LyricsMerger] 时间戳合并LRC：LRC解析后有效行数为0，不执行合并。类型: {content_type:?}"
         );
         for primary_paragraph in primary_paragraphs.iter_mut() {
             match content_type {
@@ -414,7 +395,7 @@ pub fn merge_downloaded_secondary_lyrics(
                             .map_or(0, |v| v.len())
                     );
                 }
-                Err(e) => error!("[LyricsMerger] 主段落为空时，解析独立翻译LRC失败: {}", e),
+                Err(e) => error!("[LyricsMerger] 主段落为空时，解析独立翻译LRC失败: {e}"),
             }
         } else if let Some(primary_paragraphs) = primary_paragraphs_opt {
             let lang_code_for_merge: Option<String> = session_platform_metadata
@@ -429,12 +410,11 @@ pub fn merge_downloaded_secondary_lyrics(
                     LrcContentType::Translation,
                     lang_code_for_merge,
                 ) {
-                    error!("[LyricsMerger] 逐行合并LRC翻译到YRC主歌词失败: {}", e);
+                    error!("[LyricsMerger] 逐行合并LRC翻译到YRC主歌词失败: {e}");
                 }
             } else {
                 info!(
-                    "[LyricsMerger] 主歌词非YRC (当前为 {:?})，正在按时间戳合并下载的LRC翻译...",
-                    source_format
+                    "[LyricsMerger] 主歌词非YRC (当前为 {source_format:?})，正在按时间戳合并下载的LRC翻译..."
                 );
                 if let Err(e) = merge_lrc_lines_into_paragraphs_internal(
                     primary_paragraphs,
@@ -442,7 +422,7 @@ pub fn merge_downloaded_secondary_lyrics(
                     LrcContentType::Translation,
                     lang_code_for_merge,
                 ) {
-                    error!("[LyricsMerger] 按时间戳合并下载的LRC翻译失败: {}", e);
+                    error!("[LyricsMerger] 按时间戳合并下载的LRC翻译失败: {e}");
                 }
             }
         }
@@ -459,7 +439,7 @@ pub fn merge_downloaded_secondary_lyrics(
                 &roma_qrc_content_str,
                 LrcContentType::Romanization,
             ) {
-                error!("[LyricsMerger] 合并下载的QRC罗马音失败: {}", e);
+                error!("[LyricsMerger] 合并下载的QRC罗马音失败: {e}");
             }
         }
     } else if let Some(roma_lrc_content_str) = pending_lyrics.romanization_lrc {
@@ -476,7 +456,7 @@ pub fn merge_downloaded_secondary_lyrics(
                             .map_or(0, |v| v.len())
                     );
                 }
-                Err(e) => error!("[LyricsMerger] 主段落为空时，解析独立罗马音LRC失败: {}", e),
+                Err(e) => error!("[LyricsMerger] 主段落为空时，解析独立罗马音LRC失败: {e}"),
             }
         } else if let Some(primary_paragraphs) = primary_paragraphs_opt {
             if source_format == LyricFormat::Yrc {
@@ -487,12 +467,11 @@ pub fn merge_downloaded_secondary_lyrics(
                     LrcContentType::Romanization,
                     None,
                 ) {
-                    error!("[LyricsMerger] 逐行合并LRC罗马音到YRC主歌词失败: {}", e);
+                    error!("[LyricsMerger] 逐行合并LRC罗马音到YRC主歌词失败: {e}");
                 }
             } else {
                 info!(
-                    "[LyricsMerger] 主歌词非YRC (当前为 {:?})，正在按时间戳合并下载的LRC罗马音...",
-                    source_format
+                    "[LyricsMerger] 主歌词非YRC (当前为 {source_format:?})，正在按时间戳合并下载的LRC罗马音..."
                 );
                 if let Err(e) = merge_lrc_lines_into_paragraphs_internal(
                     primary_paragraphs,
@@ -500,37 +479,37 @@ pub fn merge_downloaded_secondary_lyrics(
                     LrcContentType::Romanization,
                     None,
                 ) {
-                    error!("[LyricsMerger] 按时间戳合并下载的LRC罗马音失败: {}", e);
+                    error!("[LyricsMerger] 按时间戳合并下载的LRC罗马音失败: {e}");
                 }
             }
         }
     }
 
     // KRC内嵌翻译的处理逻辑
-    if let Some(trans_lines) = pending_lyrics.krc_translation_lines {
-        if let Some(paragraphs) = primary_paragraphs_opt {
-            if !paragraphs.is_empty() && !trans_lines.is_empty() {
-                info!(
-                    "[LyricsMerger] 正在应用KRC内嵌翻译 (共 {} 行翻译到 {} 个段落)",
-                    trans_lines.len(),
-                    paragraphs.len()
-                );
-                for (i, para_line) in paragraphs.iter_mut().enumerate() {
-                    if let Some(trans_text) = trans_lines.get(i) {
-                        let text_to_use = if trans_text.trim().is_empty() || trans_text == "//" {
-                            ""
-                        } else {
-                            trans_text.as_str()
-                        };
-                        if para_line.translation.is_none()
-                            || para_line
-                                .translation
-                                .as_ref()
-                                .is_some_and(|(t, _)| t.is_empty())
-                        {
-                            para_line.translation = Some((text_to_use.to_string(), None));
-                        }
-                    }
+    if let Some(trans_lines) = pending_lyrics.krc_translation_lines
+        && let Some(paragraphs) = primary_paragraphs_opt
+        && !paragraphs.is_empty()
+        && !trans_lines.is_empty()
+    {
+        info!(
+            "[LyricsMerger] 正在应用KRC内嵌翻译 (共 {} 行翻译到 {} 个段落)",
+            trans_lines.len(),
+            paragraphs.len()
+        );
+        for (i, para_line) in paragraphs.iter_mut().enumerate() {
+            if let Some(trans_text) = trans_lines.get(i) {
+                let text_to_use = if trans_text.trim().is_empty() || trans_text == "//" {
+                    ""
+                } else {
+                    trans_text.as_str()
+                };
+                if para_line.translation.is_none()
+                    || para_line
+                        .translation
+                        .as_ref()
+                        .is_some_and(|(t, _)| t.is_empty())
+                {
+                    para_line.translation = Some((text_to_use.to_string(), None));
                 }
             }
         }

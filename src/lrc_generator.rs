@@ -30,13 +30,13 @@ pub fn generate_lrc_from_paragraphs(
                 }
 
                 // 2. 处理背景的翻译
-                if let Some(bg_section) = &p.background_section {
-                    if let Some((bg_text, _bg_lang_code)) = &bg_section.translation {
-                        lrc_lines.push(LrcLine {
-                            timestamp_ms: bg_section.start_ms, // 背景翻译使用背景段落的起始时间
-                            text: bg_text.trim().to_string(),  // 存储trim后的文本，可能为空
-                        });
-                    }
+                if let Some(bg_section) = &p.background_section
+                    && let Some((bg_text, _bg_lang_code)) = &bg_section.translation
+                {
+                    lrc_lines.push(LrcLine {
+                        timestamp_ms: bg_section.start_ms, // 背景翻译使用背景段落的起始时间
+                        text: bg_text.trim().to_string(),  // 存储trim后的文本，可能为空
+                    });
                 }
             }
             LrcContentType::Romanization => {
@@ -48,13 +48,13 @@ pub fn generate_lrc_from_paragraphs(
                     });
                 }
                 // 2. 处理背景的罗马音
-                if let Some(bg_section) = &p.background_section {
-                    if let Some(bg_roma_text) = &bg_section.romanization {
-                        lrc_lines.push(LrcLine {
-                            timestamp_ms: bg_section.start_ms,
-                            text: bg_roma_text.trim().to_string(), // 存储trim后的文本，可能为空
-                        });
-                    }
+                if let Some(bg_section) = &p.background_section
+                    && let Some(bg_roma_text) = &bg_section.romanization
+                {
+                    lrc_lines.push(LrcLine {
+                        timestamp_ms: bg_section.start_ms,
+                        text: bg_roma_text.trim().to_string(), // 存储trim后的文本，可能为空
+                    });
                 }
             }
         }
@@ -84,7 +84,7 @@ pub fn generate_lrc_from_paragraphs(
     if trimmed_output.is_empty() {
         Ok(String::new())
     } else {
-        Ok(format!("{}\n", trimmed_output))
+        Ok(format!("{trimmed_output}\n"))
     }
 }
 
@@ -133,15 +133,15 @@ pub fn generate_main_lrc_from_paragraphs(
         let current_line_start_ms = p.p_start_ms;
 
         // 在两行歌词之间如果间隔过长（例如超过5秒），插入一个空行时间戳
-        if let Some(prev_end_ms) = previous_line_end_ms {
-            if current_line_start_ms > prev_end_ms {
-                let gap_ms = current_line_start_ms.saturating_sub(prev_end_ms);
-                const LONG_GAP_THRESHOLD_MS: u64 = 5000; // 5秒阈值
-                if gap_ms > LONG_GAP_THRESHOLD_MS {
-                    // 使用前一行的结束时间或当前行开始时间减去一个微小量作为空行时间戳
-                    let blank_line_time_str = crate::utils::format_lrc_time_ms(prev_end_ms);
-                    writeln!(lrc_output, "{}", blank_line_time_str)?;
-                }
+        if let Some(prev_end_ms) = previous_line_end_ms
+            && current_line_start_ms > prev_end_ms
+        {
+            let gap_ms = current_line_start_ms.saturating_sub(prev_end_ms);
+            const LONG_GAP_THRESHOLD_MS: u64 = 5000; // 5秒阈值
+            if gap_ms > LONG_GAP_THRESHOLD_MS {
+                // 使用前一行的结束时间或当前行开始时间减去一个微小量作为空行时间戳
+                let blank_line_time_str = crate::utils::format_lrc_time_ms(prev_end_ms);
+                writeln!(lrc_output, "{blank_line_time_str}")?;
             }
         }
 
@@ -162,7 +162,7 @@ pub fn generate_main_lrc_from_paragraphs(
             .to_string();
 
         let time_str = crate::utils::format_lrc_time_ms(current_line_start_ms);
-        writeln!(lrc_output, "{}{}", time_str, full_line_text)?;
+        writeln!(lrc_output, "{time_str}{full_line_text}")?;
 
         // 更新上一行的结束时间，使用段落的 p_end_ms
         previous_line_end_ms = Some(p.p_end_ms);
@@ -170,5 +170,5 @@ pub fn generate_main_lrc_from_paragraphs(
 
     // 清理末尾可能多余的换行符，并确保输出以换行符结尾
     let trimmed_output = lrc_output.trim_end_matches('\n');
-    Ok(format!("{}\n", trimmed_output))
+    Ok(format!("{trimmed_output}\n"))
 }

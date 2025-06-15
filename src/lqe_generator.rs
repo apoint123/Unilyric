@@ -56,7 +56,7 @@ pub fn generate_lqe_from_intermediate_data(
         .get_single_value(&CanonicalMetadataKey::Version)
         .filter(|s| !s.trim().is_empty()) // 确保值非空
         .map_or_else(|| "1.0".to_string(), |v| v.trim().to_string());
-    writeln!(lqe_output, "[version:{}]", version_str)?;
+    writeln!(lqe_output, "[version:{version_str}]")?;
 
     let lqe_header_tags_map = [
         (CanonicalMetadataKey::Title, "ti"),
@@ -81,13 +81,13 @@ pub fn generate_lqe_from_intermediate_data(
                     .collect::<Vec<&str>>()
                     .join("/");
                 if !combined_value.is_empty() {
-                    writeln!(lqe_output, "[{}:{}]", lqe_tag_name, combined_value)?;
+                    writeln!(lqe_output, "[{lqe_tag_name}:{combined_value}]")?;
                 }
             }
         } else if let Some(value) = metadata_store.get_single_value(ckey) {
             let trimmed_value = value.trim();
             if !trimmed_value.is_empty() {
-                writeln!(lqe_output, "[{}:{}]", lqe_tag_name, trimmed_value)?;
+                writeln!(lqe_output, "[{lqe_tag_name}:{trimmed_value}]")?;
             }
         }
     }
@@ -103,11 +103,7 @@ pub fn generate_lqe_from_intermediate_data(
 
     if data.lqe_main_lyrics_as_lrc {
         // 如果标记指示主歌词应为 LRC 格式 (通常当源文件是 LRC 时)
-        writeln!(
-            lqe_output,
-            "\n[lyrics: format@LRC{}]",
-            main_lyrics_lang_attr
-        )?;
+        writeln!(lqe_output, "\n[lyrics: format@LRC{main_lyrics_lang_attr}]")?;
         let main_lrc_content = if let Some(direct_lrc) = &data.lqe_direct_main_lrc_content {
             // 如果 ParsedSourceData 中有直接提供的主LRC歌词 (例如，从网易云下载的LRC主歌词)
             log::info!("[LQE 生成] 使用直接提供的主LRC歌词。");
@@ -133,8 +129,7 @@ pub fn generate_lqe_from_intermediate_data(
         // 主歌词默认为 LYS (Lyricify Syllable) 格式
         writeln!(
             lqe_output,
-            "\n[lyrics: format@Lyricify Syllable{}]",
-            main_lyrics_lang_attr
+            "\n[lyrics: format@Lyricify Syllable{main_lyrics_lang_attr}]"
         )?;
         // 从 TTML 段落生成 LYS 内容，不包含 LYS 的元数据头部 (include_metadata: false)
         let lys_content = generate_lys_from_ttml_data(&data.paragraphs, metadata_store, false)?;
@@ -147,43 +142,39 @@ pub fn generate_lqe_from_intermediate_data(
 
     // 4. 写入翻译区段 `[translation: ...]` (如果存在)
     // `lqe_extracted_translation_lrc_content` 字段存储了从源文件（如LQE本身或下载）中提取的LRC格式翻译
-    if let Some(trans_content) = &data.lqe_extracted_translation_lrc_content {
-        if !trans_content.trim().is_empty() {
-            // 确保翻译内容非空
-            // 确定翻译的语言属性字符串
-            let trans_lang_attr = data
-                .lqe_translation_language
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .map_or_else(String::new, |lang| format!(", language@{}", lang.trim()));
-            // 写入翻译区段头部，格式固定为 LRC
-            writeln!(lqe_output, "\n[translation: format@LRC{}]", trans_lang_attr)?;
-            writeln!(lqe_output, "{}", trans_content.trim())?; // 写入翻译LRC歌词
-        }
+    if let Some(trans_content) = &data.lqe_extracted_translation_lrc_content
+        && !trans_content.trim().is_empty()
+    {
+        // 确保翻译内容非空
+        // 确定翻译的语言属性字符串
+        let trans_lang_attr = data
+            .lqe_translation_language
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .map_or_else(String::new, |lang| format!(", language@{}", lang.trim()));
+        // 写入翻译区段头部，格式固定为 LRC
+        writeln!(lqe_output, "\n[translation: format@LRC{trans_lang_attr}]")?;
+        writeln!(lqe_output, "{}", trans_content.trim())?; // 写入翻译LRC歌词
     }
 
     // 5. 写入发音/罗马音区段 `[pronunciation: ...]` (如果存在)
     // `lqe_extracted_romanization_lrc_content` 存储了LRC格式的罗马音
-    if let Some(pron_content) = &data.lqe_extracted_romanization_lrc_content {
-        if !pron_content.trim().is_empty() {
-            // 确保罗马音内容非空
-            // 确定罗马音的语言属性字符串，如果未指定，则默认为 "romaji"
-            let pron_lang_attr = data
-                .lqe_romanization_language
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .map_or_else(
-                    || ", language@romaji".to_string(), // 默认语言为 romaji
-                    |lang| format!(", language@{}", lang.trim()),
-                );
-            // 写入发音区段头部，格式固定为 LRC
-            writeln!(
-                lqe_output,
-                "\n[pronunciation: format@LRC{}]",
-                pron_lang_attr
-            )?;
-            writeln!(lqe_output, "{}", pron_content.trim())?; // 写入罗马音LRC歌词
-        }
+    if let Some(pron_content) = &data.lqe_extracted_romanization_lrc_content
+        && !pron_content.trim().is_empty()
+    {
+        // 确保罗马音内容非空
+        // 确定罗马音的语言属性字符串，如果未指定，则默认为 "romaji"
+        let pron_lang_attr = data
+            .lqe_romanization_language
+            .as_ref()
+            .filter(|s| !s.is_empty())
+            .map_or_else(
+                || ", language@romaji".to_string(), // 默认语言为 romaji
+                |lang| format!(", language@{}", lang.trim()),
+            );
+        // 写入发音区段头部，格式固定为 LRC
+        writeln!(lqe_output, "\n[pronunciation: format@LRC{pron_lang_attr}]")?;
+        writeln!(lqe_output, "{}", pron_content.trim())?; // 写入罗马音LRC歌词
     }
 
     // 确保最终输出以单个换行符结束，并移除可能的多余前导/尾随空白

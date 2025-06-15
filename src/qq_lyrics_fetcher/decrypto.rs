@@ -610,7 +610,7 @@ pub fn hex_string_to_byte_array(hex_string: &str) -> Result<Vec<u8>, ConvertErro
             let byte_str = &hex_string[i..i + 2];
             // 将这两个十六进制字符转换为u8字节
             u8::from_str_radix(byte_str, 16).map_err(|e| {
-                ConvertError::InvalidHex(format!("无效的十六进制字节 '{}': {}", byte_str, e))
+                ConvertError::InvalidHex(format!("无效的十六进制字节 '{byte_str}': {e}"))
             })
         })
         .collect() // 收集所有结果字节到一个 Vec<u8>

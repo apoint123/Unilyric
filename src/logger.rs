@@ -64,15 +64,12 @@ fn get_log_file_path() -> Result<PathBuf, String> {
         let log_dir = proj_dirs.data_local_dir();
         if !log_dir.exists() {
             fs::create_dir_all(log_dir)
-                .map_err(|e| format!("无法创建日志目录 {:?}: {}", log_dir, e))?;
+                .map_err(|e| format!("无法创建日志目录 {log_dir:?}: {e}"))?;
         }
         Ok(log_dir.join("unilyric.log"))
     } else {
         let current_dir_log_path = PathBuf::from("unilyric.log");
-        eprintln!(
-            "无法获取项目日志目录，将尝试在当前目录创建日志: {:?}",
-            current_dir_log_path
-        );
+        eprintln!("无法获取项目日志目录，将尝试在当前目录创建日志: {current_dir_log_path:?}");
         Ok(current_dir_log_path)
     }
 }
@@ -84,12 +81,12 @@ pub fn init_global_logger(ui_sender: Sender<LogEntry>, enable_file_log_setting: 
     let log_file_path = match get_log_file_path() {
         Ok(path) => path,
         Err(e) => {
-            eprintln!("获取日志文件路径失败: {}。将禁用文件日志记录。", e);
+            eprintln!("获取日志文件路径失败: {e}。将禁用文件日志记录。");
             PathBuf::from("unilyric_fallback.log")
         }
     };
 
-    println!("[Logger Init] 日志文件将被写入: {:?}", log_file_path);
+    println!("[Logger Init] 日志文件将被写入: {log_file_path:?}");
 
     let base_dispatch = Dispatch::new()
         .format(|out, message, record| {
@@ -126,17 +123,11 @@ pub fn init_global_logger(ui_sender: Sender<LogEntry>, enable_file_log_setting: 
     if enable_file_log_setting {
         match fern::log_file(&log_file_path) {
             Ok(log_file) => {
-                println!(
-                    "[Logger Init] 文件日志已启用。日志文件将被写入: {:?}",
-                    log_file_path
-                );
+                println!("[Logger Init] 文件日志已启用。日志文件将被写入: {log_file_path:?}");
                 final_dispatch = final_dispatch.chain(log_file);
             }
             Err(e) => {
-                eprintln!(
-                    "无法打开日志文件 {:?}: {}。文件日志将被禁用。",
-                    log_file_path, e
-                );
+                eprintln!("无法打开日志文件 {log_file_path:?}: {e}。文件日志将被禁用。");
             }
         }
     } else {
@@ -144,8 +135,8 @@ pub fn init_global_logger(ui_sender: Sender<LogEntry>, enable_file_log_setting: 
     }
 
     if let Err(e) = final_dispatch.apply() {
-        eprintln!("日志记录失败: {}", e);
+        eprintln!("日志记录失败: {e}");
     } else {
-        log::info!("日志记录器已初始化。日志路径: {:?}", log_file_path);
+        log::info!("日志记录器已初始化。日志路径: {log_file_path:?}");
     }
 }

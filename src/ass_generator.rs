@@ -34,7 +34,7 @@ pub fn format_ass_time(ms: u64) -> String {
     // 计算小时部分
     let hours = total_minutes / 60;
     // 格式化输出，例如 "0:01:23.45"
-    format!("{}:{:02}:{:02}.{:02}", hours, minutes, seconds, cs)
+    format!("{hours}:{minutes:02}:{seconds:02}.{cs:02}")
 }
 
 /// 将毫秒时长转换为厘秒 (cs) 时长，用于 ASS 的 `\k` 标签。
@@ -173,7 +173,7 @@ pub fn generate_ass(
                         let gap_cs = round_duration_to_cs(gap_ms);
                         if gap_cs > 0 {
                             // 写入间隙的卡拉OK标签 `{\k<duration_cs>}`，这部分通常是无文字的。
-                            write!(text_builder, "{{\\k{}}}", gap_cs)?;
+                            write!(text_builder, "{{\\k{gap_cs}}}")?;
                         }
                     }
                 }
@@ -187,7 +187,7 @@ pub fn generate_ass(
 
                 if syl_duration_cs > 0 {
                     // 写入音节的卡拉OK标签 `{\k<duration_cs>}`。
-                    write!(text_builder, "{{\\k{}}}", syl_duration_cs)?;
+                    write!(text_builder, "{{\\k{syl_duration_cs}}}")?;
                     if !syl.text.is_empty() {
                         // 附加音节文本。
                         text_builder.push_str(&syl.text);
@@ -209,8 +209,7 @@ pub fn generate_ass(
             if !final_text.is_empty() {
                 writeln!(
                     ass_content,
-                    "Dialogue: 0,{},{},orig,{},0,0,0,,{}",
-                    p_start_ass, p_end_ass, actor, final_text
+                    "Dialogue: 0,{p_start_ass},{p_end_ass},orig,{actor},0,0,0,,{final_text}"
                 )?;
             }
         }
@@ -241,7 +240,7 @@ pub fn generate_ass(
                         if gap_ms_bg > 0 {
                             let gap_cs_bg = round_duration_to_cs(gap_ms_bg);
                             if gap_cs_bg > 0 {
-                                write!(text_builder_bg, "{{\\k{}}}", gap_cs_bg)?;
+                                write!(text_builder_bg, "{{\\k{gap_cs_bg}}}")?;
                             }
                         }
                     }
@@ -256,7 +255,7 @@ pub fn generate_ass(
                     let cleaned_text_bg = clean_parentheses_from_bg_text(&syl_bg.text);
 
                     if syl_duration_cs_bg > 0 {
-                        write!(text_builder_bg, "{{\\k{}}}", syl_duration_cs_bg)?;
+                        write!(text_builder_bg, "{{\\k{syl_duration_cs_bg}}}")?;
                         if !cleaned_text_bg.is_empty() {
                             text_builder_bg.push_str(&cleaned_text_bg);
                         }
@@ -274,75 +273,74 @@ pub fn generate_ass(
                     // 使用 "orig" 样式（或其他专用背景样式）写入背景歌词 Dialogue 行。
                     writeln!(
                         ass_content,
-                        "Dialogue: 0,{},{},orig,{},0,0,0,,{}",
-                        bg_start_ass, bg_end_ass, actor_bg, final_text_bg
+                        "Dialogue: 0,{bg_start_ass},{bg_end_ass},orig,{actor_bg},0,0,0,,{final_text_bg}"
                     )?;
                 }
             }
             // --- 处理背景部分的翻译和罗马音 (如果作为独立行输出) ---
             // 如果背景人声有翻译文本。
-            if let Some((text, lang_code_opt)) = &bg_section.translation {
-                if !text.is_empty() {
-                    // Actor 字段可以用来携带语言代码信息，例如 "x-lang:en"。
-                    let actor_display = lang_code_opt
-                        .as_ref()
-                        .map_or_else(String::new, |c| format!("x-lang:{}", c));
-                    // 使用 "bg-ts" 样式写入背景翻译。
-                    writeln!(
-                        ass_content,
-                        "Dialogue: 0,{},{},bg-ts,{},0,0,0,,{}",
-                        format_ass_time(bg_section.start_ms),
-                        format_ass_time(bg_section.end_ms),
-                        actor_display,
-                        text
-                    )?;
-                }
+            if let Some((text, lang_code_opt)) = &bg_section.translation
+                && !text.is_empty()
+            {
+                // Actor 字段可以用来携带语言代码信息，例如 "x-lang:en"。
+                let actor_display = lang_code_opt
+                    .as_ref()
+                    .map_or_else(String::new, |c| format!("x-lang:{c}"));
+                // 使用 "bg-ts" 样式写入背景翻译。
+                writeln!(
+                    ass_content,
+                    "Dialogue: 0,{},{},bg-ts,{},0,0,0,,{}",
+                    format_ass_time(bg_section.start_ms),
+                    format_ass_time(bg_section.end_ms),
+                    actor_display,
+                    text
+                )?;
             }
             // 如果背景人声有罗马音文本。
-            if let Some(text) = &bg_section.romanization {
-                if !text.is_empty() {
-                    // 使用 "bg-roma" 样式写入背景罗马音。Actor 字段为空。
-                    writeln!(
-                        ass_content,
-                        "Dialogue: 0,{},{},bg-roma,,0,0,0,,{}",
-                        format_ass_time(bg_section.start_ms),
-                        format_ass_time(bg_section.end_ms),
-                        text
-                    )?;
-                }
+            if let Some(text) = &bg_section.romanization
+                && !text.is_empty()
+            {
+                // 使用 "bg-roma" 样式写入背景罗马音。Actor 字段为空。
+                writeln!(
+                    ass_content,
+                    "Dialogue: 0,{},{},bg-roma,,0,0,0,,{}",
+                    format_ass_time(bg_section.start_ms),
+                    format_ass_time(bg_section.end_ms),
+                    text
+                )?;
             }
         }
 
         // --- 处理主歌词的翻译和罗马音行 ---
         // 如果段落有翻译文本。
-        if let Some((text, lang_code_opt)) = &para.translation {
-            if !text.is_empty() {
-                let actor_display = lang_code_opt
-                    .as_ref()
-                    .map_or_else(String::new, |c| format!("x-lang:{}", c));
-                // 使用 "ts" 样式写入主翻译。时间为整个段落的 p_start_ms 到 p_end_ms。
-                writeln!(
-                    ass_content,
-                    "Dialogue: 0,{},{},ts,{},0,0,0,,{}",
-                    format_ass_time(para.p_start_ms),
-                    format_ass_time(para.p_end_ms),
-                    actor_display,
-                    text
-                )?;
-            }
+        if let Some((text, lang_code_opt)) = &para.translation
+            && !text.is_empty()
+        {
+            let actor_display = lang_code_opt
+                .as_ref()
+                .map_or_else(String::new, |c| format!("x-lang:{c}"));
+            // 使用 "ts" 样式写入主翻译。时间为整个段落的 p_start_ms 到 p_end_ms。
+            writeln!(
+                ass_content,
+                "Dialogue: 0,{},{},ts,{},0,0,0,,{}",
+                format_ass_time(para.p_start_ms),
+                format_ass_time(para.p_end_ms),
+                actor_display,
+                text
+            )?;
         }
         // 如果段落有罗马音文本。
-        if let Some(text) = &para.romanization {
-            if !text.is_empty() {
-                // 使用 "roma" 样式写入主罗马音。
-                writeln!(
-                    ass_content,
-                    "Dialogue: 0,{},{},roma,,0,0,0,,{}",
-                    format_ass_time(para.p_start_ms),
-                    format_ass_time(para.p_end_ms),
-                    text
-                )?;
-            }
+        if let Some(text) = &para.romanization
+            && !text.is_empty()
+        {
+            // 使用 "roma" 样式写入主罗马音。
+            writeln!(
+                ass_content,
+                "Dialogue: 0,{},{},roma,,0,0,0,,{}",
+                format_ass_time(para.p_start_ms),
+                format_ass_time(para.p_end_ms),
+                text
+            )?;
         }
     } // 结束段落遍历
     Ok(ass_content) // 返回生成的完整 ASS 字符串

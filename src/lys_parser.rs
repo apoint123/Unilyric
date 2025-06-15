@@ -76,7 +76,7 @@ pub fn parse_lys_line(line_str: &str, line_num: usize) -> Result<LysLine, Conver
             ConvertError::InvalidLysSyllable {
                 line_num,
                 text: text_slice.to_string(), // 关联的文本，用于错误报告
-                message: format!("开始时间无效 '{}': {}", start_ms_str, e),
+                message: format!("开始时间无效 '{start_ms_str}': {e}"),
             }
         })?;
         let duration_ms: u64 =
@@ -85,7 +85,7 @@ pub fn parse_lys_line(line_str: &str, line_num: usize) -> Result<LysLine, Conver
                 .map_err(|e| ConvertError::InvalidLysSyllable {
                     line_num,
                     text: text_slice.to_string(),
-                    message: format!("持续时长无效 '{}': {}", duration_ms_str, e),
+                    message: format!("持续时长无效 '{duration_ms_str}': {e}"),
                 })?;
 
         // 如果音节文本非空，则创建 LysSyllable 结构并添加到列表中
@@ -111,11 +111,7 @@ pub fn parse_lys_line(line_str: &str, line_num: usize) -> Result<LysLine, Conver
         let remaining_text = &content_after_property[last_match_end..].trim();
         if !remaining_text.is_empty() {
             // 记录警告，说明发现了多余的文本
-            log::warn!(
-                "行 {}: 在最后一个时间戳后发现多余的文本: '{}'",
-                line_num,
-                remaining_text
-            );
+            log::warn!("行 {line_num}: 在最后一个时间戳后发现多余的文本: '{remaining_text}'");
             // 根据需求，可以选择忽略这些文本，或者尝试将其作为最后一个音节的一部分（但这不符合典型LYS格式）
         }
     }
@@ -134,10 +130,7 @@ pub fn parse_lys_line(line_str: &str, line_num: usize) -> Result<LysLine, Conver
         );
         return Err(ConvertError::InvalidLysFormat {
             line_num,
-            message: format!(
-                "属性标记后的内容 '{}' 未能解析为有效音节。",
-                content_after_property
-            ),
+            message: format!("属性标记后的内容 '{content_after_property}' 未能解析为有效音节。"),
         });
     }
 
@@ -215,7 +208,7 @@ pub fn load_lys_from_string(
                     key: "ttmlAuthorGithubLogin".to_string(),
                     value,
                 }), // LYS 'by' 通常指制作者
-                _ => log::warn!("行 {}: 未知的元数据标签类型 '{}'", line_num, tag), // 理论上不会执行，因为正则已限定
+                _ => log::warn!("行 {line_num}: 未知的元数据标签类型 '{tag}'"), // 理论上不会执行，因为正则已限定
             }
         }
         // 如果不是元数据标签，则尝试匹配行首的属性标记，判断是否为歌词行
@@ -227,13 +220,13 @@ pub fn load_lys_from_string(
                 }
                 Err(e) => {
                     // 解析单行失败，记录错误
-                    log::error!("解析行 {} ('{}') 失败: {}", line_num, trimmed_line, e);
+                    log::error!("解析行 {line_num} ('{trimmed_line}') 失败: {e}");
                 }
             }
         }
         // 如果行既不是元数据也不是有效的歌词行格式
         else {
-            log::warn!("行 {}: 无法识别的行: '{}'", line_num, trimmed_line);
+            log::warn!("行 {line_num}: 无法识别的行: '{trimmed_line}'");
         }
     }
     // 返回解析结果

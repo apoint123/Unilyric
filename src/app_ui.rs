@@ -286,7 +286,7 @@ impl UniLyricApp {
                     app_settings_guard.last_source_format = self.source_format;
                     app_settings_guard.last_target_format = self.target_format;
                     if let Err(e) = app_settings_guard.save() {
-                        log::error!("[UniLyricApp] 自动保存源/目标格式到设置失败: {}", e);
+                        log::error!("[UniLyricApp] 自动保存源/目标格式到设置失败: {e}");
                     } else {
                         log::trace!(
                             "[UniLyricApp] 已自动保存源格式 ({:?}) 和目标格式 ({:?}) 到设置。",
@@ -570,18 +570,17 @@ impl UniLyricApp {
                         *current_mc_config_guard = new_mc_config_from_settings.clone();
                         drop(current_mc_config_guard);
 
-                        log::debug!("[Unilyric UI] 设置已保存。新 AMLL Connector配置: {:?}", new_mc_config_from_settings);
+                        log::debug!("[Unilyric UI] 设置已保存。新 AMLL Connector配置: {new_mc_config_from_settings:?}");
 
                         if new_mc_config_from_settings.enabled {
                             amll_connector_manager::ensure_running(self);
-                            if let Some(tx) = &self.media_connector_command_tx {
-                                if old_mc_config != new_mc_config_from_settings {
+                            if let Some(tx) = &self.media_connector_command_tx
+                                && old_mc_config != new_mc_config_from_settings {
                                     log::debug!("[Unilyric UI] 发送 UpdateConfig 命令给AMLL Connector worker。");
                                     if tx.send(crate::amll_connector::ConnectorCommand::UpdateConfig(new_mc_config_from_settings.clone())).is_err() {
                                         log::error!("[Unilyric UI] 发送 UpdateConfig 命令给AMLL Connector worker 失败。");
                                     }
                                 }
-                            }
                         } else {
                             amll_connector_manager::ensure_running(self); // 确保如果禁用了，worker会停止
                         }
@@ -700,7 +699,7 @@ impl UniLyricApp {
                 // 为新条目生成一个相对唯一的ID
                 let new_entry_id_num =
                     self.editable_metadata.len() as u32 + rand::rng().random::<u32>();
-                let new_id = egui::Id::new(format!("new_editable_meta_entry_{}", new_entry_id_num));
+                let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
                 self.editable_metadata.push(EditableMetadataEntry {
                     key: format!("新键_{}", new_entry_id_num % 100), // 默认键名
                     value: "".to_string(),                           // 默认空值
@@ -713,11 +712,11 @@ impl UniLyricApp {
         }); // ScrollArea 结束
 
         // 如果有条目被标记为删除，则从 self.editable_metadata 中移除
-        if let Some(idx_del) = entry_to_delete_idx {
-            if idx_del < self.editable_metadata.len() {
-                // 再次确认索引有效
-                self.editable_metadata.remove(idx_del);
-            }
+        if let Some(idx_del) = entry_to_delete_idx
+            && idx_del < self.editable_metadata.len()
+        {
+            // 再次确认索引有效
+            self.editable_metadata.remove(idx_del);
         }
 
         // 如果元数据在本帧内发生任何变化（编辑、添加、删除、更改固定状态）
@@ -957,7 +956,7 @@ impl UniLyricApp {
                             );
                         }
                         DisplayLrcLine::Raw { original_text } => {
-                            let _ = writeln!(reconstructed_display_text, "{}", original_text);
+                            let _ = writeln!(reconstructed_display_text, "{original_text}");
                         }
                     }
                 }
@@ -1008,7 +1007,7 @@ impl UniLyricApp {
                                 );
                             }
                             DisplayLrcLine::Raw { original_text } => {
-                                let _ = writeln!(reconstructed_text, "{}", original_text);
+                                let _ = writeln!(reconstructed_text, "{original_text}");
                             }
                         }
                     }
@@ -1025,11 +1024,10 @@ impl UniLyricApp {
                 Err(e) => {
                     self.loaded_translation_lrc = None;
                     log::warn!(
-                        "[UI Edit] 编辑的翻译LRC文本解析器返回错误: {}. 关联的LRC数据已清除.",
-                        e
+                        "[UI Edit] 编辑的翻译LRC文本解析器返回错误: {e}. 关联的LRC数据已清除."
                     );
                     self.toasts.add(egui_toast::Toast {
-                        text: format!("翻译LRC内容解析错误: {}", e).into(),
+                        text: format!("翻译LRC内容解析错误: {e}").into(),
                         kind: egui_toast::ToastKind::Error,
                         options: egui_toast::ToastOptions::default()
                             .duration_in_seconds(4.0)
@@ -1143,7 +1141,7 @@ impl UniLyricApp {
                             );
                         }
                         DisplayLrcLine::Raw { original_text } => {
-                            let _ = writeln!(reconstructed_display_text, "{}", original_text);
+                            let _ = writeln!(reconstructed_display_text, "{original_text}");
                         }
                     }
                 }
@@ -1195,7 +1193,7 @@ impl UniLyricApp {
                                 );
                             }
                             DisplayLrcLine::Raw { original_text } => {
-                                let _ = writeln!(reconstructed_text, "{}", original_text);
+                                let _ = writeln!(reconstructed_text, "{original_text}");
                             }
                         }
                     }
@@ -1213,11 +1211,10 @@ impl UniLyricApp {
                 Err(e) => {
                     self.loaded_romanization_lrc = None;
                     log::warn!(
-                        "[UI Edit] 编辑的罗马音LRC文本解析器返回错误: {}. 关联的LRC数据已清除.",
-                        e
+                        "[UI Edit] 编辑的罗马音LRC文本解析器返回错误: {e}. 关联的LRC数据已清除."
                     );
                     self.toasts.add(egui_toast::Toast {
-                        text: format!("罗马音LRC内容解析错误: {}", e).into(),
+                        text: format!("罗马音LRC内容解析错误: {e}").into(),
                         kind: egui_toast::ToastKind::Error,
                         options: egui_toast::ToastOptions::default()
                             .duration_in_seconds(4.0)
@@ -1245,7 +1242,7 @@ impl UniLyricApp {
         let markers_text_content = self
             .current_markers
             .iter()
-            .map(|(ln, txt)| format!("ASS 行 {}: {}", ln, txt))
+            .map(|(ln, txt)| format!("ASS 行 {ln}: {txt}"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -1499,7 +1496,7 @@ impl UniLyricApp {
                         NeteaseDownloadState::InitializingClient => "正在准备下载...".to_string(),
                         NeteaseDownloadState::Downloading => "正在下载歌词...".to_string(),
                         NeteaseDownloadState::Success(_) => "下载成功".to_string(), // 成功后窗口通常会关闭，但保留状态显示
-                        NeteaseDownloadState::Error(e) => format!("错误: {:.50}", e), // 显示错误信息的前50个字符
+                        NeteaseDownloadState::Error(e) => format!("错误: {e:.50}"), // 显示错误信息的前50个字符
                     };
 
                     let is_busy = matches!(
@@ -1621,7 +1618,7 @@ impl UniLyricApp {
                     }
                     AmllIndexDownloadState::Success(loaded_head) => {
                         let index_len = self.amll_index.lock().unwrap().len();
-                        ui.colored_label(Color32::GREEN, format!("索引已加载 ({} 条)", index_len));
+                        ui.colored_label(Color32::GREEN, format!("索引已加载 ({index_len} 条)"));
                         ui.label(format!(
                             "当前版本 HEAD: {}",
                             loaded_head.chars().take(7).collect::<String>()
@@ -1639,7 +1636,7 @@ impl UniLyricApp {
                     AmllIndexDownloadState::Error(err_msg) => {
                         ui.colored_label(
                             ui.style().visuals.error_fg_color,
-                            format!("操作失败: {}", err_msg),
+                            format!("操作失败: {err_msg}"),
                         );
                         button_text = "重试加载/检查更新".to_string();
                         check_update_on_click = true; // 出错后重试也应该先检查
@@ -1738,7 +1735,7 @@ impl UniLyricApp {
                     AmllTtmlDownloadState::Error(ref err_msg) => {
                         ui.colored_label(
                             ui.style().visuals.error_fg_color,
-                            format!("TTML操作失败: {}", err_msg),
+                            format!("TTML操作失败: {err_msg}"),
                         );
                     }
                     _ => {}
@@ -1749,7 +1746,7 @@ impl UniLyricApp {
                     && ttml_dl_state == AmllTtmlDownloadState::Idle
                     && search_enabled
                 {
-                    ui.label(format!("找到 {} 条结果。", search_results_count));
+                    ui.label(format!("找到 {search_results_count} 条结果。"));
                 }
                 ui.separator();
                 ScrollArea::vertical()
@@ -1787,7 +1784,7 @@ impl UniLyricApp {
                                     }
                                 }
                                 let display_text =
-                                    format!("{} - {}", display_song_name, display_artists);
+                                    format!("{display_song_name} - {display_artists}");
 
                                 if scroll_ui
                                     .selectable_label(false, display_text)
@@ -1858,18 +1855,17 @@ impl UniLyricApp {
                 if btn_ui
                     .add_enabled(send_to_player_enabled, send_button)
                     .clicked()
+                    && let Some(tx) = &self.media_connector_command_tx
                 {
-                    if let Some(tx) = &self.media_connector_command_tx {
-                        if tx
-                            .send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
-                                self.output_text.clone(),
-                            ))
-                            .is_err()
-                        {
-                            log::error!("[Unilyric UI] 发送 TTML 歌词失败。");
-                        } else {
-                            log::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
-                        }
+                    if tx
+                        .send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
+                            self.output_text.clone(),
+                        ))
+                        .is_err()
+                    {
+                        log::error!("[Unilyric UI] 发送 TTML 歌词失败。");
+                    } else {
+                        log::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
                     }
                 }
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
@@ -1994,7 +1990,7 @@ impl UniLyricApp {
             websocket_url_display = config_guard_display.websocket_url.clone();
         }
 
-        ui.label(format!("目标 URL: {}", websocket_url_display));
+        ui.label(format!("目标 URL: {websocket_url_display}"));
 
         match current_status {
             WebsocketStatus::断开 => {
@@ -2013,8 +2009,7 @@ impl UniLyricApp {
                         self.media_connector_config.lock().unwrap().clone();
                     if let Some(tx) = &self.media_connector_command_tx {
                         log::debug!(
-                            "[Unilyric UI] 发送 UpdateConfig 命令以触发连接尝试: {:?}",
-                            current_config_for_command
+                            "[Unilyric UI] 发送 UpdateConfig 命令以触发连接尝试: {current_config_for_command:?}"
                         );
                         if tx
                             .send(ConnectorCommand::UpdateConfig(current_config_for_command))
@@ -2063,8 +2058,7 @@ impl UniLyricApp {
                         self.media_connector_config.lock().unwrap().clone();
                     if let Some(tx) = &self.media_connector_command_tx {
                         log::debug!(
-                            "[Unilyric UI] 发送 UpdateConfig 命令以触发重试连接: {:?}",
-                            current_config_for_command
+                            "[Unilyric UI] 发送 UpdateConfig 命令以触发重试连接: {current_config_for_command:?}"
                         );
                         if tx
                             .send(ConnectorCommand::UpdateConfig(current_config_for_command))
@@ -2098,7 +2092,7 @@ impl UniLyricApp {
                     .iter()
                     .find(|s| &s.session_id == id)
                     .map_or_else(
-                        || format!("自动 (选择 '{}' 已失效)", id),
+                        || format!("自动 (选择 '{id}' 已失效)"),
                         |s_info| s_info.display_name.clone(),
                     ),
                 None => "自动 (系统默认)".to_string(),
@@ -2143,13 +2137,12 @@ impl UniLyricApp {
                 *self.last_requested_volume_for_session.lock().unwrap() = None;
                 *self.current_smtc_volume.lock().unwrap() = None;
 
-                if let Some(tx) = &self.media_connector_command_tx {
-                    if tx
+                if let Some(tx) = &self.media_connector_command_tx
+                    && tx
                         .send(ConnectorCommand::SelectSmtcSession(session_to_send))
                         .is_err()
-                    {
-                        log::error!("[Unilyric UI] 发送 SelectSmtcSession 命令失败。");
-                    }
+                {
+                    log::error!("[Unilyric UI] 发送 SelectSmtcSession 命令失败。");
                 }
             }
         }
@@ -2196,32 +2189,32 @@ impl UniLyricApp {
                             }
                         }
                     });
-                    if let Some(cover_bytes) = &info.cover_data {
-                        if !cover_bytes.is_empty() {
-                            let image_id_cow: std::borrow::Cow<'static, str> =
-                                info.cover_data_hash.map_or_else(
-                                    || {
-                                        let mut hasher =
-                                            std::collections::hash_map::DefaultHasher::new();
-                                        cover_bytes[..std::cmp::min(cover_bytes.len(), 16)]
-                                            .hash(&mut hasher);
-                                        format!("smtc_cover_data_partial_hash_{}", hasher.finish())
-                                            .into()
-                                    },
-                                    |hash| format!("smtc_cover_hash_{}", hash).into(),
-                                );
-                            let image_source = egui::ImageSource::Bytes {
-                                uri: image_id_cow,
-                                bytes: cover_bytes.clone().into(),
-                            };
-                            ui.add_sized(
-                                egui::vec2(200.0, 200.0),
-                                egui::Image::new(image_source)
-                                    .max_size(egui::vec2(200.0, 200.0))
-                                    .maintain_aspect_ratio(true)
-                                    .bg_fill(Color32::TRANSPARENT),
+                    if let Some(cover_bytes) = &info.cover_data
+                        && !cover_bytes.is_empty()
+                    {
+                        let image_id_cow: std::borrow::Cow<'static, str> =
+                            info.cover_data_hash.map_or_else(
+                                || {
+                                    let mut hasher =
+                                        std::collections::hash_map::DefaultHasher::new();
+                                    cover_bytes[..std::cmp::min(cover_bytes.len(), 16)]
+                                        .hash(&mut hasher);
+                                    format!("smtc_cover_data_partial_hash_{}", hasher.finish())
+                                        .into()
+                                },
+                                |hash| format!("smtc_cover_hash_{hash}").into(),
                             );
-                        }
+                        let image_source = egui::ImageSource::Bytes {
+                            uri: image_id_cow,
+                            bytes: cover_bytes.clone().into(),
+                        };
+                        ui.add_sized(
+                            egui::vec2(200.0, 200.0),
+                            egui::Image::new(image_source)
+                                .max_size(egui::vec2(200.0, 200.0))
+                                .maintain_aspect_ratio(true)
+                                .bg_fill(Color32::TRANSPARENT),
+                        );
                     }
                 } else {
                     ui.weak("无SMTC信息 / 未选择特定源");
@@ -2288,15 +2281,13 @@ impl UniLyricApp {
                     let mut show_load_button = false;
                     let mut data_for_load_action_this_iteration: Option<ProcessedLyricsSourceData> =
                         None;
-                    if source_enum != AutoSearchSource::LocalCache {
-                        if let AutoSearchStatus::Success(_) = status {
-                            if let Some(result_arc) = &opt_result_arc {
-                                if let Some(ref stored_data) = *result_arc.lock().unwrap() {
-                                    show_load_button = true;
-                                    data_for_load_action_this_iteration = Some(stored_data.clone());
-                                }
-                            }
-                        }
+                    if source_enum != AutoSearchSource::LocalCache
+                        && let AutoSearchStatus::Success(_) = status
+                        && let Some(result_arc) = &opt_result_arc
+                        && let Some(ref stored_data) = *result_arc.lock().unwrap()
+                    {
+                        show_load_button = true;
+                        data_for_load_action_this_iteration = Some(stored_data.clone());
                     }
                     if show_load_button {
                         if right_aligned_ui
@@ -2306,10 +2297,9 @@ impl UniLyricApp {
                                 source_enum.display_name()
                             ))
                             .clicked()
+                            && let Some(data) = data_for_load_action_this_iteration
                         {
-                            if let Some(data) = data_for_load_action_this_iteration {
-                                action_load_lyrics = Some((data, source_enum));
-                            }
+                            action_load_lyrics = Some((data, source_enum));
                         }
                         right_aligned_ui.add_space(4.0);
                     }
@@ -2406,7 +2396,7 @@ impl UniLyricApp {
             }
             AmllIndexDownloadState::Success(loaded_head) => {
                 let index_len = self.amll_index.lock().unwrap().len();
-                ui.colored_label(Color32::GREEN, format!("已加载 ({} 条)", index_len));
+                ui.colored_label(Color32::GREEN, format!("已加载 ({index_len} 条)"));
                 ui.label(format!(
                     "当前版本: {}",
                     loaded_head.chars().take(7).collect::<String>()

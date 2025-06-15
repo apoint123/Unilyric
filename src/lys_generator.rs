@@ -64,7 +64,7 @@ pub fn generate_lys_from_ttml_data(
                 _ => LYS_PROPERTY_UNSET,                         // 其他或空 agent 默认为 0 (主唱1)
             };
             // 写入行属性标记
-            write!(lys_output, "[{}]", property)?;
+            write!(lys_output, "[{property}]")?;
 
             let num_main_syllables = para.main_syllables.len();
             // 遍历该行的所有主音节
@@ -82,11 +82,7 @@ pub fn generate_lys_from_ttml_data(
                 // 否则，只有当音节有文本或有持续时间时才写入
                 else if !syl_text.is_empty() || syl_duration_ms > 0 {
                     // 写入音节：文本(绝对开始时间,持续时间)
-                    write!(
-                        lys_output,
-                        "{}({},{})",
-                        syl_text, syl_start_ms, syl_duration_ms
-                    )?;
+                    write!(lys_output, "{syl_text}({syl_start_ms},{syl_duration_ms})")?;
 
                     // 如果音节后标记需要空格 (ends_with_space is true)
                     // 并且不是当前行的最后一个音节
@@ -112,51 +108,49 @@ pub fn generate_lys_from_ttml_data(
         }
 
         // --- 处理背景歌词部分 (如果存在) ---
-        if let Some(bg_section) = &para.background_section {
-            if !bg_section.syllables.is_empty() {
-                // 背景歌词的属性通常也基于主歌词的 agent，但使用表示“背景”的属性值
-                let bg_property = match para.agent.as_str() {
-                    "v1" | "V1" | "v1000" | "chorus" | "" => LYS_PROPERTY_BACK_LEFT, // 主唱1的背景
-                    "v2" | "V2" => LYS_PROPERTY_BACK_RIGHT,                          // 主唱2的背景
-                    _ => LYS_PROPERTY_BACK_LEFT, // 其他情况默认背景为左 (主唱1)
-                };
-                write!(lys_output, "[{}]", bg_property)?; // 写入背景行属性
+        if let Some(bg_section) = &para.background_section
+            && !bg_section.syllables.is_empty()
+        {
+            // 背景歌词的属性通常也基于主歌词的 agent，但使用表示“背景”的属性值
+            let bg_property = match para.agent.as_str() {
+                "v1" | "V1" | "v1000" | "chorus" | "" => LYS_PROPERTY_BACK_LEFT, // 主唱1的背景
+                "v2" | "V2" => LYS_PROPERTY_BACK_RIGHT,                          // 主唱2的背景
+                _ => LYS_PROPERTY_BACK_LEFT, // 其他情况默认背景为左 (主唱1)
+            };
+            write!(lys_output, "[{bg_property}]")?; // 写入背景行属性
 
-                let num_bg_syllables = bg_section.syllables.len();
-                // 遍历背景音节
-                for (idx, ttml_syl_bg) in bg_section.syllables.iter().enumerate() {
-                    let syl_text_bg = &ttml_syl_bg.text; // 背景音节文本
-                    let syl_start_ms_bg = ttml_syl_bg.start_ms; // 绝对开始时间
-                    let syl_duration_ms_bg =
-                        ttml_syl_bg.end_ms.saturating_sub(ttml_syl_bg.start_ms); // 持续时间
+            let num_bg_syllables = bg_section.syllables.len();
+            // 遍历背景音节
+            for (idx, ttml_syl_bg) in bg_section.syllables.iter().enumerate() {
+                let syl_text_bg = &ttml_syl_bg.text; // 背景音节文本
+                let syl_start_ms_bg = ttml_syl_bg.start_ms; // 绝对开始时间
+                let syl_duration_ms_bg = ttml_syl_bg.end_ms.saturating_sub(ttml_syl_bg.start_ms); // 持续时间
 
-                    // 与主歌词音节类似的处理逻辑
-                    if syl_text_bg == " " && syl_duration_ms_bg == 0 {
-                        write!(lys_output, " (0,0)")?;
-                    } else if !syl_text_bg.is_empty() || syl_duration_ms_bg > 0 {
-                        write!(
-                            lys_output,
-                            "{}({},{})",
-                            syl_text_bg, syl_start_ms_bg, syl_duration_ms_bg
-                        )?;
-                        if ttml_syl_bg.ends_with_space && (idx < num_bg_syllables - 1) {
-                            let mut already_has_explicit_space_after_bg = false;
-                            if idx + 1 < num_bg_syllables {
-                                let next_syl_bg = &bg_section.syllables[idx + 1];
-                                if next_syl_bg.text == " "
-                                    && next_syl_bg.end_ms.saturating_sub(next_syl_bg.start_ms) == 0
-                                {
-                                    already_has_explicit_space_after_bg = true;
-                                }
+                // 与主歌词音节类似的处理逻辑
+                if syl_text_bg == " " && syl_duration_ms_bg == 0 {
+                    write!(lys_output, " (0,0)")?;
+                } else if !syl_text_bg.is_empty() || syl_duration_ms_bg > 0 {
+                    write!(
+                        lys_output,
+                        "{syl_text_bg}({syl_start_ms_bg},{syl_duration_ms_bg})"
+                    )?;
+                    if ttml_syl_bg.ends_with_space && (idx < num_bg_syllables - 1) {
+                        let mut already_has_explicit_space_after_bg = false;
+                        if idx + 1 < num_bg_syllables {
+                            let next_syl_bg = &bg_section.syllables[idx + 1];
+                            if next_syl_bg.text == " "
+                                && next_syl_bg.end_ms.saturating_sub(next_syl_bg.start_ms) == 0
+                            {
+                                already_has_explicit_space_after_bg = true;
                             }
-                            if !already_has_explicit_space_after_bg {
-                                write!(lys_output, " (0,0)")?;
-                            }
+                        }
+                        if !already_has_explicit_space_after_bg {
+                            write!(lys_output, " (0,0)")?;
                         }
                     }
                 }
-                writeln!(lys_output)?; // 背景歌词行结束后换行
             }
+            writeln!(lys_output)?; // 背景歌词行结束后换行
         }
     }
 
@@ -166,6 +160,6 @@ pub fn generate_lys_from_ttml_data(
     Ok(if trimmed_output.is_empty() {
         String::new()
     } else {
-        format!("{}\n", trimmed_output)
+        format!("{trimmed_output}\n")
     })
 }

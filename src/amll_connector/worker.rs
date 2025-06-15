@@ -81,9 +81,9 @@ impl AMLLConnectorWorker {
         let tokio_runtime = match Runtime::new() {
             Ok(rt) => Arc::new(rt),
             Err(e) => {
-                log::error!("[AMLL Connector Worker] 创建 Tokio 运行时失败: {}", e);
+                log::error!("[AMLL Connector Worker] 创建 Tokio 运行时失败: {e}");
                 let _ = update_tx_to_app.send(ConnectorUpdate::WebsocketStatusChanged(
-                    WebsocketStatus::错误(format!("Worker 运行时初始化失败: {}", e)),
+                    WebsocketStatus::错误(format!("Worker 运行时初始化失败: {e}")),
                 ));
                 return;
             }
@@ -181,7 +181,7 @@ impl AMLLConnectorWorker {
                     player_state_clone,
                     shutdown_rx_for_smtc,
                 ) {
-                    log::error!("[SMTC Handler Thread] SMTC Handler 运行出错: {}", e);
+                    log::error!("[SMTC Handler Thread] SMTC Handler 运行出错: {e}");
                 }
                 log::debug!("[SMTC Handler Thread] SMTC Handler 线程已结束。");
             })
@@ -222,8 +222,7 @@ impl AMLLConnectorWorker {
         self.stop_websocket_client_task();
 
         log::info!(
-            "[AMLL Connector Worker] 正在启动 WebSocket 客户端任务 (URL: {})...",
-            current_websocket_url
+            "[AMLL Connector Worker] 正在启动 WebSocket 客户端任务 (URL: {current_websocket_url})..."
         );
 
         // 为新的 WebSocket 客户端任务创建新的 outgoing channel
@@ -264,10 +263,7 @@ impl AMLLConnectorWorker {
             log::debug!("[AMLL Connector Worker] 正在等待 SMTC Handler 线程结束...");
             match handle.join() {
                 Ok(_) => log::debug!("[AMLL Connector Worker] SMTC Handler 线程已成功结束。"),
-                Err(e) => log::warn!(
-                    "[AMLL Connector Worker] SMTC Handler 线程 join 失败: {:?}",
-                    e
-                ),
+                Err(e) => log::warn!("[AMLL Connector Worker] SMTC Handler 线程 join 失败: {e:?}"),
             }
         }
     }
@@ -438,7 +434,7 @@ impl AMLLConnectorWorker {
                                     let sender_clone = sender.clone();
                                     self.tokio_runtime.spawn(async move {
                                         if let Err(e) = sender_clone.send(body).await {
-                                            log::error!("[AMLL Connector Worker] 发送歌词到 WebSocket 客户端内部通道失败: {}", e);
+                                            log::error!("[AMLL Connector Worker] 发送歌词到 WebSocket 客户端内部通道失败: {e}");
                                         }
                                     });
                                 } else {
@@ -455,7 +451,7 @@ impl AMLLConnectorWorker {
                                     let cloned_body_for_async = protocol_body.clone();
                                     self.tokio_runtime.spawn(async move {
                                         if let Err(e) = sender_clone.send(cloned_body_for_async).await {
-                                            log::error!("[AMLL Connector Worker] 发送 ProtocolBody 到 WebSocket 客户端内部通道失败: {}", e);
+                                            log::error!("[AMLL Connector Worker] 发送 ProtocolBody 到 WebSocket 客户端内部通道失败: {e}");
                                         }
                                     });
                                 } else {
@@ -506,35 +502,29 @@ impl AMLLConnectorWorker {
                         } => {
                             if self.config.lock().unwrap().enabled {
                                 log::trace!(
-                                    "[AMLL Connector Worker] 收到 AdjustAudioSessionVolume 命令: target='{}', vol={:?}, mute={:?}",
-                                    target_identifier,
-                                    volume,
-                                    mute
+                                    "[AMLL Connector Worker] 收到 AdjustAudioSessionVolume 命令: target='{target_identifier}', vol={volume:?}, mute={mute:?}"
                                 );
                                 let rt_clone = Arc::clone(&self.tokio_runtime);
                                 let update_tx_clone = self.update_tx_to_app.clone();
                                 rt_clone.spawn_blocking(move || {
                                     match volume_control::get_pid_from_identifier(&target_identifier) {
                                         Some(pid) => {
-                                            log::debug!("[Worker spawn_blocking] AdjustVolume: PID {} 找到，目标 '{}'.", pid, target_identifier);
+                                            log::debug!("[Worker spawn_blocking] AdjustVolume: PID {pid} 找到，目标 '{target_identifier}'.");
                                             if let Err(e) = volume_control::set_process_volume_by_pid(pid, volume, mute) {
                                                 log::error!(
-                                                    "[Worker spawn_blocking] AdjustVolume: 设置 PID {} ({}) 的音量/静音失败: {}",
-                                                    pid, target_identifier, e
+                                                    "[Worker spawn_blocking] AdjustVolume: 设置 PID {pid} ({target_identifier}) 的音量/静音失败: {e}"
                                                 );
                                                 // 可选: 发送错误通知回主应用
                                                 // let _ = update_tx_clone.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::错误(format!("音量控制失败: {}", e))));
                                             } else {
                                                 log::trace!(
-                                                    "[Worker spawn_blocking] AdjustVolume: PID {} ({}) 的音量/静音已尝试设置。",
-                                                    pid, target_identifier
+                                                    "[Worker spawn_blocking] AdjustVolume: PID {pid} ({target_identifier}) 的音量/静音已尝试设置。"
                                                 );
                                                 // 设置成功后，立即获取当前状态并发送更新
                                                 match volume_control::get_process_volume_by_pid(pid) {
                                                     Ok((current_vol, current_mute)) => {
                                                         log::debug!(
-                                                            "[Worker spawn_blocking] AdjustVolume: 获取 PID {} ({}) 的当前音量状态成功: vol={}, mute={}",
-                                                            pid, target_identifier, current_vol, current_mute
+                                                            "[Worker spawn_blocking] AdjustVolume: 获取 PID {pid} ({target_identifier}) 的当前音量状态成功: vol={current_vol}, mute={current_mute}"
                                                         );
                                                         let update_msg = ConnectorUpdate::AudioSessionVolumeChanged {
                                                             session_id: target_identifier.clone(), // 使用原始标识符
@@ -543,15 +533,13 @@ impl AMLLConnectorWorker {
                                                         };
                                                         if let Err(e_send) = update_tx_clone.send(update_msg) {
                                                             log::error!(
-                                                                "[Worker spawn_blocking] AdjustVolume: 发送 AudioSessionVolumeChanged 更新失败: {}",
-                                                                e_send
+                                                                "[Worker spawn_blocking] AdjustVolume: 发送 AudioSessionVolumeChanged 更新失败: {e_send}"
                                                             );
                                                         }
                                                     }
                                                     Err(e_get) => {
                                                         log::error!(
-                                                            "[Worker spawn_blocking] AdjustVolume: 设置音量后获取 PID {} ({}) 的状态失败: {}",
-                                                            pid, target_identifier, e_get
+                                                            "[Worker spawn_blocking] AdjustVolume: 设置音量后获取 PID {pid} ({target_identifier}) 的状态失败: {e_get}"
                                                         );
                                                     }
                                                 }
@@ -559,8 +547,7 @@ impl AMLLConnectorWorker {
                                         }
                                         None => {
                                             log::warn!(
-                                                "[Worker spawn_blocking] AdjustVolume: 无法为目标 '{}' 找到 PID。",
-                                                target_identifier
+                                                "[Worker spawn_blocking] AdjustVolume: 无法为目标 '{target_identifier}' 找到 PID。"
                                             );
                                              // 可选: 发送错误通知
                                             // let _ = update_tx_clone.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::错误(format!("找不到目标 '{}' 进行音量控制", target_identifier))));
@@ -576,20 +563,18 @@ impl AMLLConnectorWorker {
                         ConnectorCommand::RequestAudioSessionVolume(target_identifier) => {
                             if self.config.lock().unwrap().enabled {
                                 log::trace!(
-                                    "[AMLL Connector Worker] 收到 RequestAudioSessionVolume 命令: target='{}'",
-                                    target_identifier
+                                    "[AMLL Connector Worker] 收到 RequestAudioSessionVolume 命令: target='{target_identifier}'"
                                 );
                                 let rt_clone = Arc::clone(&self.tokio_runtime);
                                 let update_tx_clone = self.update_tx_to_app.clone();
                                 rt_clone.spawn_blocking(move || {
                                     match volume_control::get_pid_from_identifier(&target_identifier) {
                                         Some(pid) => {
-                                            log::debug!("[Worker spawn_blocking] RequestVolume: PID {} 找到，目标 '{}'.", pid, target_identifier);
+                                            log::debug!("[Worker spawn_blocking] RequestVolume: PID {pid} 找到，目标 '{target_identifier}'.");
                                             match volume_control::get_process_volume_by_pid(pid) {
                                                 Ok((current_vol, current_mute)) => {
                                                     log::trace!(
-                                                        "[Worker spawn_blocking] RequestVolume: 获取 PID {} ({}) 的当前音量状态成功: vol={}, mute={}",
-                                                        pid, target_identifier, current_vol, current_mute
+                                                        "[Worker spawn_blocking] RequestVolume: 获取 PID {pid} ({target_identifier}) 的当前音量状态成功: vol={current_vol}, mute={current_mute}"
                                                     );
                                                     let update_msg = ConnectorUpdate::AudioSessionVolumeChanged {
                                                         session_id: target_identifier.clone(),
@@ -598,15 +583,13 @@ impl AMLLConnectorWorker {
                                                     };
                                                     if let Err(e_send) = update_tx_clone.send(update_msg) {
                                                         log::error!(
-                                                            "[Worker spawn_blocking] RequestVolume: 发送 AudioSessionVolumeChanged 更新失败: {}",
-                                                            e_send
+                                                            "[Worker spawn_blocking] RequestVolume: 发送 AudioSessionVolumeChanged 更新失败: {e_send}"
                                                         );
                                                     }
                                                 }
                                                 Err(e_get) => {
                                                     log::error!(
-                                                        "[Worker spawn_blocking] RequestVolume: 获取 PID {} ({}) 的状态失败: {}",
-                                                        pid, target_identifier, e_get
+                                                        "[Worker spawn_blocking] RequestVolume: 获取 PID {pid} ({target_identifier}) 的状态失败: {e_get}"
                                                     );
                                                     // 可选: 发送错误通知
                                                     // let _ = update_tx_clone.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::错误(format!("获取音量状态失败: {}", e_get))));
@@ -615,8 +598,7 @@ impl AMLLConnectorWorker {
                                         }
                                         None => {
                                             log::warn!(
-                                                "[Worker spawn_blocking] RequestVolume: 无法为目标 '{}' 找到 PID。",
-                                                target_identifier
+                                                "[Worker spawn_blocking] RequestVolume: 无法为目标 '{target_identifier}' 找到 PID。"
                                             );
                                             // 可选: 发送错误通知
                                             // let _ = update_tx_clone.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::错误(format!("找不到目标 '{}' 获取音量状态", target_identifier))));
@@ -763,8 +745,7 @@ impl AMLLConnectorWorker {
                     }
                     Ok(unexpected_update) => {
                         log::warn!(
-                            "[AMLL Connector Worker] 从 AudioCapturer 收到意外的更新类型: {:?}",
-                            unexpected_update
+                            "[AMLL Connector Worker] 从 AudioCapturer 收到意外的更新类型: {unexpected_update:?}"
                         );
                     }
                     Err(StdTryRecvError::Empty) => {}
@@ -780,18 +761,15 @@ impl AMLLConnectorWorker {
             // --- 3. 处理来自 WebSocket 客户端的 SMTC 媒体控制命令 ---
             match self.ws_media_cmd_rx.try_recv() {
                 Ok(smtc_cmd_from_ws) => {
-                    if self.config.lock().unwrap().enabled {
-                        if let Some(sender) = &self.smtc_control_tx {
-                            if sender
-                                .send(ConnectorCommand::MediaControl(smtc_cmd_from_ws))
-                                .is_err()
-                            {
-                                log::error!(
-                                    "[AMLL Connector Worker] 发送包装后的 MediaControl (来自WS: {:?}) 到 SMTC Handler 失败。",
-                                    smtc_cmd_from_ws
-                                );
-                            }
-                        }
+                    if self.config.lock().unwrap().enabled
+                        && let Some(sender) = &self.smtc_control_tx
+                        && sender
+                            .send(ConnectorCommand::MediaControl(smtc_cmd_from_ws))
+                            .is_err()
+                    {
+                        log::error!(
+                            "[AMLL Connector Worker] 发送包装后的 MediaControl (来自WS: {smtc_cmd_from_ws:?}) 到 SMTC Handler 失败。"
+                        );
                     }
                 }
                 Err(StdTryRecvError::Empty) => { /* 无命令，正常 */ }
@@ -825,8 +803,7 @@ impl AMLLConnectorWorker {
                     }
 
                     log::trace!(
-                        "[AMLL Connector Worker] 从 WebSocket 客户端收到状态更新: {:?}",
-                        ws_status
+                        "[AMLL Connector Worker] 从 WebSocket 客户端收到状态更新: {ws_status:?}"
                     );
                     if self
                         .update_tx_to_app
@@ -901,7 +878,7 @@ impl AMLLConnectorWorker {
                 ProtocolBody::OnAudioData { data, .. } => {
                     format!("OnAudioData(len:{})", data.len())
                 }
-                _ => format!("{:?}", body)
+                _ => format!("{body:?}")
                     .split_whitespace()
                     .next()
                     .unwrap_or("UnknownProtocol")
@@ -912,14 +889,11 @@ impl AMLLConnectorWorker {
                 if let Err(e) = sender_clone.send(body).await {
                     // body 被移动到异步块
                     log::error!(
-                        "[AMLL Connector Worker] 发送 {} 到 WebSocket 客户端内部通道失败: {}",
-                        body_type_for_log, // 使用之前获取的类型
-                        e
+                        "[AMLL Connector Worker] 发送 {body_type_for_log} 到 WebSocket 客户端内部通道失败: {e}"
                     );
                 } else if !matches!(body_type_for_log.as_str(), "OnAudioData(_)") {
                     log::trace!(
-                        "[AMLL Connector Worker] 已将 {} 发送到 WebSocket 客户端通道。",
-                        body_type_for_log
+                        "[AMLL Connector Worker] 已将 {body_type_for_log} 发送到 WebSocket 客户端通道。"
                     );
                 }
             });
@@ -929,14 +903,13 @@ impl AMLLConnectorWorker {
             // 对于 OnAudioData 这种高频消息，不应每次都打印警告。
             // 我们可以选择完全不打印，或者只在非 OnAudioData 消息时打印。
             if !matches!(body, ProtocolBody::OnAudioData { .. }) {
-                let body_type_for_log = format!("{:?}", body)
+                let body_type_for_log = format!("{body:?}")
                     .split_whitespace()
                     .next()
                     .unwrap_or("UnknownProtocol")
                     .to_string();
                 log::warn!(
-                    "[AMLL Connector Worker] WebSocket 发送通道无效，无法发送 {}。(ws_outgoing_tx is None)",
-                    body_type_for_log
+                    "[AMLL Connector Worker] WebSocket 发送通道无效，无法发送 {body_type_for_log}。(ws_outgoing_tx is None)"
                 );
             } else {
                 log::trace!("[AMLL Connector Worker] WebSocket 发送通道无效，OnAudioData 未发送。");

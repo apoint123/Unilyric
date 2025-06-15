@@ -80,7 +80,7 @@ pub async fn download_lyrics_by_query_first_match(
     // 2. 检查搜索结果
     if songs.is_empty() {
         // 如果没有找到任何歌曲，记录错误并返回 SongInfoMissing 错误
-        log::error!("[QQLyricsFetcher] 未找到任何歌曲: {}", query);
+        log::error!("[QQLyricsFetcher] 未找到任何歌曲: {query}");
         return Err(QQLyricsFetcherError::SongInfoMissing);
     }
 

@@ -134,11 +134,11 @@ pub fn convert_lys_to_ttml_data(
             });
             // 更新整个段落的开始和结束时间以包含背景部分
             // （如果段落只有背景，则其时间即为背景时间；如果后续有主歌词，会被主歌词时间覆盖或合并）
-            if let Some(bg_sec) = &paragraph.background_section {
-                if !bg_sec.syllables.is_empty() {
-                    paragraph.p_start_ms = bg_sec.start_ms;
-                    paragraph.p_end_ms = bg_sec.end_ms;
-                }
+            if let Some(bg_sec) = &paragraph.background_section
+                && !bg_sec.syllables.is_empty()
+            {
+                paragraph.p_start_ms = bg_sec.start_ms;
+                paragraph.p_end_ms = bg_sec.end_ms;
             }
             ttml_paragraphs.push(paragraph); // 添加到结果列表
             i += 1; // 处理下一行
