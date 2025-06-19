@@ -12,6 +12,7 @@ egui-toast = "0.17.0"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 rfd = "0.15.3"
 webbrowser = "1.0.4"
+ferrous-opencc = "*"
 
 futures-util = "0.3.31"
 reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "multipart"] }
@@ -61,6 +62,6 @@ windows = { git = "https://github.com/microsoft/windows-rs.git", tag = "66", fea
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Threading",
     "Win32_System_Variant",
+    "Win32_UI_WindowsAndMessaging",
 ]}
 windows-future = { git = "https://github.com/microsoft/windows-rs.git", tag = "66" }
-ferrous-opencc = "*"

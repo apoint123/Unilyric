@@ -51,6 +51,31 @@ pub struct NowPlayingInfo {
     pub position_report_time: Option<Instant>,
 }
 
+impl NowPlayingInfo {
+    pub fn default_empty() -> Self {
+        Self {
+            title: Some("无活动会话".to_string()),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<&SharedPlayerState> for NowPlayingInfo {
+    fn from(state: &SharedPlayerState) -> Self {
+        Self {
+            title: Some(state.title.clone()),
+            artist: Some(state.artist.clone()),
+            album_title: Some(state.album.clone()),
+            is_playing: Some(state.is_playing),
+            duration_ms: Some(state.song_duration_ms),
+            position_ms: Some(state.get_estimated_current_position_ms()),
+            position_report_time: state.last_known_position_report_time,
+            cover_data: state.cover_data.clone(),
+            cover_data_hash: state.cover_data_hash,
+        }
+    }
+}
+
 /// WebSocket 连接状态的枚举
 #[derive(Debug, Clone, PartialEq)]
 pub enum WebsocketStatus {
@@ -159,6 +184,34 @@ pub struct SharedPlayerState {
     pub can_skip_previous: bool,
     /// 播放器是否支持跳转到指定位置。
     pub can_seek: bool,
+}
+
+impl SharedPlayerState {
+    pub fn get_estimated_current_position_ms(&self) -> u64 {
+        if self.is_playing {
+            // 如果正在播放，根据上次报告时间和流逝的时间计算当前位置
+            if let Some(report_time) = self.last_known_position_report_time {
+                let elapsed_ms = report_time.elapsed().as_millis() as u64;
+                let estimated_pos = self.last_known_position_ms + elapsed_ms;
+                // 确保推算的位置不超过歌曲总时长
+                if self.song_duration_ms > 0 {
+                    std::cmp::min(estimated_pos, self.song_duration_ms)
+                } else {
+                    estimated_pos
+                }
+            } else {
+                // 如果没有报告时间，只能返回已知位置
+                self.last_known_position_ms
+            }
+        } else {
+            // 如果是暂停状态，位置就是上次已知的位置
+            self.last_known_position_ms
+        }
+    }
+
+    pub fn reset_to_empty(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl Default for SharedPlayerState {
