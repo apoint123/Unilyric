@@ -17,9 +17,11 @@ use ws_protocol::Body as ProtocolBody;
 /// 确保AMLL Connector worker 正在运行（如果已启用）
 pub fn ensure_running(app: &mut UniLyricApp) {
     let is_enabled_in_config;
+    let current_ws_status;
     {
         let config_guard = app.media_connector_config.lock().unwrap();
         is_enabled_in_config = config_guard.enabled;
+        current_ws_status = app.media_connector_status.lock().unwrap().clone();
     }
 
     if !is_enabled_in_config {
@@ -27,17 +29,30 @@ pub fn ensure_running(app: &mut UniLyricApp) {
         return;
     }
 
-    if app
+    let worker_is_running = app
         .media_connector_worker_handle
         .as_ref()
-        .is_some_and(|h| !h.is_finished())
-    {
-        log::debug!("[AMLLManager] AMLL Connector worker 已在运行 (根据配置应启用).");
+        .is_some_and(|h| !h.is_finished());
+
+    let is_connection_healthy = matches!(
+        current_ws_status,
+        WebsocketStatus::已连接 | WebsocketStatus::连接中
+    );
+
+    if worker_is_running && is_connection_healthy {
+        log::debug!(
+            "[AMLLManager] AMLL Connector worker 正常运行中 (Status: {:?})。无需重启。",
+            current_ws_status
+        );
         check_index_download(app);
         return;
     }
 
-    log::debug!("[AMLLManager] 正在启动 AMLL Connector worker 线程 (配置已启用)...");
+    log::info!(
+        "[AMLLManager] 正在启动/重启 AMLL Connector worker。原因: [Worker运行中: {}, WS状态: {:?}]",
+        worker_is_running,
+        current_ws_status
+    );
     stop_worker(app);
 
     let (command_tx_for_worker, command_rx_for_worker) =
@@ -58,6 +73,16 @@ pub fn ensure_running(app: &mut UniLyricApp) {
         update_tx_clone_for_worker,
     );
     app.media_connector_worker_handle = Some(handle);
+
+    if app.audio_visualization_is_active {
+        if let Some(ref tx) = app.media_connector_command_tx {
+            if tx.send(ConnectorCommand::StartAudioVisualization).is_err() {
+                log::error!(
+                    "[AMLLManager] Failed to send StartAudioVisualization command to the new worker upon restart."
+                );
+            }
+        }
+    }
 
     check_index_download(app);
 

@@ -83,7 +83,6 @@ pub struct UniLyricApp {
     pub metadata_source_is_download: bool,    // 标记当前元数据是否主要来自网络下载
     pub show_amll_connector_sidebar: bool,    // 是否显示AMLL媒体连接器侧边栏
     pub current_auto_search_ui_populated: bool, // 标记自动搜索UI是否已被内容填充
-    pub audio_visualization_enabled_by_ui: bool, // UI上是否启用了音频可视化数据发送
 
     // --- 核心数据存储 ---
     pub parsed_ttml_paragraphs: Option<Vec<TtmlParagraph>>, // 解析后的TTML歌词段落
@@ -159,6 +158,7 @@ pub struct UniLyricApp {
     pub media_connector_update_rx: StdReceiver<ConnectorUpdate>, // 从AMLL连接器工作线程接收更新的通道接收端
     pub media_connector_worker_handle: Option<thread::JoinHandle<()>>, // AMLL连接器工作线程的句柄
     pub media_connector_update_tx_for_worker: StdSender<ConnectorUpdate>, // 用于连接器内部任务向主更新通道发送消息的克隆发送端
+    pub audio_visualization_is_active: bool,
 
     // --- SMTC 会话管理 (系统媒体传输控制) ---
     pub available_smtc_sessions: Arc<Mutex<Vec<SmtcSessionInfo>>>, // 可用的SMTC会话列表 (多线程安全)
@@ -511,7 +511,6 @@ impl UniLyricApp {
             metadata_source_is_download: false,
             show_amll_connector_sidebar: mc_config.enabled, // 根据配置决定是否显示连接器侧边栏
             current_auto_search_ui_populated: false,
-            audio_visualization_enabled_by_ui: settings.send_audio_data_to_player, // 从设置恢复音频可视化启用状态
 
             // --- 核心数据存储 ---
             parsed_ttml_paragraphs: None,
@@ -587,6 +586,7 @@ impl UniLyricApp {
             media_connector_update_rx: mc_update_rx, // 连接器更新接收端
             media_connector_worker_handle: None, // 工作线程句柄初始为None
             media_connector_update_tx_for_worker: mc_update_tx, // 克隆的更新发送端，用于worker内部
+            audio_visualization_is_active: settings.send_audio_data_to_player,
 
             // --- SMTC 会话管理 ---
             available_smtc_sessions: Arc::new(Mutex::new(Vec::new())),
@@ -680,7 +680,7 @@ impl UniLyricApp {
                 }
             }
             // 如果UI上启用了音频可视化数据发送
-            if app.audio_visualization_enabled_by_ui {
+            if app.audio_visualization_is_active {
                 if let Some(tx) = &app.media_connector_command_tx {
                     if tx.send(ConnectorCommand::StartAudioVisualization).is_err() {
                         log::error!(

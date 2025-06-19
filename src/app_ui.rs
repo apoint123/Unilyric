@@ -586,7 +586,7 @@ impl UniLyricApp {
                         }
 
                         if connector_enabled_runtime && old_send_audio_data_setting != new_send_audio_data_setting {
-                            self.audio_visualization_enabled_by_ui = new_send_audio_data_setting;
+                            self.audio_visualization_is_active = new_send_audio_data_setting;
                             if let Some(tx) = &self.media_connector_command_tx {
                                 let command = if new_send_audio_data_setting {
                                     log::info!("[Unilyric UI] 设置更改：启动音频数据转发。");

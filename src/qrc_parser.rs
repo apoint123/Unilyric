@@ -50,14 +50,14 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
     let line_duration_ms_str = line_ts_cap.name("duration").unwrap().as_str();
 
     // 将字符串转换为 u64 类型的毫秒数
-    let line_start_ms: u64 =
+    let original_line_start_ms: u64 =
         line_start_ms_str
             .parse()
             .map_err(|_| ConvertError::InvalidQrcLineTimestamp {
                 line_num,
                 timestamp_str: format!("[{line_start_ms_str},{line_duration_ms_str}]"),
             })?;
-    let line_duration_ms: u64 =
+    let original_line_duration_ms: u64 =
         line_duration_ms_str
             .parse()
             .map_err(|_| ConvertError::InvalidQrcLineTimestamp {
@@ -126,19 +126,29 @@ pub fn parse_qrc_line(line_str: &str, line_num: usize) -> Result<QrcLine, Conver
     }
 
     // 如果音节列表为空，但行内容（除行时间戳外）非空，说明格式可能有问题
-    if syllables.is_empty() && !content_after_line_ts.trim().is_empty() {
-        return Err(ConvertError::InvalidQrcFormat {
-            line_num,
-            message: format!("无法从内容 '{content_after_line_ts}' 中解析出任何有效音节时间戳。"),
-        });
-    }
+    if !syllables.is_empty() {
+        // unwrap 是安全的，因为我们已经检查了 syllables 不为空
+        let new_line_start_ms = syllables.first().unwrap().start_ms;
+        let last_syllable = syllables.last().unwrap();
+        let new_line_end_ms = last_syllable.start_ms + last_syllable.duration_ms;
 
-    // 返回解析成功的 QrcLine
-    Ok(QrcLine {
-        line_start_ms,
-        line_duration_ms,
-        syllables,
-    })
+        // 使用 saturating_sub 防止因意外数据（如结束时间小于开始时间）导致的 panic
+        let new_line_duration_ms = new_line_end_ms.saturating_sub(new_line_start_ms);
+
+        // 返回解析成功的 QrcLine
+        Ok(QrcLine {
+            line_start_ms: new_line_start_ms,
+            line_duration_ms: new_line_duration_ms,
+            syllables,
+        })
+    } else {
+        // 如果行内没有任何音节，则沿用原始 [start,duration] 的值
+        Ok(QrcLine {
+            line_start_ms: original_line_start_ms,
+            line_duration_ms: original_line_duration_ms,
+            syllables,
+        })
+    }
 }
 
 /// 从字符串加载并解析 QRC 内容。

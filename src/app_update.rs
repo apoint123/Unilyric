@@ -1,7 +1,7 @@
 use eframe::egui;
 use log::{error, info, trace, warn};
 
-use crate::amll_connector::{ConnectorUpdate, WebsocketStatus};
+use crate::amll_connector::{ConnectorCommand, ConnectorUpdate, WebsocketStatus};
 use crate::app::TtmlDbUploadUserAction; // Make sure this path is correct
 use crate::app_definition::UniLyricApp; // Assuming UniLyricApp is in app.rs or lib.rs
 use crate::app_fetch_core;
@@ -118,130 +118,53 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
 
                 if status == WebsocketStatus::已连接 && old_status != WebsocketStatus::已连接
                 {
-                    info!("[UniLyric] WebSocket 已成功连接。准备发送 SMTC 信息给 AMLL Player。");
-                    let media_info_arc_clone = std::sync::Arc::clone(&app.current_media_info);
-                    let tokio_rt_handle = app.tokio_runtime.handle().clone();
-                    let current_media_state_to_send = tokio_rt_handle
-                        .block_on(async { media_info_arc_clone.lock().await.clone() });
+                    app.start_progress_timer_if_needed();
 
-                    if let Some(info) = current_media_state_to_send {
-                        if let Some(command_tx) = &app.media_connector_command_tx {
-                            trace!(
-                                "[UniLyric] 发送初始状态: Title='{:?}', Playing={:?}, Pos={:?}, Duration={:?}",
-                                info.title, info.is_playing, info.position_ms, info.duration_ms
+                    if let Some(tx) = &app.media_connector_command_tx {
+                        // 1. 发送初始播放状态
+                        // app.is_currently_playing_sensed_by_smtc 是最可靠的状态源
+                        let initial_playback_body = if app.is_currently_playing_sensed_by_smtc {
+                            log::info!(
+                                "[UniLyric] WebSocket 已连接，感知到 SMTC 正在播放，发送 OnPlay。"
                             );
-
-                            let artists_vec = info.artist.as_ref().map_or_else(Vec::new, |name| {
-                                vec![ws_protocol::Artist {
-                                    id: ws_protocol::strings::NullString::from(""),
-                                    name: ws_protocol::strings::NullString::from(name.as_str()),
-                                }]
-                            });
-                            let set_music_info_body = ProtocolBody::SetMusicInfo {
-                                music_id: ws_protocol::strings::NullString::from(""),
-                                music_name: info.title.clone().map_or_else(
-                                    || ws_protocol::strings::NullString::from(""),
-                                    |s| ws_protocol::strings::NullString::from(s.as_str()),
-                                ),
-                                album_id: ws_protocol::strings::NullString::from(""),
-                                album_name: info.album_title.clone().map_or_else(
-                                    || ws_protocol::strings::NullString::from(""),
-                                    |s| ws_protocol::strings::NullString::from(s.as_str()),
-                                ),
-                                artists: artists_vec,
-                                duration: info.duration_ms.unwrap_or(0),
-                            };
-                            if command_tx
-                                .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                    set_music_info_body,
-                                ))
-                                .is_err()
-                            {
-                                error!("[UniLyric] 发送 SetMusicInfo 失败。");
-                            }
-
-                            let is_playing_now = info.is_playing.unwrap_or(false);
-                            let playback_status_body = if is_playing_now {
-                                ProtocolBody::OnResumed
-                            } else {
-                                ProtocolBody::OnPaused
-                            };
-                            if command_tx
-                                .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                    playback_status_body,
-                                ))
-                                .is_err()
-                            {
-                                error!("[UniLyric] 发送播放状态失败。");
-                            }
-
-                            if let Some(pos_ms) = info.position_ms {
-                                let progress_body =
-                                    ProtocolBody::OnPlayProgress { progress: pos_ms };
-                                if command_tx
-                                    .send(
-                                        crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                            progress_body,
-                                        ),
-                                    )
-                                    .is_err()
-                                {
-                                    error!("[UniLyric] 发送播放进度失败。");
-                                }
-                            }
-
-                            if let Some(cover_bytes) = &info.cover_data {
-                                if !cover_bytes.is_empty() {
-                                    let cover_body = ProtocolBody::SetMusicAlbumCoverImageData {
-                                        data: cover_bytes.clone(),
-                                    };
-                                    if command_tx
-                                        .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(cover_body))
-                                        .is_err()
-                                    {
-                                        error!("[UniLyric] 发送封面数据失败。");
-                                    }
-                                } else {
-                                    info!("[UniLyric] 当前SMTC无封面数据");
-                                    let clear_cover_body =
-                                        ProtocolBody::SetMusicAlbumCoverImageData {
-                                            data: Vec::new(),
-                                        };
-                                    if command_tx
-                                        .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                            clear_cover_body,
-                                        ))
-                                        .is_err()
-                                    {
-                                        error!("[UniLyric] 发送清除封面命令失败。");
-                                    }
-                                }
-                            } else {
-                                info!("[UniLyric] 当前SMTC无封面数据，正在清除封面。");
-                                let clear_cover_body =
-                                    ProtocolBody::SetMusicAlbumCoverImageData { data: Vec::new() };
-                                if command_tx
-                                    .send(
-                                        crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                                            clear_cover_body,
-                                        ),
-                                    )
-                                    .is_err()
-                                {
-                                    error!("[UniLyric] 发送清除封面命令失败。");
-                                }
-                            }
-                            trace!("[UniLyric] 已尝试发送所有初始SMTC信息。");
+                            ProtocolBody::OnResumed
                         } else {
-                            warn!(
-                                "[UniLyric] media_connector_command_tx 为 None, 无法发送初始信息。"
+                            log::info!(
+                                "[UniLyric] WebSocket 已连接，感知到 SMTC 已暂停，发送 OnPaused。"
+                            );
+                            ProtocolBody::OnPaused
+                        };
+
+                        if tx
+                            .send(ConnectorCommand::SendProtocolBody(initial_playback_body))
+                            .is_err()
+                        {
+                            error!("[UniLyric] 连接成功后发送初始播放状态命令失败。");
+                        }
+
+                        // 2. 发送当前歌词
+                        if !app.output_text.is_empty() {
+                            log::info!("[UniLyric] WebSocket 已连接，正在自动发送当前 TTML 歌词。");
+                            if tx
+                                .send(ConnectorCommand::SendLyricTtml(app.output_text.clone()))
+                                .is_err()
+                            {
+                                log::error!("[UniLyric] 连接成功后自动发送 TTML 歌词失败。");
+                            }
+                        } else {
+                            log::trace!(
+                                "[UniLyric] WebSocket 已连接，但输出框为空，不自动发送歌词。"
                             );
                         }
                     } else {
-                        info!("[UniLyric] 当前无SMTC信息可发送给播放器。");
+                        log::warn!(
+                            "[UniLyric] WebSocket 已连接，但 command_tx 不可用，无法自动同步状态。"
+                        );
                     }
+                } else if status != WebsocketStatus::已连接 {
+                    // 如果状态不是“已连接”（例如断开、错误），则停止定时器
+                    app.stop_progress_timer();
                 }
-                app.start_progress_timer_if_needed();
             }
             ConnectorUpdate::NowPlayingTrackChanged(new_info_from_event) => {
                 let smtc_event_arrival_time = std::time::Instant::now();
