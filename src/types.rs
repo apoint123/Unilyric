@@ -895,3 +895,8 @@ pub fn string_to_search_order(order_str: &str) -> Vec<AutoSearchSource> {
     }
     ordered_sources
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ChineseConversionOptions {
+    pub config_name: Option<String>,
+}

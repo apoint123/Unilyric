@@ -15,14 +15,19 @@ webbrowser = "1.0.4"
 ferrous-opencc = "*"
 
 futures-util = "0.3.31"
-reqwest = { version = "0.12", features = ["json", "rustls-tls", "cookies", "multipart"] }
+reqwest = { version = "0.12", features = [
+    "json",
+    "rustls-tls",
+    "cookies",
+    "multipart",
+] }
 tokio = { version = "1.45", features = ["rt-multi-thread", "macros"] }
 tokio-tungstenite = "0.27.0"
 url = "2.5.4"
 ws-protocol = { path = "src/ws-protocol" }
 
 chrono = "0.4"
-env_logger = "0.11.8"
+dashmap = "6.1.0"
 log = "0.4"
 fern = "0.7"
 num-bigint = "0.4.6"
@@ -49,10 +54,9 @@ rand = "0.9"
 rubato = "0.16.2"
 strum = "0.27.1"
 strum_macros = "0.27.1"
-tempfile = "3.20.0"
 thiserror = "2.0.12"
 
-windows = { git = "https://github.com/microsoft/windows-rs.git", tag = "66", features = [
+windows = { version = "0.61", features = [
     "Media_Control",
     "Storage_Streams",
     "Win32_Media_Audio",
@@ -63,5 +67,5 @@ windows = { git = "https://github.com/microsoft/windows-rs.git", tag = "66", fea
     "Win32_System_Threading",
     "Win32_System_Variant",
     "Win32_UI_WindowsAndMessaging",
-]}
-windows-future = { git = "https://github.com/microsoft/windows-rs.git", tag = "66" }
+] }
+windows-future = { version = "0.2" }

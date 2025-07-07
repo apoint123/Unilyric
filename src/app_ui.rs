@@ -138,6 +138,146 @@ impl UniLyricApp {
                 }
             });
 
+            ui_bar.menu_button("简繁转换", |tools_menu| {
+                let conversion_enabled = self
+                    .parsed_ttml_paragraphs
+                    .as_ref()
+                    .is_some_and(|p| !p.is_empty());
+                let disabled_hover_text = "请先加载主歌词";
+
+                tools_menu.label(egui::RichText::new("通用简繁转换").strong());
+                if tools_menu
+                    .add_enabled(conversion_enabled, egui::Button::new("简体 → 繁体 (通用)"))
+                    .on_disabled_hover_text(disabled_hover_text)
+                    .clicked()
+                {
+                    self.handle_chinese_conversion("s2t.json");
+                }
+                if tools_menu
+                    .add_enabled(conversion_enabled, egui::Button::new("繁体 → 简体 (通用)"))
+                    .on_disabled_hover_text(disabled_hover_text)
+                    .clicked()
+                {
+                    self.handle_chinese_conversion("t2s.json");
+                }
+                tools_menu.separator();
+
+                tools_menu.label(egui::RichText::new("地区性转换 (含用语)").strong());
+                tools_menu.menu_button("简体 →", |sub_menu| {
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("台湾正体"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("s2twp.json");
+                    }
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("s2hk.json");
+                    }
+                });
+                tools_menu.menu_button("繁体 →", |sub_menu| {
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("大陆简体 (含用语)"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("tw2sp.json");
+                    }
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("大陆简体 (仅文字)"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("tw2s.json");
+                    }
+                });
+                tools_menu.separator();
+
+                tools_menu.label(egui::RichText::new("仅文字转换").strong());
+                tools_menu.menu_button("繁体互转", |sub_menu| {
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("台湾繁体 → 香港繁体"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("tw2t.json");
+                    }
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体 → 台湾繁体"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("hk2t.json");
+                    }
+                });
+                tools_menu.menu_button("其他转换", |sub_menu| {
+                    if sub_menu
+                        .add_enabled(
+                            conversion_enabled,
+                            egui::Button::new("简体 → 台湾繁体 (仅文字)"),
+                        )
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("s2tw.json");
+                    }
+                    if sub_menu
+                        .add_enabled(
+                            conversion_enabled,
+                            egui::Button::new("繁体 → 台湾繁体 (异体字)"),
+                        )
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("t2tw.json");
+                    }
+                    if sub_menu
+                        .add_enabled(
+                            conversion_enabled,
+                            egui::Button::new("繁体 → 香港繁体 (异体字)"),
+                        )
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("t2hk.json");
+                    }
+                    if sub_menu
+                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体 → 简体"))
+                        .on_disabled_hover_text(disabled_hover_text)
+                        .clicked()
+                    {
+                        self.handle_chinese_conversion("hk2s.json");
+                    }
+                });
+                tools_menu.separator();
+
+                tools_menu.label(egui::RichText::new("日语汉字转换").strong());
+                if tools_menu
+                    .add_enabled(
+                        conversion_enabled,
+                        egui::Button::new("日语新字体 → 繁体旧字体"),
+                    )
+                    .on_disabled_hover_text(disabled_hover_text)
+                    .clicked()
+                {
+                    self.handle_chinese_conversion("jp2t.json");
+                }
+                if tools_menu
+                    .add_enabled(
+                        conversion_enabled,
+                        egui::Button::new("繁体旧字体 → 日语新字体"),
+                    )
+                    .on_disabled_hover_text(disabled_hover_text)
+                    .clicked()
+                {
+                    self.handle_chinese_conversion("t2jp.json");
+                }
+            });
+
             // --- 源格式选择 ---
             ui_bar.add_space(16.0); // 添加一些间距
             ui_bar.label("源格式:"); // 标签

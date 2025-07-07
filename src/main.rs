@@ -1,11 +1,7 @@
 //
-//
-//
-//  AI 创作声明
-//
-//  大部分注释是使用 AI 生成的，虽然直接用 AI 来写核心逻辑还不太行，但用来写注释真是太合适不过了
-//  大部分辅助的函数和逻辑也是由 AI 生成的，这上面 AI 还是写得比我好
-//
+// 当时写这个项目的时候正赶上 AI 大火，不知不觉就用了大量 AI 润色
+// 到后来就直接全用 AI 生成了
+// 所以这个项目基本充斥着 AI 的代码和注释，不喜勿看
 //
 
 // 这行是一个条件编译属性。
@@ -30,6 +26,7 @@ mod app_ui; // 包含应用程序用户界面 (UI) 相关逻辑的模块。
 mod app_update;
 mod ass_generator; // 用于生成 ASS 字幕格式的模块。
 mod ass_parser; // 用于解析 ASS (Advanced SubStation Alpha) 字幕格式的模块。
+mod chinese_conversion_processor;
 mod io;
 mod json_parser; // 用于解析 JSON 数据的模块。
 mod krc_generator; // 用于生成 KRC 歌词格式的模块。

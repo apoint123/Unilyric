@@ -5,6 +5,7 @@ use crate::app_definition::UniLyricApp;
 use crate::app_fetch_core;
 use crate::app_update;
 use crate::ass_parser;
+use crate::chinese_conversion_processor::ChineseConversionProcessor;
 use crate::json_parser;
 use crate::krc_parser;
 use crate::kugou_lyrics_fetcher;
@@ -25,10 +26,10 @@ use crate::ttml_generator;
 use crate::ttml_parser;
 use crate::types::{
     AmllIndexDownloadState, AmllTtmlDownloadState, AssMetadata, AutoSearchSource, AutoSearchStatus,
-    CanonicalMetadataKey, ConvertError, DisplayLrcLine, EditableMetadataEntry, KrcDownloadState,
-    LocalLyricCacheEntry, LrcContentType, LrcLine, LyricFormat, LysSyllable, NeteaseDownloadState,
-    ParsedSourceData, PlatformFetchedData, ProcessedAssData, ProcessedLyricsSourceData,
-    QqMusicDownloadState, TtmlParagraph, TtmlSyllable,
+    CanonicalMetadataKey, ChineseConversionOptions, ConvertError, DisplayLrcLine,
+    EditableMetadataEntry, KrcDownloadState, LocalLyricCacheEntry, LrcContentType, LrcLine,
+    LyricFormat, LysSyllable, NeteaseDownloadState, ParsedSourceData, PlatformFetchedData,
+    ProcessedAssData, ProcessedLyricsSourceData, QqMusicDownloadState, TtmlParagraph, TtmlSyllable,
 };
 use crate::websocket_server::{PlaybackInfoPayload, ServerCommand, TimeUpdatePayload};
 use crate::yrc_parser;
@@ -3058,7 +3059,7 @@ impl UniLyricApp {
             return;
         }
         // 准备用于GitHub Issue的艺术家和标题字符串
-        let artist_str_for_meta = artists_vec_opt.unwrap_or_default().join("/");
+        let artist_str_for_meta = artists_vec_opt.unwrap_or_default().join(",");
         let title_str_for_meta = titles_vec_opt.unwrap_or_default().join("/");
 
         // --- 阶段 B: 设置状态并准备异步任务 ---
@@ -3223,6 +3224,44 @@ impl UniLyricApp {
                 }
             }
         }); // Tokio spawn 结束
+    }
+
+    pub fn handle_chinese_conversion(&mut self, config_name: &str) {
+        if self
+            .parsed_ttml_paragraphs
+            .as_ref()
+            .is_some_and(|p| p.is_empty())
+        {
+            log::warn!("[简繁转换] 没有内容可供转换。");
+            self.toasts.add(egui_toast::Toast {
+                text: "没有内容可供转换".into(),
+                kind: egui_toast::ToastKind::Warning,
+                options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
+                style: Default::default(),
+            });
+            return;
+        }
+
+        if let Some(paragraphs) = &mut self.parsed_ttml_paragraphs {
+            log::info!("[简繁转换] 使用配置 '{config_name}' 执行转换...");
+
+            let processor = ChineseConversionProcessor::new();
+            let options = ChineseConversionOptions {
+                config_name: Some(config_name.to_string()),
+            };
+
+            processor.process(paragraphs, &options);
+
+            self.generate_target_format_output();
+            self.update_lrc_side_panels_from_paragraphs();
+
+            self.toasts.add(egui_toast::Toast {
+                text: "转换成功！".into(),
+                kind: egui_toast::ToastKind::Success,
+                options: egui_toast::ToastOptions::default().duration_in_seconds(2.0),
+                style: Default::default(),
+            });
+        }
     }
 }
 
