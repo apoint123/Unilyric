@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
-use log::warn;
+use log::{debug, warn};
 use std::sync::mpsc::Sender as StdSender;
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
@@ -178,7 +178,7 @@ async fn handle_protocol_body(
                 state.waiting_for_app_pong = false;
                 state.last_app_ping_sent_at = None;
             } else {
-                warn!(
+                debug!(
                     "[WebSocket 客户端] 收到意外的 Pong (当前未在等待 Pong，或已超时并重置状态)。"
                 );
             }
