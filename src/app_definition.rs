@@ -304,7 +304,7 @@ impl UniLyricApp {
 
         // --- 初始化AMLL TTML数据库相关状态 ---
         // AMLL TTML DB仓库的基础URL (使用GitHub代理加速访问raw文件)
-        let amll_repo_base = "https://github.moeyy.xyz/https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main".to_string();
+        let amll_repo_base = "https://raw.githubusercontent.com/Steve-xmh/amll-ttml-db/main".to_string();
         let initial_amll_index_state; // AMLL索引的初始下载状态
         let mut initial_amll_index_data: Vec<AmllIndexEntry> = Vec::new(); // 初始AMLL索引数据
         // AMLL索引缓存文件路径 (通常在应用数据目录下)
