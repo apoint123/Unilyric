@@ -118,12 +118,11 @@ impl AppSettings {
     pub fn config_dir() -> Option<PathBuf> {
         if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
             let config_dir = proj_dirs.data_local_dir();
-            if !config_dir.exists() {
-                if let Err(e) = fs::create_dir_all(config_dir) {
-                    log::error!("无法创建配置目录 {:?}: {}", config_dir, e);
+            if !config_dir.exists()
+                && let Err(e) = fs::create_dir_all(config_dir) {
+                    log::error!("无法创建配置目录 {config_dir:?}: {e}");
                     return None;
                 }
-            }
             Some(config_dir.to_path_buf())
         } else {
             log::error!("无法获取项目配置目录路径。");
@@ -138,37 +137,32 @@ impl AppSettings {
     pub fn load() -> Self {
         if let Some(path) = Self::config_file_path() {
             if path.exists() {
-                log::info!("[Settings] 尝试从 {:?} 加载 JSON 配置文件。", path);
+                log::info!("[Settings] 尝试从 {path:?} 加载 JSON 配置文件。");
                 match fs::read_to_string(&path) {
                     Ok(content) => match serde_json::from_str(&content) {
                         Ok(settings) => return settings,
                         Err(e) => {
                             log::error!(
-                                "[Settings] 解析 JSON 配置文件 {:?} 失败: {}。将使用默认配置。",
-                                path,
-                                e
+                                "[Settings] 解析 JSON 配置文件 {path:?} 失败: {e}。将使用默认配置。"
                             );
                         }
                     },
                     Err(e) => {
                         log::error!(
-                            "[Settings] 读取配置文件 {:?} 失败: {}。将使用默认配置。",
-                            path,
-                            e
+                            "[Settings] 读取配置文件 {path:?} 失败: {e}。将使用默认配置。"
                         );
                     }
                 }
             } else {
                 log::info!(
-                    "[Settings] 配置文件 {:?} 未找到。将创建并使用默认配置。",
-                    path
+                    "[Settings] 配置文件 {path:?} 未找到。将创建并使用默认配置。"
                 );
             }
         }
 
         let default_settings = AppSettings::default();
         if let Err(e) = default_settings.save() {
-            log::error!("[Settings] 无法保存初始默认配置文件: {}", e);
+            log::error!("[Settings] 无法保存初始默认配置文件: {e}");
         }
         default_settings
     }
@@ -178,17 +172,17 @@ impl AppSettings {
             match serde_json::to_string_pretty(self) {
                 Ok(json_string) => {
                     fs::write(&path, json_string)?;
-                    log::info!("[Settings] 设置已成功保存到 {:?}", path);
+                    log::info!("[Settings] 设置已成功保存到 {path:?}");
                     Ok(())
                 }
                 Err(e) => {
-                    log::error!("[Settings] 序列化设置为 JSON 失败: {}", e);
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    log::error!("[Settings] 序列化设置为 JSON 失败: {e}");
+                    Err(std::io::Error::other(e))
                 }
             }
         } else {
             let err_msg = "[Settings] 无法确定配置文件路径，保存失败。";
-            log::error!("{}", err_msg);
+            log::error!("{err_msg}");
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, err_msg))
         }
     }

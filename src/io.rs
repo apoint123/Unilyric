@@ -18,16 +18,16 @@ pub fn handle_save_file(app: &mut UniLyricApp) {
         .add_filter(
             &format!(
                 "{} file",
-                app.target_format.to_extension_str().to_uppercase()
+                app.lyrics.target_format.to_extension_str().to_uppercase()
             ),
-            &[app.target_format.to_extension_str()],
+            &[app.lyrics.target_format.to_extension_str()],
         )
         .save_file()
     {
-        if let Err(e) = fs::write(&path, &app.output_text) {
-            log::error!("保存文件 {:?} 失败: {}", path, e);
+        if let Err(e) = fs::write(&path, &app.lyrics.output_text) {
+            log::error!("保存文件 {path:?} 失败: {e}");
         } else {
-            app.last_saved_file_path = Some(path);
+            app.lyrics.last_saved_file_path = Some(path);
         }
     }
 }
@@ -42,18 +42,18 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
             Ok(content) => {
                 match content_type {
                     LrcContentType::Translation => {
-                        app.display_translation_lrc_output = content;
-                        log::info!("已加载翻译LRC文件: {:?}", path);
+                        app.lyrics.display_translation_lrc_output = content;
+                        log::info!("已加载翻译LRC文件: {path:?}");
                     }
                     LrcContentType::Romanization => {
-                        app.display_romanization_lrc_output = content;
-                        log::info!("已加载罗马音LRC文件: {:?}", path);
+                        app.lyrics.display_romanization_lrc_output = content;
+                        log::info!("已加载罗马音LRC文件: {path:?}");
                     }
                 }
                 app.handle_convert();
             }
             Err(e) => {
-                log::error!("读取LRC文件 {:?} 失败: {}", path, e);
+                log::error!("读取LRC文件 {path:?} 失败: {e}");
             }
         }
     }
@@ -61,20 +61,22 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
 
 /// 从路径加载文件并触发转换。
 pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
-    app.clear_all_data();
-    app.last_opened_file_path = Some(path.clone());
+    app.send_action(crate::app_actions::UserAction::Lyrics(
+        crate::app_actions::LyricsAction::ClearAllData,
+    ));
+    app.lyrics.last_opened_file_path = Some(path.clone());
 
     if let Ok(content) = fs::read_to_string(&path) {
-        app.input_text = content;
+        app.lyrics.input_text = content;
         // 尝试从文件扩展名推断源格式
         if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
             if let Some(format) = LyricFormat::from_string(ext) {
-                app.source_format = format;
+                app.lyrics.source_format = format;
             }
         }
         app.handle_convert();
         // sync_ui_from_parsed_data 会在转换完成后自动调用
     } else {
-        log::error!("无法读取文件内容: {:?}", path);
+        log::error!("无法读取文件内容: {path:?}");
     }
 }

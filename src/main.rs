@@ -5,75 +5,166 @@ mod types;
 mod utils;
 mod amll_connector;
 mod app;
+mod app_actions;
 mod app_definition;
+mod app_events;
 pub mod app_fetch_core;
 mod app_settings;
 mod app_ui;
 mod app_update;
 mod io;
-mod logger;
 mod websocket_server;
 
 use app_settings::AppSettings;
+use once_cell::sync::Lazy;
 use std::sync::mpsc;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, Layer, fmt};
+
+/// 一个自定义的 tracing Layer，用于将日志条目发送到UI线程。
+struct UiLayer {
+    sender: mpsc::Sender<types::LogEntry>,
+}
+
+impl<S> Layer<S> for UiLayer
+where
+    S: tracing::Subscriber,
+{
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _ctx: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        // 从事件元数据中创建 LogEntry
+        let mut message = String::new();
+        event.record(&mut MessageVisitor(&mut message));
+
+        let entry = types::LogEntry {
+            level: event.metadata().level().into(),
+            message,
+            timestamp: chrono::Local::now(),
+            target: event.metadata().target().to_string(),
+        };
+
+        // 发送到UI，如果失败则打印到stderr
+        if self.sender.send(entry).is_err() {
+            eprintln!("UI日志通道已关闭。");
+        }
+    }
+}
+
+/// 用于从 tracing::Event 中提取消息的访问者。
+struct MessageVisitor<'a>(&'a mut String);
+impl tracing::field::Visit for MessageVisitor<'_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0.push_str(&format!("{value:?}"));
+        }
+    }
+}
+
+fn setup_tracing(
+    ui_log_sender: mpsc::Sender<types::LogEntry>,
+    settings: &app_settings::LogSettings,
+) {
+    let our_crates_level = settings.console_log_level.to_string().to_lowercase();
+    let console_filter_str = format!(
+        // 默认将所有模块的日志级别设为 `warn`，以保持安静
+        "warn,unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+    );
+
+    let console_filter = EnvFilter::new(console_filter_str);
+
+    let file_filter = if settings.enable_file_log {
+        let our_crates_file_level = settings.file_log_level.to_string().to_lowercase();
+        let file_filter_str = format!(
+            "warn,unilyric={our_crates_file_level},lyrics_helper_rs={our_crates_file_level}"
+        );
+        EnvFilter::new(file_filter_str)
+    } else {
+        EnvFilter::new("off")
+    };
+
+    let console_layer = fmt::layer()
+        .with_writer(std::io::stdout)
+        .with_filter(console_filter);
+
+    let ui_filter_str = format!(
+        "warn,unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+    );
+    let ui_filter = EnvFilter::new(ui_filter_str);
+
+    let ui_layer = UiLayer {
+        sender: ui_log_sender,
+    }
+    .with_filter(ui_filter);
+
+    let file_layer = if settings.enable_file_log {
+        match AppSettings::config_dir() {
+            Some(config_dir) => {
+                let log_dir = config_dir.join("logs");
+                if let Err(e) = std::fs::create_dir_all(&log_dir) {
+                    eprintln!("无法创建日志目录 {log_dir:?}: {e}");
+                    None
+                } else {
+                    let file_appender = tracing_appender::rolling::daily(log_dir, "unilyric.log");
+                    let (non_blocking_writer, guard) =
+                        tracing_appender::non_blocking(file_appender);
+
+                    // 将 guard 存储在静态变量中，保证应用程序生命周期内不被丢弃
+                    static LOG_GUARD: once_cell::sync::Lazy<
+                        std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
+                    > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(None));
+                    *LOG_GUARD.lock().unwrap() = Some(guard);
+
+                    Some(
+                        fmt::layer()
+                            .with_writer(non_blocking_writer)
+                            .with_ansi(false)
+                            .with_filter(file_filter),
+                    )
+                }
+            }
+            None => {
+                eprintln!("无法获取配置目录，文件日志将被禁用");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    tracing_subscriber::registry()
+        .with(console_layer)
+        .with(ui_layer)
+        .with(file_layer)
+        .init();
+}
 
 fn main() {
     let app_settings = AppSettings::load();
+    let (ui_log_sender, ui_log_receiver) = mpsc::channel();
 
-    // 创建一个用于在 UI 线程和其他线程之间传递日志条目的通道。
-    // `mpsc::channel()` 返回一个元组，包含一个发送者 (Sender) 和一个接收者 (Receiver)。
-    let (ui_log_sender, ui_log_receiver): (
-        mpsc::Sender<logger::LogEntry>, // 发送者，用于发送 `LogEntry` 类型的日志条目。
-        mpsc::Receiver<logger::LogEntry>, // 接收者，用于接收 `LogEntry` 类型的日志条目。
-    ) = mpsc::channel();
+    setup_tracing(ui_log_sender, &app_settings.log_settings);
 
-    // 初始化全局日志记录器。
-    // `ui_log_sender` 被传递给日志记录器，以便将日志条目发送到 UI 线程进行显示。
-    // `app_settings.log_settings.enable_file_log` 用于控制是否启用文件日志记录。
-    logger::init_global_logger(ui_log_sender, app_settings.log_settings.enable_file_log);
+    tracing::info!(target: "unilyric_main", "应用程序已启动。");
 
-    // 使用 `log` crate (一个流行的 Rust 日志库) 记录一条信息。
-    // `target: "unilyric_main"` 指定了日志消息的来源模块或目标。
-    log::info!(target: "unilyric_main", "应用程序已启动。");
-
-    // 配置 eframe (egui 的原生后端) 的原生选项。
     let native_options = eframe::NativeOptions {
-        // 设置窗口视口的构建器。
         viewport: egui::ViewportBuilder::default()
-            // 设置窗口的初始内部大小 (宽度 1024.0, 高度 768.0)。
             .with_inner_size([1024.0, 768.0])
-            // 设置窗口的最小内部大小 (宽度 800.0, 高度 600.0)。
             .with_min_inner_size([800.0, 600.0]),
-        // `..Default::default()` 表示使用 `NativeOptions` 其他字段的默认值。
         ..Default::default()
     };
 
-    // 运行 eframe 原生应用程序。
-    // `eframe::run_native` 是启动基于 egui 的 GUI 应用程序的函数。
-    // 它接收三个参数：
-    // 1. 应用程序的名称 ("UniLyric")。
-    // 2. 上面定义的原生选项 (`native_options`)。
-    // 3. 一个闭包 (Box::new(move |cc| ...))，该闭包在应用程序启动时被调用，用于创建应用程序实例。
-    //    `move` 关键字表示闭包会获取其捕获的变量的所有权。
-    //    `cc` 是 `eframe::CreationContext`，包含了创建应用程序所需的一些上下文信息。
     if let Err(e) = eframe::run_native(
-        "UniLyric",     // 应用程序标题
-        native_options, // 窗口和应用程序的配置选项
-        // 这个 Box<dyn FnOnce(&eframe::CreationContext<'_>) -> Result<Box<dyn eframe::App>, eframe::Error>>
-        // 是一个创建应用程序实例的工厂函数。
+        "UniLyric",
+        native_options,
         Box::new(move |cc| {
-            // 创建 UniLyricApp 的实例。
-            // `app_settings.clone()` 创建设置的副本，因为 `app_settings` 可能会在其他地方被使用。
-            // `ui_log_receiver` 被传递给应用程序实例，以便它可以接收和显示日志。
             let app_instance =
                 crate::app_definition::UniLyricApp::new(cc, app_settings.clone(), ui_log_receiver);
-            // 返回一个包装好的应用程序实例。
-            // `Ok(Box::new(app_instance))` 表示成功创建了应用程序实例。
-            // `Box<dyn eframe::App>` 是一个trait object，表示任何实现了 `eframe::App` trait 的类型。
             Ok(Box::new(app_instance))
         }),
     ) {
-        // 如果 `eframe::run_native` 返回错误 (Err)，则记录错误信息。
-        log::error!(target: "unilyric_main", "Eframe 运行错误: {e}");
+        tracing::error!(target: "unilyric_main", "Eframe 运行错误: {e}");
     }
 }

@@ -14,9 +14,9 @@ pub fn ensure_running(app: &mut UniLyricApp) {
     let is_enabled_in_config;
     let current_ws_status;
     {
-        let config_guard = app.media_connector_config.lock().unwrap();
+        let config_guard = app.player.config.lock().unwrap();
         is_enabled_in_config = config_guard.enabled;
-        current_ws_status = app.media_connector_status.lock().unwrap().clone();
+        current_ws_status = app.player.status.lock().unwrap().clone();
     }
 
     if !is_enabled_in_config {
@@ -25,7 +25,8 @@ pub fn ensure_running(app: &mut UniLyricApp) {
     }
 
     let worker_is_running = app
-        .media_connector_worker_handle
+        .player
+        .worker_handle
         .as_ref()
         .is_some_and(|h| !h.is_finished());
 
@@ -36,28 +37,25 @@ pub fn ensure_running(app: &mut UniLyricApp) {
 
     if worker_is_running && is_connection_healthy {
         log::debug!(
-            "[AMLLManager] AMLL Connector worker 正常运行中 (Status: {:?})。无需重启。",
-            current_ws_status
+            "[AMLLManager] AMLL Connector worker 正常运行中 (Status: {current_ws_status:?})。无需重启。"
         );
         return;
     }
 
     log::info!(
-        "[AMLLManager] 正在启动/重启 AMLL Connector worker。原因: [Worker运行中: {}, WS状态: {:?}]",
-        worker_is_running,
-        current_ws_status
+        "[AMLLManager] 正在启动/重启 AMLL Connector worker。原因: [Worker运行中: {worker_is_running}, WS状态: {current_ws_status:?}]"
     );
     stop_worker(app);
 
     let (command_tx_for_worker, command_rx_for_worker) =
         std::sync::mpsc::channel::<ConnectorCommand>();
-    app.media_connector_command_tx = Some(command_tx_for_worker);
+    app.player.command_tx = Some(command_tx_for_worker);
 
-    let update_tx_clone_for_worker = app.media_connector_update_tx_for_worker.clone();
+    let update_tx_clone_for_worker = app.player.update_tx_for_worker.clone();
 
     let initial_config_clone;
     {
-        let config_guard = app.media_connector_config.lock().unwrap();
+        let config_guard = app.player.config.lock().unwrap();
         initial_config_clone = config_guard.clone();
     }
 
@@ -66,20 +64,18 @@ pub fn ensure_running(app: &mut UniLyricApp) {
         command_rx_for_worker,
         update_tx_clone_for_worker,
     );
-    app.media_connector_worker_handle = Some(handle);
+    app.player.worker_handle = Some(handle);
 
-    if app.audio_visualization_is_active {
-        if let Some(ref tx) = app.media_connector_command_tx {
-            if tx.send(ConnectorCommand::StartAudioVisualization).is_err() {
+    if app.player.audio_visualization_is_active
+        && let Some(ref tx) = app.player.command_tx
+            && tx.send(ConnectorCommand::StartAudioVisualization).is_err() {
                 log::error!(
                     "[AMLLManager] Failed to send StartAudioVisualization command to the new worker upon restart."
                 );
             }
-        }
-    }
 
-    if let Some(ref initial_id) = app.initial_selected_smtc_session_id_from_settings {
-        if let Some(ref tx) = app.media_connector_command_tx {
+    if let Some(ref initial_id) = app.player.initial_selected_smtc_session_id_from_settings {
+        if let Some(ref tx) = app.player.command_tx {
             log::debug!("[AMLLManager] 应用启动时，尝试恢复上次选择的 SMTC 会话 ID: {initial_id}");
             if tx
                 .send(ConnectorCommand::SelectSmtcSession(initial_id.clone()))
@@ -87,7 +83,7 @@ pub fn ensure_running(app: &mut UniLyricApp) {
             {
                 log::error!("[AMLLManager] 启动时发送 SelectSmtcSession 命令失败。");
             }
-            *app.selected_smtc_session_id.lock().unwrap() = Some(initial_id.clone());
+            *app.player.selected_smtc_session_id.lock().unwrap() = Some(initial_id.clone());
         } else {
             log::warn!("[AMLLManager] 启动时无法应用上次选择的 SMTC 会话：command_tx 不可用。");
         }
@@ -96,16 +92,16 @@ pub fn ensure_running(app: &mut UniLyricApp) {
 
 /// 停止AMLL Connector worker
 pub fn stop_worker(app: &mut UniLyricApp) {
-    if let Some(command_tx) = app.media_connector_command_tx.take() {
+    if let Some(command_tx) = app.player.command_tx.take() {
         log::debug!("[AMLLManager] 向 AMLL Connector worker 发送关闭命令...");
         if command_tx.send(ConnectorCommand::Shutdown).is_err() {
             log::warn!("[AMLLManager] 发送关闭命令给 AMLL Connector worker 失败 (可能已关闭)。");
         }
     }
 
-    *app.media_connector_status.lock().unwrap() = WebsocketStatus::断开;
+    *app.player.status.lock().unwrap() = WebsocketStatus::断开;
 
-    let media_info_arc_clone = Arc::clone(&app.current_media_info);
+    let media_info_arc_clone = Arc::clone(&app.player.current_media_info);
     app.tokio_runtime.block_on(async move {
         let mut guard = media_info_arc_clone.lock().await;
         *guard = None;

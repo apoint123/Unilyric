@@ -177,7 +177,7 @@ impl AMLLConnectorWorker {
 
         rt_clone.spawn(async move {
             while let Ok(status) = ws_status_rx_for_worker_sync.recv() {
-                log::trace!("[桥接任务-WS状态] 从 sync 通道收到状态: {:?}", status);
+                log::trace!("[桥接任务-WS状态] 从 sync 通道收到状态: {status:?}");
                 if ws_status_tx_async.send(status).await.is_err() {
                     log::error!("[桥接任务-WS状态] 无法将状态发送至异步通道。");
                     break;
@@ -509,7 +509,7 @@ impl AMLLConnectorWorker {
                 maybe_status = self.ws_status_rx.recv() => {
                     match maybe_status {
                         Some(ws_status) => {
-                            log::trace!("[AMLL Connector Worker] 从 ws_status_rx 收到状态: {:?}", ws_status);
+                            log::trace!("[AMLL Connector Worker] 从 ws_status_rx 收到状态: {ws_status:?}");
 
                             self.ws_status = ws_status.clone();
 
@@ -547,13 +547,11 @@ impl AMLLConnectorWorker {
                  maybe_media_cmd = self.ws_media_cmd_rx.recv() => {
                     match maybe_media_cmd {
                         Some(smtc_cmd_from_ws) => {
-                             if self.config.lock().unwrap().enabled {
-                                 if let Some(sender) = &self.smtc_control_tx {
-                                     if sender.send(ConnectorCommand::MediaControl(smtc_cmd_from_ws.clone())).is_err() {
-                                         log::error!("[[AMLL Connector Worker] 发送来自网络的媒体控制命令 ({:?}) 到SMTC处理器失败。", smtc_cmd_from_ws);
+                             if self.config.lock().unwrap().enabled
+                                 && let Some(sender) = &self.smtc_control_tx
+                                     && sender.send(ConnectorCommand::MediaControl(smtc_cmd_from_ws)).is_err() {
+                                         log::error!("[[AMLL Connector Worker] 发送来自网络的媒体控制命令 ({smtc_cmd_from_ws:?}) 到SMTC处理器失败。");
                                      }
-                                 }
-                             }
                         },
                         None => {
                             let was_intentional_stop = self.ws_shutdown_signal_tx.is_none() || self.ws_outgoing_tx.is_none();
@@ -584,7 +582,7 @@ impl AMLLConnectorWorker {
                             }
                         }
                         Some(unexpected_update) => {
-                             log::warn!("[AMLL连接器-Worker] 从音频捕获器收到意外的更新类型: {:?}", unexpected_update);
+                             log::warn!("[AMLL连接器-Worker] 从音频捕获器收到意外的更新类型: {unexpected_update:?}");
                         }
                         None => {
                             log::error!("[AMLL连接器-Worker] 与音频捕获器的数据通道已断开 (线程可能已退出)。");
@@ -603,7 +601,7 @@ impl AMLLConnectorWorker {
     ///
     /// 这个辅助函数被 `run_async` 调用，以保持 `select!` 循环的整洁。
     async fn handle_command_from_app(&mut self, command: ConnectorCommand) {
-        log::trace!("[[AMLL Connector Worker] 正在处理命令: {:?}", command);
+        log::trace!("[[AMLL Connector Worker] 正在处理命令: {command:?}");
         match command {
             ConnectorCommand::UpdateConfig(new_config) => {
                 let old_config;
@@ -646,13 +644,11 @@ impl AMLLConnectorWorker {
                     let body = ProtocolBody::SetLyricFromTTML {
                         data: ttml_string.into(),
                     };
-                    // ▼▼▼【修改】移除 .await ▼▼▼
                     self.send_protocol_body_to_ws(body);
                 }
             }
             ConnectorCommand::SendProtocolBody(protocol_body) => {
                 if self.config.lock().unwrap().enabled {
-                    // ▼▼▼【修改】移除 .await ▼▼▼
                     self.send_protocol_body_to_ws(protocol_body);
                 }
             }
@@ -665,8 +661,7 @@ impl AMLLConnectorWorker {
                             .is_err()
                         {
                             log::error!(
-                                "[[AMLL Connector Worker] 发送“选择SMTC会话 ({})”命令失败。",
-                                session_id
+                                "[[AMLL Connector Worker] 发送“选择SMTC会话 ({session_id})”命令失败。"
                             );
                         }
                     } else {
@@ -678,12 +673,11 @@ impl AMLLConnectorWorker {
                 if self.config.lock().unwrap().enabled {
                     if let Some(sender) = &self.smtc_control_tx {
                         if sender
-                            .send(ConnectorCommand::MediaControl(smtc_cmd.clone()))
+                            .send(ConnectorCommand::MediaControl(smtc_cmd))
                             .is_err()
                         {
                             log::error!(
-                                "[[AMLL Connector Worker] 发送媒体控制命令 ({:?}) 失败。",
-                                smtc_cmd
+                                "[[AMLL Connector Worker] 发送媒体控制命令 ({smtc_cmd:?}) 失败。"
                             );
                         }
                     } else {
@@ -756,18 +750,14 @@ impl AMLLConnectorWorker {
         rt_clone.spawn_blocking(move || {
             match volume_control::get_pid_from_identifier(&target_identifier) {
                 Some(pid) => {
-                    if volume.is_some() || mute.is_some() {
-                        if let Err(e) = volume_control::set_process_volume_by_pid(pid, volume, mute)
+                    if (volume.is_some() || mute.is_some())
+                        && let Err(e) = volume_control::set_process_volume_by_pid(pid, volume, mute)
                         {
                             log::error!(
-                                "[音量控制任务] 设置PID {} ({}) 的音量/静音失败: {}",
-                                pid,
-                                target_identifier,
-                                e
+                                "[音量控制任务] 设置PID {pid} ({target_identifier}) 的音量/静音失败: {e}"
                             );
                             return;
                         }
-                    }
 
                     match volume_control::get_process_volume_by_pid(pid) {
                         Ok((current_vol, current_mute)) => {
@@ -777,23 +767,19 @@ impl AMLLConnectorWorker {
                                 is_muted: current_mute,
                             };
                             if let Err(e_send) = update_tx_clone.send(update_msg) {
-                                log::error!("[音量控制任务] 发送音量变更更新失败: {}", e_send);
+                                log::error!("[音量控制任务] 发送音量变更更新失败: {e_send}");
                             }
                         }
                         Err(e_get) => {
                             log::error!(
-                                "[音量控制任务] 获取PID {} ({}) 的音量状态失败: {}",
-                                pid,
-                                target_identifier,
-                                e_get
+                                "[音量控制任务] 获取PID {pid} ({target_identifier}) 的音量状态失败: {e_get}"
                             );
                         }
                     }
                 }
                 None => {
                     log::warn!(
-                        "[音量控制任务] 无法为目标 '{}' 找到PID。",
-                        target_identifier
+                        "[音量控制任务] 无法为目标 '{target_identifier}' 找到PID。"
                     );
                 }
             }
@@ -854,8 +840,7 @@ impl AMLLConnectorWorker {
                 .unwrap_or("UnknownProtocol")
                 .to_string();
             log::warn!(
-                "[[AMLL Connector Worker] WebSocket发送通道无效，无法发送协议消息 ({})。",
-                body_type_for_log
+                "[[AMLL Connector Worker] WebSocket发送通道无效，无法发送协议消息 ({body_type_for_log})。"
             );
         }
     }

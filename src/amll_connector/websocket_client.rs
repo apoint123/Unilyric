@@ -303,7 +303,7 @@ async fn handle_ws_message(
                     .await?;
                 }
                 Err(e) => {
-                    log::error!("[WebSocket 客户端] 反序列化服务器二进制消息失败: {:?}.", e);
+                    log::error!("[WebSocket 客户端] 反序列化服务器二进制消息失败: {e:?}.");
                     return Err(LifecycleEndReason::StreamFailure(
                         "收到无法解析的二进制消息".to_string(),
                     ));
@@ -399,13 +399,12 @@ async fn handle_connection(
             // 5. 处理应用层 Ping 定时器
             _ = app_ping_interval_timer.tick() => {
                 if state.waiting_for_app_pong {
-                    if let Some(sent_at) = state.last_app_ping_sent_at {
-                        if Instant::now().duration_since(sent_at) > APP_PONG_TIMEOUT {
+                    if let Some(sent_at) = state.last_app_ping_sent_at
+                        && Instant::now().duration_since(sent_at) > APP_PONG_TIMEOUT {
                             log::warn!("[WebSocket 客户端] 服务器应用层 Pong 超时! 断开连接。");
                             ws_writer.close().await.ok();
                             return LifecycleEndReason::PongTimeout;
                         }
-                    }
                 } else {
                     log::info!("[WebSocket 客户端] 定时发送 Ping 到服务器。");
                     if send_ws_message(&mut ws_writer, ProtocolBody::Ping).await.is_err() {
@@ -437,8 +436,7 @@ pub async fn run_websocket_client(
         let outcome = {
             // --- 阶段 1: 尝试建立连接 ---
             log::info!(
-                "[WebSocket 客户端] 正在尝试连接... (已连续失败: {} 次)",
-                consecutive_failures
+                "[WebSocket 客户端] 正在尝试连接... (已连续失败: {consecutive_failures} 次)"
             );
             if send_std_message(&status_tx, WebsocketStatus::连接中, "连接中状态")
                 .await
@@ -527,10 +525,9 @@ pub async fn run_websocket_client(
         // --- 阶段 4: 重连延迟与退出检查 ---
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             log::error!(
-                "[WebSocket 客户端] 已达到最大连续失败连接次数 ({})。",
-                MAX_CONSECUTIVE_FAILURES
+                "[WebSocket 客户端] 已达到最大连续失败连接次数 ({MAX_CONSECUTIVE_FAILURES})。"
             );
-            let msg = format!("已达最大重连次数 ({})", MAX_CONSECUTIVE_FAILURES);
+            let msg = format!("已达最大重连次数 ({MAX_CONSECUTIVE_FAILURES})");
             send_std_message(&status_tx, WebsocketStatus::错误(msg), "最大重连次数状态")
                 .await
                 .ok();
@@ -541,8 +538,7 @@ pub async fn run_websocket_client(
         }
 
         log::debug!(
-            "[WebSocket 客户端] 将等待 {}ms 后尝试下一次连接...",
-            RECONNECT_DELAY_MS
+            "[WebSocket 客户端] 将等待 {RECONNECT_DELAY_MS}ms 后尝试下一次连接..."
         );
         tokio::select! {
             biased;

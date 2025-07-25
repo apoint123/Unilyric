@@ -55,16 +55,15 @@ pub(crate) fn initial_auto_fetch_and_send_lyrics(
     // 释放锁
     drop(app_settings);
 
-    app.last_auto_fetch_source_format = None;
-    app.current_auto_search_ui_populated = false;
+    app.fetcher.last_source_format = None;
+    app.fetcher.current_ui_populated = false;
     update_all_search_status(app, AutoSearchStatus::Searching);
 
-    let result_tx = app.auto_fetch_result_tx.clone();
+    let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
         debug!(
-            "开始搜索歌词: title='{}', artists='{:?}', mode='{:?}'",
-            smtc_title, smtc_artists, search_mode
+            "开始搜索歌词: title='{smtc_title}', artists='{smtc_artists:?}', mode='{search_mode:?}'"
         );
 
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
@@ -102,7 +101,7 @@ pub(crate) fn initial_auto_fetch_and_send_lyrics(
                 }
             }
             Err(e) => {
-                error!("搜索歌词时发生错误: {}", e);
+                error!("搜索歌词时发生错误: {e}");
                 if result_tx
                     .send(AutoFetchResult::FetchError(e.to_string()))
                     .is_err()
@@ -121,7 +120,7 @@ pub(crate) fn trigger_manual_refetch_for_source(
 ) {
     let track_info = match app
         .tokio_runtime
-        .block_on(async { app.current_media_info.lock().await.clone() })
+        .block_on(async { app.player.current_media_info.lock().await.clone() })
     {
         Some(info) => info,
         None => {
@@ -146,16 +145,16 @@ pub(crate) fn trigger_manual_refetch_for_source(
     };
 
     let status_arc_to_update = match source_to_refetch {
-        AutoSearchSource::QqMusic => Arc::clone(&app.qqmusic_auto_search_status),
-        AutoSearchSource::Kugou => Arc::clone(&app.kugou_auto_search_status),
-        AutoSearchSource::Netease => Arc::clone(&app.netease_auto_search_status),
-        AutoSearchSource::AmllDb => Arc::clone(&app.amll_db_auto_search_status),
-        AutoSearchSource::Musixmatch => Arc::clone(&app.musixmatch_auto_search_status),
+        AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),
+        AutoSearchSource::Kugou => Arc::clone(&app.fetcher.kugou_status),
+        AutoSearchSource::Netease => Arc::clone(&app.fetcher.netease_status),
+        AutoSearchSource::AmllDb => Arc::clone(&app.fetcher.amll_db_status),
+        AutoSearchSource::Musixmatch => Arc::clone(&app.fetcher.musixmatch_status),
         _ => return,
     };
     *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Searching;
 
-    let result_tx = app.auto_fetch_result_tx.clone();
+    let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
@@ -190,10 +189,10 @@ pub(crate) fn trigger_manual_refetch_for_source(
 }
 
 pub(crate) fn update_all_search_status(app: &UniLyricApp, status: AutoSearchStatus) {
-    *app.local_cache_auto_search_status.lock().unwrap() = status.clone();
-    *app.qqmusic_auto_search_status.lock().unwrap() = status.clone();
-    *app.kugou_auto_search_status.lock().unwrap() = status.clone();
-    *app.netease_auto_search_status.lock().unwrap() = status.clone();
-    *app.amll_db_auto_search_status.lock().unwrap() = status.clone();
-    *app.musixmatch_auto_search_status.lock().unwrap() = status.clone();
+    *app.fetcher.local_cache_status.lock().unwrap() = status.clone();
+    *app.fetcher.qqmusic_status.lock().unwrap() = status.clone();
+    *app.fetcher.kugou_status.lock().unwrap() = status.clone();
+    *app.fetcher.netease_status.lock().unwrap() = status.clone();
+    *app.fetcher.amll_db_status.lock().unwrap() = status.clone();
+    *app.fetcher.musixmatch_status.lock().unwrap() = status.clone();
 }
