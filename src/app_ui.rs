@@ -1,26 +1,22 @@
-use std::hash::{Hash, Hasher};
-use std::sync::Arc;
-
 use crate::amll_connector::{
     AMLLConnectorConfig, ConnectorCommand, WebsocketStatus, amll_connector_manager,
 };
-use crate::amll_lyrics_fetcher::AmllSearchField;
 use crate::app_definition::UniLyricApp;
 
 use crate::types::{
-    AmllIndexDownloadState, AmllTtmlDownloadState, AutoSearchSource, AutoSearchStatus,
-    CanonicalMetadataKey, DisplayLrcLine, EditableMetadataEntry, KrcDownloadState, LrcContentType,
-    LyricFormat, NeteaseDownloadState, ProcessedLyricsSourceData, QqMusicDownloadState,
-    SourceConfigTuple,
+    AutoSearchSource, AutoSearchStatus, DisplayLrcLine, EditableMetadataEntry, LrcContentType,
 };
 
-use eframe::egui::{
-    self, Align, Button, Color32, ComboBox, Layout, ScrollArea, Spinner, TextEdit, Window,
-};
-use egui::TextWrapMode;
+use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
+use egui::{Color32, TextWrapMode};
 use log::LevelFilter;
+use lyrics_helper_rs::converter::LyricFormat;
+use lyrics_helper_rs::converter::generators::lrc_generator::format_lrc_time_ms;
+use lyrics_helper_rs::converter::parsers::lrc_parser;
+use lyrics_helper_rs::model::track::FullLyricsResult;
 use rand::Rng;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
 const BUTTON_STRIP_SPACING: f32 = 4.0;
@@ -52,13 +48,9 @@ impl UniLyricApp {
                 // 1. parsed_ttml_paragraphs (内部TTML表示) 非空且包含段落
                 // 2. 或者 input_text (原始输入文本框) 非空
                 // 3. 或者 direct_netease_main_lrc_content (从网易云直接获取的LRC主歌词) 非空
-                let main_lyrics_loaded = (self.parsed_ttml_paragraphs.is_some()
-                    && self
-                        .parsed_ttml_paragraphs
-                        .as_ref()
-                        .is_some_and(|p| !p.is_empty()))
-                    || !self.input_text.is_empty()
-                    || self.direct_netease_main_lrc_content.is_some();
+                let main_lyrics_loaded = (self.parsed_lyric_data.is_some()
+                    && self.parsed_lyric_data.as_ref().is_some())
+                    || !self.input_text.is_empty();
                 let lrc_load_enabled = main_lyrics_loaded && !self.conversion_in_progress;
                 let disabled_lrc_hover_text = "请先加载主歌词文件或内容"; // 按钮禁用时的提示文本
 
@@ -92,35 +84,13 @@ impl UniLyricApp {
                 let download_enabled = !self.conversion_in_progress; // 下载功能在无转换进行时可用
                 file_menu.menu_button("下载歌词...", |download_menu| {
                     if download_menu
-                        .add_enabled(download_enabled, egui::Button::new("从QQ音乐获取..."))
+                        .add_enabled(download_enabled, egui::Button::new("搜索歌词..."))
                         .clicked()
                     {
-                        self.qqmusic_query.clear(); // 清空之前的查询词
-                        self.show_qqmusic_download_window = true; // 显示QQ音乐下载窗口
-                    }
-                    if download_menu
-                        .add_enabled(download_enabled, egui::Button::new("从酷狗音乐获取..."))
-                        .clicked()
-                    {
-                        self.kugou_query.clear();
-                        self.show_kugou_download_window = true; // 显示酷狗音乐下载窗口
-                    }
-                    if download_menu
-                        .add_enabled(download_enabled, egui::Button::new("从网易云音乐获取..."))
-                        .clicked()
-                    {
-                        self.netease_query.clear();
-                        self.show_netease_download_window = true; // 显示网易云音乐下载窗口
-                    }
-                    if download_menu
-                        .add_enabled(
-                            download_enabled,
-                            Button::new("从 AMLL TTML Database 获取..."),
-                        )
-                        .clicked()
-                    {
-                        self.amll_search_query.clear();
-                        self.show_amll_download_window = true;
+                        // 重置搜索状态并打开新的通用搜索窗口
+                        self.search_query.clear();
+                        self.search_results.clear();
+                        self.show_search_window = true;
                     }
                 });
 
@@ -139,10 +109,11 @@ impl UniLyricApp {
             });
 
             ui_bar.menu_button("简繁转换", |tools_menu| {
-                let conversion_enabled = self
-                    .parsed_ttml_paragraphs
-                    .as_ref()
-                    .is_some_and(|p| !p.is_empty());
+                let conversion_enabled = !self.input_text.is_empty()
+                    || self
+                        .parsed_lyric_data
+                        .as_ref()
+                        .is_some_and(|d| !d.lines.is_empty());
                 let disabled_hover_text = "请先加载主歌词";
 
                 tools_menu.label(egui::RichText::new("通用简繁转换").strong());
@@ -342,12 +313,10 @@ impl UniLyricApp {
             }
 
             // 判断源格式是否为逐行歌词 (LRC, LYL)，或者虽然是TTML/JSON/SPL但其内容是逐行歌词
-            let restrict_target_to_line_based =
-                Self::source_format_is_line_timed(self.source_format)
-                    || (matches!(
-                        self.source_format,
-                        LyricFormat::Ttml | LyricFormat::Json | LyricFormat::Spl
-                    ) && self.source_is_line_timed);
+            let restrict_target_to_line_based = self
+                .parsed_lyric_data
+                .as_ref()
+                .map_or(false, |d| d.is_line_timed_source);
             // 定义哪些格式是严格需要逐字时间信息的 (不能从纯逐行格式转换而来)
             let truly_word_based_formats_requiring_syllables = [
                 LyricFormat::Ass,
@@ -437,13 +406,10 @@ impl UniLyricApp {
                 }
 
                 // 再次检查并自动切换目标格式的逻辑 (作为保险)
-                if (Self::source_format_is_line_timed(self.source_format)
-                    || (matches!(
-                        self.source_format,
-                        LyricFormat::Ttml | LyricFormat::Json | LyricFormat::Spl
-                    ) && self.source_is_line_timed))
-                    && truly_word_based_formats_requiring_syllables.contains(&self.target_format)
-                    && self.source_format != LyricFormat::Lrc
+                if self
+                    .parsed_lyric_data
+                    .as_ref()
+                    .map_or(false, |d| d.is_line_timed_source)
                 {
                     log::info!(
                         "[Unilyric] 源格式为逐行（非LRC），但目标格式为逐字，已自动切换为LRC"
@@ -464,18 +430,8 @@ impl UniLyricApp {
                         self.source_format,
                         self.target_format
                     );
-                    self.clear_derived_data();
+                    self.clear_all_data();
                     self.output_text.clear();
-                    if self.target_format == LyricFormat::Lrc
-                        && self.metadata_store.lock().unwrap().is_empty()
-                        && self.parsed_ttml_paragraphs.is_none()
-                    {
-                        // 如果目标是LRC，且没有元数据和歌词内容，输出就是空的
-                        // self.output_text 已经被 clear()
-                    } else {
-                        // 对于其他格式或LRC有元数据的情况，尝试生成
-                        self.generate_target_format_output();
-                    }
                 }
             }
 
@@ -600,34 +556,46 @@ impl UniLyricApp {
                     });
 
                 ui.add_space(10.0);
-                ui.strong("自动歌词搜索顺序:");
+                ui.strong("自动歌词搜索设置:");
+                ui.separator();
+                ui.add_space(5.0);
 
-                let current_order = &mut self.temp_edit_settings.auto_search_source_order;
-                let num_sources = current_order.len();
-
-                for i in 0..num_sources {
-                    ui.horizontal(|row_ui| {
-                        row_ui.label(format!("{}. {}", i + 1, current_order[i].display_name()));
-
-                        row_ui.with_layout(Layout::right_to_left(Align::Center), |btn_ui| {
-                            // 向下按钮
-                            if btn_ui.add_enabled(i < num_sources - 1, Button::new("🔽")).clicked() {
-                                current_order.swap(i, i + 1);
-                            }
-                            // 向上按钮
-                            if btn_ui.add_enabled(i > 0, Button::new("🔼")).clicked() {
-                                current_order.swap(i, i - 1);
-                            }
-                        });
-                    });
-                    if i < num_sources - 1 {
-                        ui.separator();
-                    }
-                }
+                ui.checkbox(&mut self.temp_edit_settings.always_search_all_sources, "始终并行搜索所有源 (最准，但最慢)");
                 ui.add_space(10.0);
 
-                ui.checkbox(&mut self.temp_edit_settings.always_search_all_sources, "始终自动搜索所有源");
+                // 【新】添加“使用指定源”的复选框
+                ui.checkbox(&mut self.temp_edit_settings.use_provider_subset, "只在以下选择的源中搜索:");
+                
+                // 【新】创建一个只在上面的复选框被选中时才启用的UI区域
+                ui.add_enabled_ui(self.temp_edit_settings.use_provider_subset, |enabled_ui| {
+                    egui::Frame::group(enabled_ui.style()).show(enabled_ui, |group_ui| {
+                        group_ui.label("选择要使用的提供商:");
+                        
+                        // 我们需要一个所有可用提供商的列表
+                        let all_providers = AutoSearchSource::default_order();
+                        
+                        for provider in all_providers {
+                            // 我们需要将 AutoSearchSource 枚举转换为 String 来进行比较
+                            let provider_name = Into::<&'static str>::into(provider).to_string();
+                            
+                            // 检查当前提供商是否已经在用户的选择列表中
+                            let mut is_selected = self.temp_edit_settings.auto_search_provider_subset.contains(&provider_name);
+                            
+                            if group_ui.checkbox(&mut is_selected, provider.display_name()).changed() {
+                                if is_selected {
+                                    // 如果用户刚刚勾选了它，就添加到列表中
+                                    self.temp_edit_settings.auto_search_provider_subset.push(provider_name);
+                                } else {
+                                    // 如果用户刚刚取消了勾选，就从列表中移除
+                                    self.temp_edit_settings.auto_search_provider_subset.retain(|p| p != &provider_name);
+                                }
+                            }
+                        }
+                    });
+                });
 
+                ui.add_space(10.0);
+                ui.separator();
                 ui.add_space(10.0);
 
                 ui.separator();
@@ -635,54 +603,6 @@ impl UniLyricApp {
                 ui.strong("自动删除元数据行设置");
                 ui.checkbox(&mut self.temp_edit_settings.enable_online_lyric_stripping, "基于关键词的移除");
 
-                // 关键词移除的详细配置 (只有当总开关启用时才显示)
-                ui.add_enabled_ui(self.temp_edit_settings.enable_online_lyric_stripping, |enabled_ui| {
-                    enabled_ui.collapsing("关键词移除规则设置", |rule_ui| { // 使用可折叠区域
-                        rule_ui.add_space(5.0);
-                        rule_ui.label("要移除的开头关键词（冒号已自动添加）：");
-
-                        let mut keywords_multiline_edit = self.temp_edit_settings.stripping_keywords.join("\n");
-                        egui::ScrollArea::vertical().id_salt("stripping_keywords_scroll_area").max_height(80.0).show(rule_ui, |scroll_ui| {
-                            if scroll_ui.add(
-                                TextEdit::multiline(&mut keywords_multiline_edit)
-                                    .desired_width(f32::INFINITY)
-                                    .hint_text("例如：\n作曲\n作词\n编曲")
-                            ).changed() {
-                                self.temp_edit_settings.stripping_keywords = keywords_multiline_edit
-                                    .lines()
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-                            }
-                        });
-                        rule_ui.checkbox(&mut self.temp_edit_settings.stripping_keyword_case_sensitive, "区分大小写");
-
-                    });
-                });
-                ui.add_space(5.0);
-
-                ui.checkbox(&mut self.temp_edit_settings.enable_ttml_regex_stripping, "基于正则表达式的移除")
-                    .on_hover_text("如果某一行的内容匹配任何一个正则表达式，该行将被移除。");
-
-                ui.add_enabled_ui(self.temp_edit_settings.enable_ttml_regex_stripping, |enabled_regex_ui| {
-                     enabled_regex_ui.collapsing("正则表达式移除规则设置", |regex_rule_ui| { // 使用可折叠区域
-                        regex_rule_ui.add_space(5.0);
-                        regex_rule_ui.label("要移除的行匹配的正则表达式（每行一个）：");
-                        let mut regexes_multiline_edit = self.temp_edit_settings.ttml_stripping_regexes.join("\n");
-                        egui::ScrollArea::vertical().id_salt("stripping_regexes_scroll_area").max_height(80.0).show(regex_rule_ui, |scroll_ui| {
-                            if scroll_ui.add(
-                                TextEdit::multiline(&mut regexes_multiline_edit)
-                                    .desired_width(f32::INFINITY)
-                            ).changed() {
-                                self.temp_edit_settings.ttml_stripping_regexes = regexes_multiline_edit
-                                    .lines()
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect();
-                            }
-                        });
-                    });
-                });
 
                 ui.separator();
                 ui.add_space(10.0);
@@ -838,7 +758,8 @@ impl UniLyricApp {
             if scroll_ui.button("添加新元数据").clicked() {
                 // 为新条目生成一个相对唯一的ID
                 let new_entry_id_num =
-                    self.editable_metadata.len() as u32 + rand::rng().random::<u32>();
+                    self.editable_metadata.len() as u32 + rand::thread_rng().r#gen::<u32>();
+
                 let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
                 self.editable_metadata.push(EditableMetadataEntry {
                     key: format!("新键_{}", new_entry_id_num % 100), // 默认键名
@@ -859,10 +780,8 @@ impl UniLyricApp {
             self.editable_metadata.remove(idx_del);
         }
 
-        // 如果元数据在本帧内发生任何变化（编辑、添加、删除、更改固定状态）
         if metadata_changed_this_frame {
-            // 调用函数将UI中的可编辑列表同步回内部的 MetadataStore，并触发一次转换以更新输出
-            self.sync_store_from_editable_list_and_trigger_conversion();
+            self.handle_convert();
         }
 
         // 窗口底部的关闭按钮
@@ -1007,6 +926,7 @@ impl UniLyricApp {
         let mut clear_action_triggered = false;
         let mut import_action_triggered = false;
         let mut text_edited_this_frame = false;
+        let is_translation_panel = true;
 
         let title = "翻译 (LRC)";
         let lrc_is_currently_considered_active = self.loaded_translation_lrc.is_some()
@@ -1017,10 +937,7 @@ impl UniLyricApp {
         ui.separator();
 
         ui.horizontal(|button_strip_ui| {
-            let main_lyrics_exist_for_merge = self
-                .parsed_ttml_paragraphs
-                .as_ref()
-                .is_some_and(|p| !p.is_empty());
+            let main_lyrics_exist_for_merge = self.parsed_lyric_data.as_ref().is_some();
             let import_enabled = main_lyrics_exist_for_merge && !self.conversion_in_progress;
             let import_button_widget = egui::Button::new("导入");
             let mut import_button_response =
@@ -1091,8 +1008,8 @@ impl UniLyricApp {
                             let _ = writeln!(
                                 reconstructed_display_text,
                                 "{}{}",
-                                crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
-                                lrc_line.text
+                                format_lrc_time_ms(lrc_line.start_ms),
+                                lrc_line.line_text.as_deref().unwrap_or_default()
                             );
                         }
                         DisplayLrcLine::Raw { original_text } => {
@@ -1109,9 +1026,9 @@ impl UniLyricApp {
             }
 
             if self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty())
+                .is_some_and(|p| !p.lines.is_empty())
             {
                 self.handle_convert();
             }
@@ -1122,68 +1039,47 @@ impl UniLyricApp {
             self.display_translation_lrc_output.clear();
             log::info!("已清除翻译 LRC (通过UI按钮)。");
             if self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty())
+                .is_some_and(|p| !p.lines.is_empty())
             {
                 self.handle_convert();
             }
         }
 
         if text_edited_this_frame {
-            match crate::lrc_parser::parse_lrc_text_to_lines(&self.display_translation_lrc_output) {
-                Ok((parsed_display_lines, _bilingual_translations, _parsed_meta)) => {
-                    // 接收三个值
-                    self.loaded_translation_lrc = Some(parsed_display_lines.clone());
-                    let mut reconstructed_text = String::new();
-                    for line_entry in parsed_display_lines {
-                        match line_entry {
-                            DisplayLrcLine::Parsed(lrc_line) => {
-                                let _ = writeln!(
-                                    reconstructed_text,
-                                    "{}{}",
-                                    crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
-                                    lrc_line.text
-                                );
-                            }
-                            DisplayLrcLine::Raw { original_text } => {
-                                let _ = writeln!(reconstructed_text, "{original_text}");
-                            }
-                        }
+            // 使用核心库的LRC解析器
+            match lyrics_helper_rs::converter::parsers::lrc_parser::parse_lrc(
+                &self.display_translation_lrc_output,
+            ) {
+                Ok(parsed_data) => {
+                    // 将解析出的行转换为UI需要的 DisplayLrcLine 格式
+                    let display_lines = parsed_data
+                        .lines
+                        .into_iter()
+                        .map(DisplayLrcLine::Parsed)
+                        .collect();
+
+                    // 根据面板类型，更新对应的状态字段
+                    if is_translation_panel {
+                        // (你需要一个布尔值来区分)
+                        self.loaded_translation_lrc = Some(display_lines);
+                    } else {
+                        self.loaded_romanization_lrc = Some(display_lines);
                     }
-                    self.display_translation_lrc_output =
-                        reconstructed_text.trim_end_matches('\n').to_string();
-                    if !self.display_translation_lrc_output.is_empty() {
-                        self.display_translation_lrc_output.push('\n');
-                    }
-                    log::debug!(
-                        "[UI Edit] 翻译LRC文本已编辑. Parsed into: {:?}. Triggering convert.",
-                        self.loaded_translation_lrc
-                    );
                 }
                 Err(e) => {
-                    self.loaded_translation_lrc = None;
-                    log::warn!(
-                        "[UI Edit] 编辑的翻译LRC文本解析器返回错误: {e}. 关联的LRC数据已清除."
-                    );
-                    self.toasts.add(egui_toast::Toast {
-                        text: format!("翻译LRC内容解析错误: {e}").into(),
-                        kind: egui_toast::ToastKind::Error,
-                        options: egui_toast::ToastOptions::default()
-                            .duration_in_seconds(4.0)
-                            .show_icon(true),
-                        style: Default::default(),
-                    });
+                    // 解析失败
+                    if is_translation_panel {
+                        self.loaded_translation_lrc = None;
+                    } else {
+                        self.loaded_romanization_lrc = None;
+                    }
+                    log::warn!("[UI Edit] LRC文本解析失败: {e}");
                 }
             }
-            if self
-                .parsed_ttml_paragraphs
-                .as_ref()
-                .is_some_and(|p| !p.is_empty())
-            {
-                log::debug!("[UI Edit] 翻译LRC编辑后，触发 handle_convert");
-                self.handle_convert();
-            }
+            // 触发主转换流程以合并新的LRC数据
+            self.handle_convert();
         }
     }
 
@@ -1192,6 +1088,7 @@ impl UniLyricApp {
         let mut clear_action_triggered = false;
         let mut import_action_triggered = false;
         let mut text_edited_this_frame = false;
+        let is_translation_panel = false;
 
         let title = "罗马音 (LRC)";
         let lrc_is_currently_considered_active = self.loaded_romanization_lrc.is_some()
@@ -1203,9 +1100,9 @@ impl UniLyricApp {
 
         ui.horizontal(|button_strip_ui| {
             let main_lyrics_exist_for_merge = self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty());
+                .is_some_and(|p| !p.lines.is_empty());
             let import_enabled = main_lyrics_exist_for_merge && !self.conversion_in_progress;
             let import_button_widget = egui::Button::new("导入");
             let mut import_button_response =
@@ -1276,8 +1173,8 @@ impl UniLyricApp {
                             let _ = writeln!(
                                 reconstructed_display_text,
                                 "{}{}",
-                                crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
-                                lrc_line.text
+                                format_lrc_time_ms(lrc_line.start_ms),
+                                lrc_line.line_text.as_deref().unwrap_or_default()
                             );
                         }
                         DisplayLrcLine::Raw { original_text } => {
@@ -1294,9 +1191,9 @@ impl UniLyricApp {
             }
 
             if self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty())
+                .is_some_and(|p| !p.lines.is_empty())
             {
                 self.handle_convert();
             }
@@ -1307,47 +1204,33 @@ impl UniLyricApp {
             self.display_romanization_lrc_output.clear();
             log::info!("已清除罗马音 LRC (通过UI按钮)。");
             if self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty())
+                .is_some_and(|p| !p.lines.is_empty())
             {
                 self.handle_convert();
             }
         }
 
         if text_edited_this_frame {
-            match crate::lrc_parser::parse_lrc_text_to_lines(&self.display_romanization_lrc_output)
-            {
-                Ok((parsed_display_lines, _bilingual_translations, _parsed_meta)) => {
-                    self.loaded_romanization_lrc = Some(parsed_display_lines.clone());
+            match lrc_parser::parse_lrc(&self.display_romanization_lrc_output) {
+                Ok(parsed_data) => {
+                    // 将解析出的行转换为UI需要的 DisplayLrcLine 格式
+                    let display_lines = parsed_data
+                        .lines
+                        .into_iter()
+                        .map(DisplayLrcLine::Parsed)
+                        .collect();
 
-                    let mut reconstructed_text = String::new();
-                    for line_entry in parsed_display_lines {
-                        match line_entry {
-                            DisplayLrcLine::Parsed(lrc_line) => {
-                                let _ = writeln!(
-                                    reconstructed_text,
-                                    "{}{}",
-                                    crate::utils::format_lrc_time_ms(lrc_line.timestamp_ms),
-                                    lrc_line.text
-                                );
-                            }
-                            DisplayLrcLine::Raw { original_text } => {
-                                let _ = writeln!(reconstructed_text, "{original_text}");
-                            }
-                        }
+                    // 根据面板类型，更新对应的状态字段
+                    if is_translation_panel {
+                        // (你需要一个布尔值来区分)
+                        self.loaded_translation_lrc = Some(display_lines);
+                    } else {
+                        self.loaded_romanization_lrc = Some(display_lines);
                     }
-                    self.display_romanization_lrc_output =
-                        reconstructed_text.trim_end_matches('\n').to_string();
-                    if !self.display_romanization_lrc_output.is_empty() {
-                        self.display_romanization_lrc_output.push('\n');
-                    }
-
-                    log::debug!(
-                        "[UI Edit] 罗马音LRC文本已编辑. Parsed into: {:?}. Triggering convert.",
-                        self.loaded_romanization_lrc
-                    );
                 }
+
                 Err(e) => {
                     self.loaded_romanization_lrc = None;
                     log::warn!(
@@ -1364,9 +1247,9 @@ impl UniLyricApp {
                 }
             }
             if self
-                .parsed_ttml_paragraphs
+                .parsed_lyric_data
                 .as_ref()
-                .is_some_and(|p| !p.is_empty())
+                .is_some_and(|p| !p.lines.is_empty())
             {
                 log::debug!("[UI Edit] 罗马音LRC编辑后，触发 handle_convert");
                 self.handle_convert();
@@ -1420,564 +1303,6 @@ impl UniLyricApp {
         });
     }
 
-    /// 绘制 QQ 音乐歌词下载的模态窗口。
-    pub fn draw_qqmusic_download_modal_window(&mut self, ctx: &egui::Context) {
-        if self.show_qqmusic_download_window {
-            // 如果需要显示此窗口
-            let mut is_open = self.show_qqmusic_download_window; // 控制窗口打开状态
-
-            egui::Window::new("从QQ音乐下载歌词")
-                .open(&mut is_open) // 绑定状态，允许通过标题栏关闭
-                .collapsible(false) // 不允许折叠
-                .resizable(false) // 不允许调整大小
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO) // 窗口居中显示
-                .show(ctx, |ui| {
-                    // 窗口内容
-                    ui.set_min_width(300.0); // 最小宽度
-
-                    ui.vertical_centered_justified(|ui_vc| {
-                        // 垂直居中对齐内部元素
-                        ui_vc.add_space(5.0);
-                        ui_vc.label("输入歌曲名称：");
-                        ui_vc.add_space(5.0);
-                        // 搜索查询文本框
-                        let response = ui_vc.add_sized(
-                            [ui_vc.available_width() * 0.9, 0.0], // 占据90%可用宽度
-                            egui::TextEdit::singleline(&mut self.qqmusic_query)
-                                .hint_text("例如：歌曲名 - 歌手"),
-                        );
-                        // 如果在文本框失去焦点且按下了回车键，并且查询非空，则触发下载
-                        if response.lost_focus()
-                            && response.ctx.input(|i| i.key_pressed(egui::Key::Enter))
-                            && !self.qqmusic_query.trim().is_empty()
-                        {
-                            let download_status_locked = self.qq_download_state.lock().unwrap();
-                            if !matches!(*download_status_locked, QqMusicDownloadState::Downloading)
-                            {
-                                // 避免重复触发
-                                drop(download_status_locked); // 释放锁
-                                self.trigger_qqmusic_download(); // 调用下载处理函数
-                            }
-                        }
-                        ui_vc.add_space(10.0);
-                    });
-
-                    // 根据下载状态显示加载动画或按钮
-                    let download_status_locked = self.qq_download_state.lock().unwrap();
-                    let is_downloading =
-                        matches!(&*download_status_locked, QqMusicDownloadState::Downloading);
-
-                    if is_downloading {
-                        // 如果正在下载
-                        drop(download_status_locked); // 释放锁以允许UI更新
-                        ui.horizontal(|ui_s| {
-                            ui_s.spinner(); // 显示加载动画
-                            ui_s.label("正在下载QRC歌词...");
-                        });
-                    } else {
-                        // 如果未在下载
-                        drop(download_status_locked);
-                        let mut trigger_download_button = false;
-                        ui.vertical_centered(|ui_centered_button| {
-                            // 按钮居中
-                            if ui_centered_button.button("搜索并载入").clicked() {
-                                trigger_download_button = true;
-                            }
-                        });
-                        if trigger_download_button {
-                            // 如果点击了按钮
-                            if !self.qqmusic_query.trim().is_empty() {
-                                self.trigger_qqmusic_download();
-                            } else {
-                                log::warn!("[Unilyric] QQ音乐搜索：查询为空。");
-                            }
-                        }
-                    }
-                    ui.add_space(5.0);
-                });
-            // 如果窗口被关闭 (例如通过标题栏的关闭按钮)
-            if !is_open {
-                self.show_qqmusic_download_window = false;
-            }
-        }
-    }
-
-    /// 绘制酷狗音乐KRC歌词下载的模态窗口。
-    /// (逻辑与 draw_qqmusic_download_modal_window 非常相似)
-    pub fn draw_kugou_download_modal_window(&mut self, ctx: &egui::Context) {
-        if self.show_kugou_download_window {
-            let mut is_open = self.show_kugou_download_window;
-
-            egui::Window::new("从酷狗音乐下载歌词")
-                .open(&mut is_open)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.set_min_width(300.0);
-
-                    ui.vertical_centered_justified(|ui_vc| {
-                        ui_vc.add_space(5.0);
-                        ui_vc.label("输入歌曲名称：");
-                        ui_vc.add_space(5.0);
-                        let response = ui_vc.add_sized(
-                            [ui_vc.available_width() * 0.9, 0.0],
-                            egui::TextEdit::singleline(&mut self.kugou_query)
-                                .hint_text("例如：歌曲名 - 歌手"),
-                        );
-                        let enter_pressed = ui_vc.ctx().input(|i| i.key_pressed(egui::Key::Enter));
-                        if response.lost_focus()
-                            && enter_pressed
-                            && !self.kugou_query.trim().is_empty()
-                        {
-                            let download_status_locked = self.kugou_download_state.lock().unwrap();
-                            if !matches!(*download_status_locked, KrcDownloadState::Downloading) {
-                                drop(download_status_locked);
-                                self.trigger_kugou_download();
-                            }
-                        }
-                        ui_vc.add_space(10.0);
-                    });
-
-                    let download_status_locked = self.kugou_download_state.lock().unwrap();
-                    let is_downloading =
-                        matches!(&*download_status_locked, KrcDownloadState::Downloading);
-
-                    if is_downloading {
-                        drop(download_status_locked);
-                        ui.horizontal(|ui_s| {
-                            ui_s.spinner();
-                            ui_s.label("正在下载KRC歌词...");
-                        });
-                    } else {
-                        drop(download_status_locked);
-                        let mut trigger_download_now = false;
-                        ui.vertical_centered(|ui_centered_button| {
-                            if ui_centered_button.button("搜索并载入").clicked() {
-                                trigger_download_now = true;
-                            }
-                        });
-                        if trigger_download_now {
-                            if !self.kugou_query.trim().is_empty() {
-                                self.trigger_kugou_download();
-                            } else {
-                                log::warn!("[Unilyric] 酷狗音乐搜索：查询为空。");
-                            }
-                        }
-                    }
-                    ui.add_space(5.0);
-                });
-
-            if !is_open {
-                self.show_kugou_download_window = false;
-                // 如果窗口关闭时不是因为成功或错误，则重置状态为 Idle
-                let mut download_status_locked = self.kugou_download_state.lock().unwrap();
-                if !matches!(
-                    *download_status_locked,
-                    KrcDownloadState::Downloading
-                        | KrcDownloadState::Success(_)
-                        | KrcDownloadState::Error(_)
-                ) {
-                    *download_status_locked = KrcDownloadState::Idle;
-                }
-            }
-        }
-    }
-
-    /// 绘制网易云音乐歌词下载的模态窗口。
-    /// (逻辑与前两个下载窗口类似，但状态枚举不同)
-    pub fn draw_netease_download_modal_window(&mut self, ctx: &egui::Context) {
-        if self.show_netease_download_window {
-            let mut is_open = self.show_netease_download_window;
-
-            egui::Window::new("从网易云音乐下载歌词")
-                .open(&mut is_open)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.set_min_width(320.0);
-
-                    let enter_pressed_on_this_frame =
-                        ctx.input(|i| i.key_pressed(egui::Key::Enter));
-                    ui.vertical_centered_justified(|ui_vc| {
-                        ui_vc.add_space(5.0);
-                        ui_vc.label("输入歌曲名称：");
-                        ui_vc.add_space(5.0);
-                        let response = ui_vc.add_sized(
-                            [ui_vc.available_width() * 0.9, 0.0],
-                            egui::TextEdit::singleline(&mut self.netease_query)
-                                .hint_text("例如：歌曲名 - 歌手"),
-                        );
-
-                        if response.lost_focus()
-                            && enter_pressed_on_this_frame
-                            && !self.netease_query.trim().is_empty()
-                        {
-                            let download_status_locked =
-                                self.netease_download_state.lock().unwrap();
-                            // 避免在正在初始化客户端或下载时重复触发
-                            if !matches!(
-                                *download_status_locked,
-                                NeteaseDownloadState::Downloading
-                                    | NeteaseDownloadState::InitializingClient
-                            ) {
-                                drop(download_status_locked);
-                                self.trigger_netease_download();
-                            }
-                        }
-                        ui_vc.add_space(10.0);
-                    });
-
-                    // 获取当前下载状态用于显示
-                    let download_status_locked = self.netease_download_state.lock().unwrap();
-                    let current_status_display = match &*download_status_locked {
-                        NeteaseDownloadState::Idle => "空闲".to_string(),
-                        NeteaseDownloadState::InitializingClient => "正在准备下载...".to_string(),
-                        NeteaseDownloadState::Downloading => "正在下载歌词...".to_string(),
-                        NeteaseDownloadState::Success(_) => "下载成功".to_string(), // 成功后窗口通常会关闭，但保留状态显示
-                        NeteaseDownloadState::Error(e) => format!("错误: {e:.50}"), // 显示错误信息的前50个字符
-                    };
-
-                    let is_busy = matches!(
-                        &*download_status_locked,
-                        NeteaseDownloadState::Downloading
-                            | NeteaseDownloadState::InitializingClient
-                    );
-
-                    if is_busy {
-                        // 如果正在初始化或下载
-                        drop(download_status_locked);
-                        ui.horizontal(|ui_s| {
-                            ui_s.spinner();
-                            ui_s.label(current_status_display); // 显示当前状态文本
-                        });
-                    } else {
-                        // 如果空闲、成功或错误
-                        drop(download_status_locked);
-                        let mut trigger_download_now = false;
-                        ui.vertical_centered(|ui_centered_button| {
-                            // 按钮在查询非空时才可用
-                            if ui_centered_button
-                                .add_enabled(
-                                    !self.netease_query.trim().is_empty(),
-                                    egui::Button::new("下载并载入"),
-                                )
-                                .clicked()
-                            {
-                                trigger_download_now = true;
-                            }
-                        });
-                        if trigger_download_now {
-                            self.trigger_netease_download();
-                        }
-                    }
-                    ui.add_space(5.0);
-                });
-
-            if !is_open {
-                self.show_netease_download_window = false;
-                // 如果窗口关闭时不是因为成功，且不是正在进行中，则重置状态为 Idle
-                let mut download_status_locked = self.netease_download_state.lock().unwrap();
-                if !matches!(*download_status_locked, NeteaseDownloadState::Success(_))
-                    && !matches!(
-                        *download_status_locked,
-                        NeteaseDownloadState::Downloading
-                            | NeteaseDownloadState::InitializingClient
-                    )
-                {
-                    *download_status_locked = NeteaseDownloadState::Idle;
-                }
-            }
-        }
-    }
-
-    pub fn draw_amll_download_modal_window(&mut self, ctx: &egui::Context) {
-        if !self.show_amll_download_window {
-            return;
-        }
-
-        let mut is_window_open = self.show_amll_download_window;
-        let _ = Window::new("从 AMLL TTML Database 获取歌词")
-            .open(&mut is_window_open)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .resizable(true)
-            .collapsible(false)
-            .min_height(600.0)
-            .min_width(400.0)
-            .show(ctx, |ui| {
-                let index_state_clone = self.amll_index_download_state.lock().unwrap().clone();
-
-                // 按钮文本和操作逻辑根据状态变化
-                let mut button_text = "加载/刷新索引".to_string();
-                let mut hover_text = "检查更新并加载本地或远程索引".to_string();
-                let mut force_refresh_on_click = false;
-                let mut check_update_on_click = false;
-
-                match &index_state_clone {
-                    AmllIndexDownloadState::Idle => {
-                        ui.weak("状态: 未初始化/未知");
-                        button_text = "检查更新并加载索引".to_string();
-                        check_update_on_click = true; // Idle 时优先检查更新
-                    }
-                    AmllIndexDownloadState::CheckingForUpdate => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.add(Spinner::new());
-                            h_ui.label("正在检查更新...");
-                        });
-                        // 检查时禁用按钮或不显示
-                    }
-                    AmllIndexDownloadState::UpdateAvailable(remote_head) => {
-                        ui.colored_label(
-                            Color32::GOLD,
-                            format!(
-                                "有可用更新 (新 HEAD: {})",
-                                remote_head.chars().take(7).collect::<String>()
-                            ),
-                        );
-                        button_text = "下载更新".to_string();
-                        hover_text = format!(
-                            "下载版本 {}",
-                            remote_head.chars().take(7).collect::<String>()
-                        );
-                    }
-                    AmllIndexDownloadState::Downloading(Some(downloading_head)) => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.add(Spinner::new());
-                            h_ui.label(format!(
-                                "正在下载索引 (HEAD: {})...",
-                                downloading_head.chars().take(7).collect::<String>()
-                            ));
-                        });
-                    }
-                    AmllIndexDownloadState::Downloading(None) => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.add(Spinner::new());
-                            h_ui.label("正在下载索引 (获取最新 HEAD)...");
-                        });
-                    }
-                    AmllIndexDownloadState::Success(loaded_head) => {
-                        let index_len = self.amll_index.lock().unwrap().len();
-                        ui.colored_label(Color32::GREEN, format!("索引已加载 ({index_len} 条)"));
-                        ui.label(format!(
-                            "当前版本 HEAD: {}",
-                            loaded_head.chars().take(7).collect::<String>()
-                        ));
-
-                        // 提供两个按钮：检查更新 和 强制刷新
-                        if ui.button("检查是否有新版本").clicked() {
-                            check_update_on_click = true;
-                        }
-                        ui.add_space(5.0);
-                        button_text = "强制刷新本地索引".to_string();
-                        hover_text = "忽略本地缓存和版本检查，直接下载最新索引".to_string();
-                        force_refresh_on_click = true;
-                    }
-                    AmllIndexDownloadState::Error(err_msg) => {
-                        ui.colored_label(
-                            ui.style().visuals.error_fg_color,
-                            format!("操作失败: {err_msg}"),
-                        );
-                        button_text = "重试加载/检查更新".to_string();
-                        check_update_on_click = true; // 出错后重试也应该先检查
-                    }
-                }
-
-                // 统一处理按钮点击
-                if !matches!(
-                    index_state_clone,
-                    AmllIndexDownloadState::CheckingForUpdate
-                        | AmllIndexDownloadState::Downloading(_)
-                ) && !button_text.is_empty()
-                {
-                    // 只有在有按钮文本时才显示
-                    if ui.button(&button_text).on_hover_text(&hover_text).clicked() {
-                        if check_update_on_click {
-                            self.check_for_amll_index_update();
-                        } else {
-                            // 包括 force_refresh_on_click 和 UpdateAvailable 的情况
-                            self.trigger_amll_index_download(force_refresh_on_click);
-                        }
-                    }
-                }
-
-                ui.add_space(10.0);
-
-                // 搜索部分 (只有在索引成功加载后才应完全可用)
-                let search_enabled =
-                    matches!(index_state_clone, AmllIndexDownloadState::Success(_));
-                ui.add_enabled_ui(search_enabled, |enabled_ui| {
-                    enabled_ui.strong("搜索歌词:");
-                    enabled_ui.separator();
-                    enabled_ui.horizontal(|h_ui| {
-                        h_ui.label("搜索字段:");
-                        ComboBox::from_id_salt("amll_search_field_combo_modal") // 确保 ID 唯一
-                            .selected_text(self.amll_selected_search_field.display_name())
-                            .show_ui(h_ui, |combo_ui| {
-                                for field_option in AmllSearchField::all_fields() {
-                                    combo_ui.selectable_value(
-                                        &mut self.amll_selected_search_field,
-                                        field_option.clone(),
-                                        field_option.display_name(),
-                                    );
-                                }
-                            });
-                    });
-
-                    enabled_ui.horizontal(|h_ui| {
-                        h_ui.label("搜索词:");
-                        let query_input = TextEdit::singleline(&mut self.amll_search_query)
-                            .hint_text("输入搜索内容...")
-                            .desired_width(f32::INFINITY);
-                        let query_response = h_ui.add(query_input);
-
-                        if query_response.lost_focus()
-                            && h_ui.input(|i: &egui::InputState| i.key_pressed(egui::Key::Enter))
-                            || query_response.changed() && search_enabled
-                        // 确保仅在启用时响应变化
-                        {
-                            if !self.amll_search_query.trim().is_empty() {
-                                self.amll_search_results.lock().unwrap().clear();
-                                *self.amll_ttml_download_state.lock().unwrap() =
-                                    AmllTtmlDownloadState::Idle;
-                                self.trigger_amll_lyrics_search_and_download(None);
-                            } else {
-                                self.amll_search_results.lock().unwrap().clear();
-                            }
-                        }
-                    });
-                    if enabled_ui.button("搜索").clicked()
-                        && !self.amll_search_query.trim().is_empty()
-                    {
-                        self.amll_search_results.lock().unwrap().clear();
-                        *self.amll_ttml_download_state.lock().unwrap() =
-                            AmllTtmlDownloadState::Idle;
-                        self.trigger_amll_lyrics_search_and_download(None);
-                    }
-                });
-
-                ui.add_space(10.0);
-
-                let ttml_dl_state = self.amll_ttml_download_state.lock().unwrap().clone();
-                match ttml_dl_state {
-                    AmllTtmlDownloadState::SearchingIndex => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.add(Spinner::new());
-                            h_ui.label("正在搜索索引...");
-                        });
-                    }
-                    AmllTtmlDownloadState::DownloadingTtml => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.add(Spinner::new());
-                            h_ui.label("正在下载 TTML 文件...");
-                        });
-                    }
-                    AmllTtmlDownloadState::Error(ref err_msg) => {
-                        ui.colored_label(
-                            ui.style().visuals.error_fg_color,
-                            format!("TTML操作失败: {err_msg}"),
-                        );
-                    }
-                    _ => {}
-                }
-                ui.strong("搜索结果:");
-                let search_results_count = self.amll_search_results.lock().unwrap().len();
-                if !self.amll_search_query.trim().is_empty()
-                    && ttml_dl_state == AmllTtmlDownloadState::Idle
-                    && search_enabled
-                {
-                    ui.label(format!("找到 {search_results_count} 条结果。"));
-                }
-                ui.separator();
-                ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .max_height(200.0)
-                    .show(ui, |scroll_ui| {
-                        if !search_enabled {
-                            scroll_ui.weak("请先成功加载索引以启用搜索功能。");
-                            return;
-                        }
-                        let search_results_vec = {
-                            let search_results_lock = self.amll_search_results.lock().unwrap();
-                            search_results_lock.clone()
-                        };
-                        if search_results_vec.is_empty() {
-                            if !self.amll_search_query.trim().is_empty()
-                                && ttml_dl_state == AmllTtmlDownloadState::Idle
-                            {
-                            } else if self.amll_search_query.trim().is_empty() {
-                                scroll_ui.label("请输入关键字以搜索");
-                            }
-                        } else {
-                            for (idx, entry) in search_results_vec.iter().enumerate() {
-                                let mut display_song_name = "未知歌曲".to_string();
-                                let mut display_artists = "未知艺术家".to_string();
-                                for (key, values) in &entry.metadata {
-                                    if key == AmllSearchField::MusicName.to_key_string()
-                                        && !values.is_empty()
-                                    {
-                                        display_song_name = values.join("/");
-                                    } else if key == AmllSearchField::Artists.to_key_string()
-                                        && !values.is_empty()
-                                    {
-                                        display_artists = values.join("/");
-                                    }
-                                }
-                                let display_text =
-                                    format!("{display_song_name} - {display_artists}");
-
-                                if scroll_ui
-                                    .selectable_label(false, display_text)
-                                    .on_hover_text(entry.raw_lyric_file.to_string())
-                                    .clicked()
-                                {
-                                    self.trigger_amll_lyrics_search_and_download(Some(
-                                        entry.clone(),
-                                    ));
-                                }
-                                if idx < search_results_vec.len() - 1 {
-                                    scroll_ui.separator();
-                                }
-                            }
-                        }
-                    });
-            });
-
-        // 处理窗口关闭逻辑
-        if !is_window_open {
-            self.show_amll_download_window = false;
-            let mut ttml_dl_state_lock = self.amll_ttml_download_state.lock().unwrap();
-            if matches!(*ttml_dl_state_lock, AmllTtmlDownloadState::Error(_)) {
-                *ttml_dl_state_lock = AmllTtmlDownloadState::Idle;
-            }
-            // 当窗口关闭时，如果状态是 CheckingForUpdate 或 UpdateAvailable，可能需要重置为 Idle 或上一个稳定状态
-            let mut index_dl_state_lock = self.amll_index_download_state.lock().unwrap();
-            if matches!(
-                *index_dl_state_lock,
-                AmllIndexDownloadState::CheckingForUpdate
-                    | AmllIndexDownloadState::UpdateAvailable(_)
-            ) {
-                // 尝试恢复到基于缓存 HEAD 的 Success 状态，如果不可能则 Idle
-                if let Some(ref cache_p) = self.amll_index_cache_path {
-                    if let Ok(Some(cached_head)) =
-                        crate::amll_lyrics_fetcher::amll_fetcher::load_cached_index_head(cache_p)
-                    {
-                        if !self.amll_index.lock().unwrap().is_empty() {
-                            // 确保索引内容也已加载
-                            *index_dl_state_lock = AmllIndexDownloadState::Success(cached_head);
-                        } else {
-                            *index_dl_state_lock = AmllIndexDownloadState::Idle;
-                        }
-                    } else {
-                        *index_dl_state_lock = AmllIndexDownloadState::Idle;
-                    }
-                } else {
-                    *index_dl_state_lock = AmllIndexDownloadState::Idle;
-                }
-            }
-        }
-    }
-
     /// 绘制输出结果面板的内容。
     pub fn draw_output_panel_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|title_ui| {
@@ -2007,33 +1332,6 @@ impl UniLyricApp {
                     } else {
                         log::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
                     }
-                }
-                btn_ui.add_space(BUTTON_STRIP_SPACING);
-
-                let can_upload_to_db: bool;
-                {
-                    let store_guard = self.metadata_store.lock().unwrap();
-                    let artists_exist_ui = store_guard
-                        .get_multiple_values(&CanonicalMetadataKey::Artist)
-                        .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
-                    let titles_exist_ui = store_guard
-                        .get_multiple_values(&CanonicalMetadataKey::Title)
-                        .is_some_and(|v| !v.is_empty() && v.iter().any(|s| !s.trim().is_empty()));
-
-                    can_upload_to_db = !self.output_text.is_empty()
-                        && self.target_format == LyricFormat::Ttml
-                        && artists_exist_ui
-                        && titles_exist_ui
-                        && !self.ttml_db_upload_in_progress;
-                }
-
-                let upload_button_widget = Button::new("上传到 AMLL-DB");
-                let upload_button_response = btn_ui
-                    .add_enabled(can_upload_to_db, upload_button_widget)
-                    .on_hover_text("将当前TTML歌词上传到dpaste并打开amll-ttml-db的Issue");
-
-                if upload_button_response.clicked() {
-                    self.trigger_ttml_db_upload();
                 }
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
 
@@ -2121,6 +1419,7 @@ impl UniLyricApp {
         ui.heading("AMLL Connector");
         ui.separator();
 
+        // ... (WebSocket 连接状态的UI部分保持不变) ...
         ui.strong("WebSocket 连接:");
 
         let current_status = self.media_connector_status.lock().unwrap().clone();
@@ -2219,7 +1518,7 @@ impl UniLyricApp {
 
         ui.separator();
 
-        // --- SMTC 源选择 UI ---
+        // ... (SMTC 源选择和当前监听信息的UI部分保持不变) ...
         ui.strong("SMTC 源应用:");
         {
             let available_sessions_guard = self.available_smtc_sessions.lock().unwrap();
@@ -2287,8 +1586,6 @@ impl UniLyricApp {
             }
         }
         ui.separator();
-
-        // --- SMTC 当前监听信息 ---
         ui.strong("当前监听 (SMTC):");
         match self.current_media_info.try_lock() {
             Ok(media_info_guard) => {
@@ -2385,51 +1682,56 @@ impl UniLyricApp {
         ui.separator();
 
         ui.strong("自动歌词搜索状态:");
-        let sources_config: Vec<SourceConfigTuple> = vec![
+        let sources_config = vec![
             (
                 AutoSearchSource::LocalCache,
-                Arc::clone(&self.local_cache_auto_search_status),
+                &self.local_cache_auto_search_status,
                 None,
             ),
             (
                 AutoSearchSource::QqMusic,
-                Arc::clone(&self.qqmusic_auto_search_status), // 克隆 Arc
-                Some(Arc::clone(&self.last_qq_search_result)), // 克隆 Arc
+                &self.qqmusic_auto_search_status,
+                Some(&self.last_qq_search_result),
             ),
             (
                 AutoSearchSource::Kugou,
-                Arc::clone(&self.kugou_auto_search_status), // 克隆 Arc
-                Some(Arc::clone(&self.last_kugou_search_result)), // 克隆 Arc
+                &self.kugou_auto_search_status,
+                Some(&self.last_kugou_search_result),
             ),
             (
                 AutoSearchSource::Netease,
-                Arc::clone(&self.netease_auto_search_status), // 克隆 Arc
-                Some(Arc::clone(&self.last_netease_search_result)), // 克隆 Arc
+                &self.netease_auto_search_status,
+                Some(&self.last_netease_search_result),
             ),
             (
                 AutoSearchSource::AmllDb,
-                Arc::clone(&self.amll_db_auto_search_status), // 克隆 Arc
-                Some(Arc::clone(&self.last_amll_db_search_result)), // 克隆 Arc
+                &self.amll_db_auto_search_status,
+                Some(&self.last_amll_db_search_result),
+            ),
+            (
+                AutoSearchSource::Musixmatch,
+                &self.musixmatch_auto_search_status,
+                Some(&self.last_musixmatch_search_result),
             ),
         ];
-        let mut action_load_lyrics: Option<(ProcessedLyricsSourceData, AutoSearchSource)> = None;
+
+        let mut action_load_lyrics: Option<(AutoSearchSource, FullLyricsResult)> = None;
+        let mut action_refetch: Option<AutoSearchSource> = None; // 【修复】使用一个变量来延迟执行
+
         for (source_enum, status_arc, opt_result_arc) in sources_config {
             ui.horizontal(|item_ui| {
                 item_ui.label(format!("{}:", source_enum.display_name()));
                 let status = status_arc.lock().unwrap().clone();
+
                 item_ui.with_layout(Layout::right_to_left(Align::Center), |right_aligned_ui| {
-                    let mut show_load_button = false;
-                    let mut data_for_load_action_this_iteration: Option<ProcessedLyricsSourceData> =
-                        None;
-                    if source_enum != AutoSearchSource::LocalCache
-                        && let AutoSearchStatus::Success(_) = status
-                        && let Some(result_arc) = &opt_result_arc
-                        && let Some(ref stored_data) = *result_arc.lock().unwrap()
-                    {
-                        show_load_button = true;
-                        data_for_load_action_this_iteration = Some(stored_data.clone());
+                    let mut stored_data_for_load: Option<FullLyricsResult> = None;
+                    if let Some(result_arc) = opt_result_arc {
+                        if let Some(ref data) = *result_arc.lock().unwrap() {
+                            stored_data_for_load = Some(data.clone());
+                        }
                     }
-                    if show_load_button {
+
+                    if let Some(data) = stored_data_for_load {
                         if right_aligned_ui
                             .button("载入")
                             .on_hover_text(format!(
@@ -2437,21 +1739,18 @@ impl UniLyricApp {
                                 source_enum.display_name()
                             ))
                             .clicked()
-                            && let Some(data) = data_for_load_action_this_iteration
                         {
-                            action_load_lyrics = Some((data, source_enum));
+                            action_load_lyrics = Some((source_enum, data));
                         }
                         right_aligned_ui.add_space(4.0);
                     }
-                    if source_enum != AutoSearchSource::LocalCache
-                        && matches!(
-                            status,
-                            AutoSearchStatus::NotFound | AutoSearchStatus::Error(_)
-                        )
-                        && right_aligned_ui.button("重搜").clicked()
-                    {
-                        crate::app_fetch_core::trigger_manual_refetch_for_source(self, source_enum);
+
+                    if source_enum != AutoSearchSource::LocalCache {
+                        if right_aligned_ui.button("重搜").clicked() {
+                            action_refetch = Some(source_enum); // 【修复】不直接调用，而是记录要执行的动作
+                        }
                     }
+
                     let status_display_text = match status {
                         AutoSearchStatus::NotAttempted => "未尝试".to_string(),
                         AutoSearchStatus::Searching => "正在搜索...".to_string(),
@@ -2459,138 +1758,111 @@ impl UniLyricApp {
                         AutoSearchStatus::NotFound => "未找到".to_string(),
                         AutoSearchStatus::Error(_) => "错误".to_string(),
                     };
-                    if matches!(status, AutoSearchStatus::Error(_)) {
-                        right_aligned_ui.colored_label(
-                            right_aligned_ui.visuals().error_fg_color,
-                            status_display_text,
-                        );
-                    } else {
-                        right_aligned_ui.label(status_display_text);
+
+                    if let AutoSearchStatus::Searching = status {
+                        right_aligned_ui.spinner();
                     }
+                    right_aligned_ui.label(status_display_text);
                 });
             });
         }
-        if let Some((data, source)) = action_load_lyrics {
-            self.load_lyrics_from_stored_result(data, source);
+
+        // 【修复】在循环结束后，执行记录下的动作
+        if let Some((source, result)) = action_load_lyrics {
+            self.load_lyrics_from_stored_result(source, result);
+        }
+        if let Some(source) = action_refetch {
+            crate::app_fetch_core::trigger_manual_refetch_for_source(self, source);
+        }
+    }
+
+    /// 绘制统一的歌词搜索/下载窗口。
+    pub fn draw_search_lyrics_window(&mut self, ctx: &egui::Context) {
+        if !self.show_search_window {
+            return;
         }
 
-        ui.strong("AMLL 歌词库索引:");
-        let index_status_clone = self.amll_index_download_state.lock().unwrap().clone();
+        let mut is_open = self.show_search_window;
 
-        let mut show_check_button = false;
-        let mut check_button_text = String::new(); // 初始化为空
-        let mut check_button_hover = String::new(); // 初始化为空
+        let available_rect = ctx.available_rect();
 
-        let mut show_force_refresh_button = false;
-        let force_refresh_button_text = "手动下载索引".to_string();
-        let force_refresh_button_hover = "忽略本地缓存和版本检查，直接下载最新索引".to_string();
-
-        let mut show_download_update_button = false;
-        let mut download_update_button_text = String::new();
-        let mut download_update_button_hover = String::new();
-
-        match &index_status_clone {
-            AmllIndexDownloadState::Idle => {
-                ui.weak("状态: 未初始化/未知");
-                check_button_text = "检查更新并加载索引".to_string();
-                check_button_hover = "检查索引是否有新版本，或加载本地缓存".to_string();
-                show_check_button = true;
-            }
-            AmllIndexDownloadState::CheckingForUpdate => {
+        egui::Window::new("搜索歌词")
+            .open(&mut is_open)
+            .collapsible(false)
+            .resizable(true)
+            .default_width(400.0)
+            .max_width(available_rect.width() * 0.9)
+            .max_height(available_rect.height() * 0.8)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
                 ui.horizontal(|h_ui| {
-                    h_ui.add(Spinner::new());
-                    h_ui.label("检查更新中...");
-                });
-                // 正在检查时不显示任何操作按钮
-            }
-            AmllIndexDownloadState::UpdateAvailable(remote_head) => {
-                ui.colored_label(
-                    Color32::GOLD,
-                    format!(
-                        "有可用更新 (新 HEAD: {})",
-                        remote_head.chars().take(7).collect::<String>()
-                    ),
-                );
-                download_update_button_text = "下载更新".to_string();
-                download_update_button_hover = format!(
-                    "下载版本 {}",
-                    remote_head.chars().take(7).collect::<String>()
-                );
-                show_download_update_button = true;
-                show_force_refresh_button = true;
-            }
-            AmllIndexDownloadState::Downloading(Some(downloading_head)) => {
-                ui.horizontal(|h_ui| {
-                    h_ui.add(Spinner::new());
-                    h_ui.label(format!(
-                        "下载中 ({})...",
-                        downloading_head.chars().take(7).collect::<String>()
-                    ));
-                });
-            }
-            AmllIndexDownloadState::Downloading(None) => {
-                ui.horizontal(|h_ui| {
-                    h_ui.add(Spinner::new());
-                    h_ui.label("下载中 (最新)...");
-                });
-            }
-            AmllIndexDownloadState::Success(loaded_head) => {
-                let index_len = self.amll_index.lock().unwrap().len();
-                ui.colored_label(Color32::GREEN, format!("已加载 ({index_len} 条)"));
-                ui.label(format!(
-                    "当前版本: {}",
-                    loaded_head.chars().take(7).collect::<String>()
-                ));
-                check_button_text = "检查是否有新版本".to_string(); // 成功后，按钮变为检查更新
-                check_button_hover = "检查索引是否有新版本".to_string();
-                show_check_button = true;
-                show_force_refresh_button = true; // 成功加载后，也允许强制刷新
-            }
-            AmllIndexDownloadState::Error(err_msg) => {
-                ui.colored_label(ui.visuals().error_fg_color, "错误");
-                ui.small(err_msg);
-                check_button_text = "重试".to_string();
-                check_button_hover = "再次尝试检查索引更新".to_string();
-                show_check_button = true;
-                show_force_refresh_button = true;
-            }
-        }
+                    let response = h_ui.add(
+                        egui::TextEdit::singleline(&mut self.search_query)
+                            .hint_text("输入歌曲名或“歌曲 - 歌手”")
+                            .desired_width(h_ui.available_width() - 50.0),
+                    );
+                    if response.lost_focus() && h_ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        self.trigger_lyrics_search();
+                    }
 
-        // 按钮的绘制逻辑
-        if show_check_button
-            && !check_button_text.is_empty()
-            && ui
-                .button(&check_button_text)
-                .on_hover_text(&check_button_hover)
-                .clicked()
-        {
-            // "检查更新"、"检查更新并加载索引"、"重试检查更新" 都触发 check_for_amll_index_update
-            self.check_for_amll_index_update();
-        }
+                    if h_ui
+                        .add_enabled(!self.search_in_progress, egui::Button::new("搜索"))
+                        .clicked()
+                    {
+                        self.trigger_lyrics_search();
+                    }
+                });
 
-        if show_download_update_button
-            && !download_update_button_text.is_empty()
-            && ui
-                .button(&download_update_button_text)
-                .on_hover_text(&download_update_button_hover)
-                .clicked()
-        {
-            // 这个按钮只在 UpdateAvailable 状态下出现，所以总是下载特定更新
-            self.trigger_amll_index_download(false);
-        }
+                ui.separator();
 
-        if show_force_refresh_button {
-            // 确保与上一个按钮有间隔，除非上一个按钮没显示
-            if show_check_button || show_download_update_button {
-                ui.add_space(BUTTON_STRIP_SPACING); // 假设 BUTTON_STRIP_SPACING 已定义
-            }
-            if ui
-                .button(&force_refresh_button_text)
-                .on_hover_text(&force_refresh_button_hover)
-                .clicked()
-            {
-                self.trigger_amll_index_download(true);
-            }
+                if self.search_in_progress {
+                    ui.horizontal(|h_ui| {
+                        h_ui.spinner();
+                        h_ui.label("正在搜索...");
+                    });
+                } else if self.download_in_progress {
+                    ui.horizontal(|h_ui| {
+                        h_ui.spinner();
+                        h_ui.label("正在下载歌词...");
+                    });
+                }
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |s_ui| {
+                        if !self.search_results.is_empty() {
+                            for result in self.search_results.clone() {
+                                let full_label = format!(
+                                    "{} - {} ({})",
+                                    result.title,
+                                    result.artists.join("/"),
+                                    result.provider_name
+                                );
+
+                                // 【修复3】为了美观，截断过长的文本，并在悬停时显示完整内容
+                                let mut display_label = full_label.clone();
+                                if display_label.chars().count() > 50 {
+                                    // 限制显示长度为50个字符
+                                    display_label =
+                                        display_label.chars().take(50).collect::<String>() + "...";
+                                }
+
+                                if s_ui
+                                    .button(&display_label)
+                                    .on_hover_text(&full_label)
+                                    .clicked()
+                                {
+                                    self.trigger_lyrics_download(&result);
+                                }
+                            }
+                        } else if !self.search_in_progress && !self.search_query.is_empty() {
+                            s_ui.label("未找到结果。");
+                        }
+                    });
+            });
+
+        if !is_open {
+            self.show_search_window = false;
         }
     }
 }

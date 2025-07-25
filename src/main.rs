@@ -1,77 +1,23 @@
-//
-// 当时写这个项目的时候正赶上 AI 大火，不知不觉就用了大量 AI 润色
-// 到后来就直接全用 AI 生成了
-// 所以这个项目基本充斥着 AI 的代码和注释，不喜勿看
-//
-
-// 这行是一个条件编译属性。
-// 它表示：如果不是在调试模式下编译 (debug_assertions 为 false),
-// 那么将使用 "windows" 子系统。这通常用于在 Windows 上创建没有控制台窗口的 GUI 应用程序。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// 模块声明区域
-// Rust 使用 `mod` 关键字来声明模块。每个模块通常对应一个文件或一个目录。
-// 这些模块包含了应用程序的不同功能部分。
-
-mod types; // 定义应用程序中使用的各种数据类型。
-#[macro_use] // 这个属性表示 `utils` 模块中定义的宏将被导入到当前作用域，可以直接使用。
-mod utils; // 包含一些工具函数或宏，例如 `log_info!` 可能在这里定义。
+mod types;
+#[macro_use]
+mod utils;
 mod amll_connector;
-mod amll_lyrics_fetcher;
-mod app; // 包含应用程序核心逻辑和 UI 定义的模块。
+mod app;
 mod app_definition;
 pub mod app_fetch_core;
-mod app_settings; // 用于管理应用程序设置的模块。
-mod app_ui; // 包含应用程序用户界面 (UI) 相关逻辑的模块。
+mod app_settings;
+mod app_ui;
 mod app_update;
-mod ass_generator; // 用于生成 ASS 字幕格式的模块。
-mod ass_parser; // 用于解析 ASS (Advanced SubStation Alpha) 字幕格式的模块。
-mod chinese_conversion_processor;
 mod io;
-mod json_parser; // 用于解析 JSON 数据的模块。
-mod krc_generator; // 用于生成 KRC 歌词格式的模块。
-mod krc_parser; // 用于解析 KRC (酷狗歌词) 格式的模块。
-mod kugou_lyrics_fetcher; // 用于从酷狗音乐获取歌词的模块。
-mod logger; // 用于日志记录的模块。
-mod lqe_generator; // 用于生成 LQE 歌词格式的模块。
-mod lqe_parser; // 用于解析 LQE 歌词格式的模块。
-mod lqe_to_ttml_data; // 用于将 LQE 格式数据转换为 TTML 格式数据的模块。
-mod lrc_generator; // 用于生成 LRC 歌词格式的模块。
-mod lrc_parser; // 用于解析 LRC (LyRiCs) 歌词格式的模块。
-mod lyric_processor;
-mod lyricify_lines_generator; // 用于生成 Lyricify 逐行歌词格式的模块。
-mod lyricify_lines_parser; // 用于解析 Lyricify 逐行歌词格式的模块。
-mod lyricify_lines_to_ttml_data; // 用于将 Lyricify 逐行歌词格式数据转换为 TTML 格式数据的模块。
-mod lyrics_merger;
-mod lys_generator; // 用于生成 LYS 格式的模块。
-mod lys_parser; // 用于解析 LYS 格式的模块。
-mod lys_to_ttml_data; // 用于将 LYS 格式数据转换为 TTML 格式数据的模块。
-mod metadata_processor; // 用于处理元数据（例如歌曲信息）的模块。
-mod netease_lyrics_fetcher; // 用于从网易云音乐获取歌词的模块。
-mod qq_lyrics_fetcher; // 用于从 QQ 音乐获取歌词的模块。
-mod qrc_generator; // 用于生成 QRC 格式的模块。
-mod qrc_parser; // 用于解析 QRC (QQ 音乐歌词) 格式的模块。
-mod qrc_to_ttml_data; // 用于将 QRC 格式数据转换为 TTML 格式数据的模块。
-mod spl_generator; // 用于生成 SPL 格式的模块。
-mod spl_parser; // 用于解析 SPL 格式的模块。
-mod spl_to_ttml_data; // 用于将 SPL 格式数据转换为 TTML 格式数据的模块。
-mod ttml_generator; // 用于生成 TTML 字幕格式的模块。
-mod ttml_parser; // 用于解析 TTML (Timed Text Markup Language) 字幕格式的模块。
+mod logger;
 mod websocket_server;
-mod yrc_generator; // 用于生成 YRC (网易云音乐歌词) 格式的模块。
-mod yrc_parser; // 用于解析 YRC (网易云音乐歌词) 格式的模块。
-mod yrc_to_ttml_data; // 用于将 YRC 格式数据转换为 TTML 格式数据的模块。
 
-// 从 `app_settings` 模块导入 `AppSettings` 结构体。
 use app_settings::AppSettings;
-// 从标准库的 `sync::mpsc` 模块导入必要的组件。
-// `mpsc` 代表 "multiple producer, single consumer" (多生产者，单消费者) 队列，常用于线程间通信。
 use std::sync::mpsc;
 
-// Rust 程序的入口点。
 fn main() {
-    // 加载应用程序设置。
-    // `AppSettings::load()` 从配置文件或其他持久化存储中读取设置。
     let app_settings = AppSettings::load();
 
     // 创建一个用于在 UI 线程和其他线程之间传递日志条目的通道。

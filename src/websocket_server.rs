@@ -1,5 +1,3 @@
-// 文件: src/websocket_server.rs
-
 use futures_util::{SinkExt, StreamExt};
 use log::{error, info, warn};
 use serde::Serialize;
@@ -44,7 +42,6 @@ pub enum ServerCommand {
     Shutdown,
 }
 
-// ClientTx and Clients remain the same
 type ClientTx = mpsc::UnboundedSender<Message>;
 type Clients = Arc<Mutex<HashMap<std::net::SocketAddr, ClientTx>>>;
 

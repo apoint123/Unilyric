@@ -42,7 +42,7 @@ use super::types::{
     ConnectorCommand, ConnectorUpdate, NowPlayingInfo, SharedPlayerState, SmtcControlCommand,
     SmtcSessionInfo,
 };
-use crate::{amll_connector::volume_control, utils::convert_traditional_to_simplified};
+use crate::amll_connector::volume_control;
 
 /// SMTC 异步操作的通用超时时长。
 const SMTC_ASYNC_OPERATION_TIMEOUT: TokioDuration = TokioDuration::from_secs(5);
@@ -852,7 +852,7 @@ pub fn run_smtc_listener(
                                         log::warn!("[SMTC 主循环] 获取媒体属性 '{name}' 失败: {e:?}");
                                         String::new()
                                     },
-                                    |hstr| convert_traditional_to_simplified(&hstring_to_string(&hstr))
+                                    |hstr| hstring_to_string(&hstr)
                                 )
                             };
 
