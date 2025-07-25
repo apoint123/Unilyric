@@ -108,7 +108,7 @@ impl From<String> for AutoSearchSource {
             "amll-ttml-database" => Self::AmllDb,
             "musixmatch" => Self::Musixmatch,
             _ => {
-                log::warn!("未知的提供商名称 '{s}'，无法转换为 AutoSearchSource");
+                tracing::warn!("未知的提供商名称 '{s}'，无法转换为 AutoSearchSource");
                 Self::QqMusic
             }
         }

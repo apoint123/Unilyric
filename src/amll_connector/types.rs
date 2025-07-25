@@ -1,5 +1,6 @@
 // 导入 serde 库，用于配置的序列化和反序列化
 use serde::{Deserialize, Serialize};
+use smtc_suite::{NowPlayingInfo, SmtcControlCommand};
 // 导入标准库的 Instant，用于 SharedPlayerState 中的时间戳
 use std::time::Instant;
 // 导入 ws_protocol 库中的 Body 枚举，作为 WebSocket 消息的协议体
@@ -23,55 +24,6 @@ impl Default for AMLLConnectorConfig {
         Self {
             enabled: false,                                    // 默认不启用AMLL Connector
             websocket_url: "ws://localhost:11444".to_string(), // AMLL Player 默认的 WebSocket 地址
-        }
-    }
-}
-
-/// 从 SMTC (系统媒体传输控制) 获取的当前播放曲目信息
-/// 这是一个可选字段的结构体，因为某些信息可能不可用。
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct NowPlayingInfo {
-    /// 歌曲的标题。
-    pub title: Option<String>,
-    /// 歌曲的艺术家。
-    pub artist: Option<String>,
-    /// 歌曲所属专辑的标题。
-    pub album_title: Option<String>,
-    /// 歌曲的总时长（毫秒）。
-    pub duration_ms: Option<u64>,
-    /// 当前播放位置（毫秒）。
-    pub position_ms: Option<u64>,
-    /// 指示歌曲是否正在播放。
-    pub is_playing: Option<bool>,
-    /// 专辑封面的原始二进制数据。
-    pub cover_data: Option<Vec<u8>>,
-    /// 专辑封面数据的哈希值，用于快速比较封面是否更改。
-    pub cover_data_hash: Option<u64>,
-    /// 报告 `position_ms` 的时间戳，用于模拟精确的播放进度。
-    pub position_report_time: Option<Instant>,
-}
-
-impl NowPlayingInfo {
-    pub fn default_empty() -> Self {
-        Self {
-            title: Some("无活动会话".to_string()),
-            ..Default::default()
-        }
-    }
-}
-
-impl From<&SharedPlayerState> for NowPlayingInfo {
-    fn from(state: &SharedPlayerState) -> Self {
-        Self {
-            title: Some(state.title.clone()),
-            artist: Some(state.artist.clone()),
-            album_title: Some(state.album.clone()),
-            is_playing: Some(state.is_playing),
-            duration_ms: Some(state.song_duration_ms),
-            position_ms: Some(state.get_estimated_current_position_ms()),
-            position_report_time: state.last_known_position_report_time,
-            cover_data: state.cover_data.clone(),
-            cover_data_hash: state.cover_data_hash,
         }
     }
 }
@@ -103,6 +55,8 @@ pub enum ConnectorCommand {
     SendLyricTtml(String),
     SendProtocolBody(ProtocolBody), // 可以用来发送任何 ws_protocol::Body
     Shutdown,
+    SmtcTrackChanged(NowPlayingInfo),
+
     SelectSmtcSession(String),
     MediaControl(SmtcControlCommand),
     AdjustAudioSessionVolume {
@@ -121,6 +75,7 @@ pub enum ConnectorCommand {
 #[derive(Debug, Clone)]
 pub enum ConnectorUpdate {
     WebsocketStatusChanged(WebsocketStatus),
+    MediaCommand(SmtcControlCommand),
     NowPlayingTrackChanged(NowPlayingInfo),
     SmtcSessionListChanged(Vec<SmtcSessionInfo>),
     SelectedSmtcSessionVanished(String),
@@ -131,24 +86,6 @@ pub enum ConnectorUpdate {
     },
     AudioDataPacket(Vec<u8>),
     SimulatedProgressUpdate(u64),
-}
-
-/// SMTC 控制命令 (由 websocket_client 发送给 smtc_handler)
-/// 这个类型主要在 amll_connector 模块内部使用，用于控制系统媒体播放。
-#[derive(Debug, Clone, Copy)]
-pub enum SmtcControlCommand {
-    /// 暂停当前播放。
-    Pause,
-    /// 播放当前暂停的媒体。
-    Play,
-    /// 跳到下一首歌曲。
-    SkipNext,
-    /// 跳到上一首歌曲。
-    SkipPrevious,
-    /// 跳转到指定位置（毫秒）。
-    SeekTo(u64),
-    /// 设置当前SMTC源的音量 (0.0 到 1.0)。
-    SetVolume(f32),
 }
 
 /// SMTC 共享播放器状态 (主要由 smtc_handler 内部管理)

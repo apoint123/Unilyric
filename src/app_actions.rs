@@ -1,10 +1,9 @@
-use crate::amll_connector::types::SmtcSessionInfo;
-use crate::amll_connector::{NowPlayingInfo, WebsocketStatus};
 use crate::app_settings::AppSettings;
 use crate::types::LrcContentType;
 use lyrics_helper_rs::SearchResult;
 use lyrics_helper_rs::converter::LyricFormat;
 use lyrics_helper_rs::model::track::FullLyricsResult;
+use smtc_suite::SmtcControlCommand;
 
 // 主事件枚举
 #[derive(Debug, Clone)]
@@ -14,6 +13,7 @@ pub enum UserAction {
     Player(PlayerAction),
     UI(UIAction),
     Settings(SettingsAction),
+    AmllConnector(AmllConnectorAction),
 }
 
 // 子事件枚举定义
@@ -50,17 +50,11 @@ pub enum LyricsAction {
 
 #[derive(Debug, Clone)]
 pub enum PlayerAction {
-    WebsocketStatusChanged(WebsocketStatus),
-    SmtcTrackChanged(NowPlayingInfo),
-    SmtcSessionListChanged(Vec<SmtcSessionInfo>),
-    SelectedSmtcSessionVanished(String),
-    AudioVolumeChanged { volume: f32, is_muted: bool },
-    SimulatedProgressUpdate(u64),
-
-    // 播放器相关操作，暂时为空
-    ConnectAmll,
-    DisconnectAmll,
+    /// 向 smtc-suite 发送一个媒体控制命令。
+    Control(SmtcControlCommand),
+    /// 让 smtc-suite 选择一个新的媒体会话。
     SelectSmtcSession(String),
+    /// 保存当前歌词到本地缓存。
     SaveToLocalCache,
 }
 
@@ -89,4 +83,11 @@ pub enum SettingsAction {
     Save(AppSettings),
     Cancel,
     Reset,
+}
+
+#[derive(Debug, Clone)]
+pub enum AmllConnectorAction {
+    Connect,
+    Disconnect,
+    Retry,
 }

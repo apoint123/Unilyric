@@ -1,24 +1,22 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::mpsc::channel as std_channel;
-use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
-use egui_toast::Toasts;
-use lyrics_helper_rs::converter::LyricFormat;
-use reqwest::Client;
-use tokio::sync::mpsc as tokio_mpsc;
-
-use crate::amll_connector::amll_connector_manager;
 use crate::amll_connector::{
     AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus,
 };
 use crate::app::TtmlDbUploadUserAction;
 use crate::app_settings::AppSettings;
 use crate::types::{AutoFetchResult, AutoSearchStatus, LocalLyricCacheEntry, LogEntry};
-use crate::websocket_server::ServerCommand;
-use crate::{utils, websocket_server};
+use crate::utils;
+use egui_toast::Toasts;
+use lyrics_helper_rs::converter::LyricFormat;
+use reqwest::Client;
+use smtc_suite::{MediaCommand, MediaUpdate, NowPlayingInfo, SmtcSessionInfo};
+use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender, channel as std_channel};
+use tokio::sync::mpsc::Sender as TokioSender;
+use tokio::sync::mpsc::channel as tokio_channel;
+use tokio::task::JoinHandle;
 
 use crate::app_actions::UserAction;
 
@@ -82,31 +80,20 @@ pub(super) struct LyricState {
 }
 
 pub(super) struct PlayerState {
-    pub(super) config: Arc<Mutex<AMLLConnectorConfig>>,
-    pub(super) status: Arc<Mutex<WebsocketStatus>>,
-    pub(super) command_tx: Option<StdSender<ConnectorCommand>>,
-    pub(super) update_rx: StdReceiver<ConnectorUpdate>,
-    pub(super) worker_handle: Option<std::thread::JoinHandle<()>>,
-    pub(super) update_tx_for_worker: StdSender<ConnectorUpdate>,
-    pub(super) audio_visualization_is_active: bool,
-    pub(super) current_media_info:
-        Arc<tokio::sync::Mutex<Option<crate::amll_connector::NowPlayingInfo>>>,
-    pub(super) last_true_smtc_processed_info:
-        Arc<tokio::sync::Mutex<Option<crate::amll_connector::NowPlayingInfo>>>,
-    pub(super) available_smtc_sessions:
-        Arc<Mutex<Vec<crate::amll_connector::types::SmtcSessionInfo>>>,
-    pub(super) selected_smtc_session_id: Arc<Mutex<Option<String>>>,
-    pub(super) initial_selected_smtc_session_id_from_settings: Option<String>,
-    pub(super) last_smtc_position_ms: u64,
-    pub(super) last_smtc_position_report_time: Option<std::time::Instant>,
-    pub(super) is_currently_playing_sensed_by_smtc: bool,
-    pub(super) current_song_duration_ms: u64,
+    pub(super) command_tx: Option<crossbeam_channel::Sender<MediaCommand>>,
+    pub(super) update_rx: Option<crossbeam_channel::Receiver<MediaUpdate>>,
+    pub(super) current_now_playing: NowPlayingInfo,
+    pub(super) available_sessions: Vec<SmtcSessionInfo>,
     pub(super) smtc_time_offset_ms: i64,
-    pub(super) current_smtc_volume: Arc<Mutex<Option<(f32, bool)>>>,
-    pub(super) last_requested_volume_for_session: Arc<Mutex<Option<String>>>,
-    pub(super) progress_simulation_interval: Duration,
-    pub(super) progress_timer_shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    pub(super) progress_timer_join_handle: Option<tokio::task::JoinHandle<()>>,
+    pub(super) last_requested_session_id: Option<String>,
+}
+
+pub(super) struct AmllConnectorState {
+    pub command_tx: Option<TokioSender<ConnectorCommand>>,
+    pub actor_handle: Option<JoinHandle<()>>,
+    pub status: Arc<Mutex<WebsocketStatus>>,
+    pub config: Arc<Mutex<AMLLConnectorConfig>>,
+    pub update_rx: std::sync::mpsc::Receiver<ConnectorUpdate>,
 }
 
 pub(super) struct AutoFetchState {
@@ -139,13 +126,6 @@ pub(super) struct LocalCacheState {
     pub(super) dir_path: Option<std::path::PathBuf>,
 }
 
-pub(super) struct WebsocketServerState {
-    pub(super) command_tx: Option<tokio_mpsc::Sender<ServerCommand>>,
-    pub(super) handle: Option<tokio::task::JoinHandle<()>>,
-    pub(super) enabled: bool,
-    pub(super) port: u16,
-}
-
 pub(super) struct TtmlDbUploadState {
     pub(super) in_progress: bool,
     pub(super) last_paste_url: Option<String>,
@@ -160,8 +140,8 @@ pub(super) struct UniLyricApp {
     pub(super) player: PlayerState,
     pub(super) fetcher: AutoFetchState,
     pub(super) local_cache: LocalCacheState,
-    pub(super) websocket_server: WebsocketServerState,
     pub(super) ttml_db_upload: TtmlDbUploadState,
+    pub(super) amll_connector: AmllConnectorState,
 
     // --- 核心依赖与配置 ---
     pub(super) lyrics_helper: Option<Arc<lyrics_helper_rs::LyricsHelper>>,
@@ -222,7 +202,6 @@ impl UniLyricApp {
         let (lyrics_helper_tx, lyrics_helper_rx) =
             std_channel::<Arc<lyrics_helper_rs::LyricsHelper>>();
         let (auto_fetch_tx, auto_fetch_rx) = std_channel::<AutoFetchResult>();
-        let (mc_update_tx, mc_update_rx) = std_channel::<ConnectorUpdate>();
         let (upload_action_tx, upload_action_rx) = std_channel::<TtmlDbUploadUserAction>();
 
         // --- 创建Tokio异步运行时 ---
@@ -238,19 +217,19 @@ impl UniLyricApp {
         // --- 异步初始化 LyricsHelper ---
         let rt_clone = runtime_instance.clone();
         rt_clone.spawn(async move {
-            log::info!("[LyricsHelper] 开始异步初始化...");
+            tracing::info!("[LyricsHelper] 开始异步初始化...");
             match lyrics_helper_rs::LyricsHelper::new().await {
                 Ok(helper) => {
                     if lyrics_helper_tx.send(Arc::new(helper)).is_ok() {
-                        log::info!("[LyricsHelper] 异步初始化成功并已发送。");
+                        tracing::info!("[LyricsHelper] 异步初始化成功并已发送。");
                     } else {
-                        log::error!(
+                        tracing::error!(
                             "[LyricsHelper] 异步初始化成功，但发送失败，UI线程可能已关闭。"
                         );
                     }
                 }
                 Err(e) => {
-                    log::error!("[LyricsHelper] 异步初始化失败: {e}");
+                    tracing::error!("[LyricsHelper] 异步初始化失败: {e}");
                 }
             }
         });
@@ -268,35 +247,6 @@ impl UniLyricApp {
             .anchor(egui::Align2::LEFT_TOP, (10.0, 10.0))
             .direction(egui::Direction::TopDown);
 
-        // --- 初始化WebSocket服务器 ---
-
-        let (ws_cmd_tx, ws_cmd_rx) = tokio_mpsc::channel(32);
-        let websocket_server_handle: Option<tokio::task::JoinHandle<()>> = if settings
-            .websocket_server_settings
-            .enabled
-        {
-            let server_addr = format!("127.0.0.1:{}", settings.websocket_server_settings.port);
-            let server_instance = websocket_server::WebsocketServer::new(ws_cmd_rx);
-            log::info!("[UniLyricApp new] 准备启动 WebSocket 服务器, 服务器地址: {server_addr}");
-            Some(runtime_instance.spawn(async move {
-                server_instance.run(server_addr).await;
-            }))
-        } else {
-            log::info!("[UniLyricApp new] WebSocket 服务器未启用。");
-            None
-        };
-        let websocket_server = WebsocketServerState {
-            command_tx: if settings.websocket_server_settings.enabled {
-                Some(ws_cmd_tx)
-            } else {
-                None
-            },
-            handle: websocket_server_handle,
-            enabled: settings.websocket_server_settings.enabled,
-            port: settings.websocket_server_settings.port,
-        };
-
-        // --- 初始化AMLL媒体连接器配置 ---
         let mc_config = AMLLConnectorConfig {
             enabled: settings.amll_connector_enabled,
             websocket_url: settings.amll_connector_websocket_url.clone(),
@@ -345,31 +295,54 @@ impl UniLyricApp {
             download_result_rx: None,
         };
 
+        let (mut smtc_command_tx, mut smtc_update_rx) = (None, None);
+        match smtc_suite::MediaManager::start() {
+            Ok(controller) => {
+                tracing::info!("[UniLyricApp new] smtc-suite 媒体服务已成功启动。");
+                let smtc_suite::MediaController {
+                    command_tx,
+                    update_rx,
+                } = controller;
+                smtc_command_tx = Some(command_tx);
+                smtc_update_rx = Some(update_rx);
+            }
+            Err(e) => {
+                tracing::error!("[UniLyricApp new] 启动 smtc-suite 媒体服务失败: {e}");
+            }
+        };
+
+        let smtc_controller = smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
+        let smtc_cmd_tx = smtc_controller.command_tx;
+        let smtc_update_rx_for_ui = smtc_controller.update_rx.clone(); // UI 保留一个克隆用于显示
+        let smtc_update_rx_for_actor = smtc_controller.update_rx; // actor 拿走原始的
+
+        let (amll_update_tx, amll_update_rx) = std::sync::mpsc::channel::<ConnectorUpdate>();
+        let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
+
+        let actor_handle =
+            runtime_instance.spawn(crate::amll_connector::worker::amll_connector_actor(
+                amll_command_rx,
+                amll_update_tx,
+                mc_config.clone(),
+                smtc_cmd_tx,
+                smtc_update_rx_for_actor,
+            ));
+
         let player_state = PlayerState {
-            config: Arc::new(Mutex::new(mc_config.clone())),
-            status: Arc::new(Mutex::new(WebsocketStatus::default())),
-            command_tx: None,
-            update_rx: mc_update_rx,
-            worker_handle: None,
-            update_tx_for_worker: mc_update_tx,
-            audio_visualization_is_active: settings.send_audio_data_to_player,
-            current_media_info: Arc::new(tokio::sync::Mutex::new(None)),
-            last_true_smtc_processed_info: Arc::new(tokio::sync::Mutex::new(None)),
-            available_smtc_sessions: Arc::new(Mutex::new(Vec::new())),
-            selected_smtc_session_id: Arc::new(Mutex::new(None)),
-            initial_selected_smtc_session_id_from_settings: settings
-                .last_selected_smtc_session_id
-                .clone(),
-            last_smtc_position_ms: 0,
-            last_smtc_position_report_time: None,
-            is_currently_playing_sensed_by_smtc: false,
-            current_song_duration_ms: 0,
+            command_tx: smtc_command_tx,
+            update_rx: smtc_update_rx,
+            current_now_playing: NowPlayingInfo::default(),
+            available_sessions: Vec::new(),
             smtc_time_offset_ms: settings.smtc_time_offset_ms,
-            current_smtc_volume: Arc::new(Mutex::new(None)),
-            last_requested_volume_for_session: Arc::new(Mutex::new(None)),
-            progress_simulation_interval: Duration::from_millis(100),
-            progress_timer_shutdown_tx: None,
-            progress_timer_join_handle: None,
+            last_requested_session_id: settings.last_selected_smtc_session_id.clone(),
+        };
+
+        let amll_connector_state = AmllConnectorState {
+            command_tx: Some(amll_command_tx),
+            actor_handle: Some(actor_handle),
+            status: Arc::new(Mutex::new(WebsocketStatus::default())),
+            config: Arc::new(Mutex::new(mc_config)),
+            update_rx: amll_update_rx,
         };
 
         let auto_fetch_state = AutoFetchState {
@@ -404,9 +377,9 @@ impl UniLyricApp {
             ui: ui_state,
             lyrics: lyric_state,
             player: player_state,
+            amll_connector: amll_connector_state,
             fetcher: auto_fetch_state,
             local_cache,
-            websocket_server,
             ttml_db_upload: ttml_db_upload_state,
             lyrics_helper: None,
             lyrics_helper_rx,
@@ -425,7 +398,7 @@ impl UniLyricApp {
             if !cache_dir.exists()
                 && let Err(e) = std::fs::create_dir_all(&cache_dir)
             {
-                log::error!("[UniLyricApp] 无法创建本地歌词缓存目录 {cache_dir:?}: {e}");
+                tracing::error!("[UniLyricApp] 无法创建本地歌词缓存目录 {cache_dir:?}: {e}");
             }
             app.local_cache.dir_path = Some(cache_dir.clone());
 
@@ -442,7 +415,7 @@ impl UniLyricApp {
                         cache_entries.push(entry);
                     }
                 }
-                log::info!(
+                tracing::info!(
                     "[UniLyricApp] 从 {:?} 加载了 {} 条本地缓存歌词索引。",
                     index_file,
                     cache_entries.len()
@@ -452,42 +425,17 @@ impl UniLyricApp {
             app.local_cache.index_path = Some(index_file);
         }
 
-        // --- 启动AMLL媒体连接器 (如果启用) ---
-        if mc_config.enabled {
-            amll_connector_manager::ensure_running(&mut app);
-            if let Some(ref initial_id) = app.player.initial_selected_smtc_session_id_from_settings
-            {
-                if let Some(ref tx) = app.player.command_tx {
-                    log::debug!("[UniLyricApp new] 尝试恢复上次选择的 SMTC 会话 ID: {initial_id}");
-                    if tx
-                        .send(ConnectorCommand::SelectSmtcSession(initial_id.clone()))
-                        .is_err()
-                    {
-                        log::error!("[UniLyricApp new] 启动时发送 SelectSmtcSession 命令失败。");
-                    }
-                    // 同时更新运行时的 selected_smtc_session_id 状态
-                    *app.player.selected_smtc_session_id.lock().unwrap() = Some(initial_id.clone());
-                } else {
-                    log::error!(
-                        "[UniLyricApp new] 启动时无法应用上次选择的 SMTC 会话：command_tx 不可用。"
-                    );
-                }
-            }
-            if app.player.audio_visualization_is_active {
-                if let Some(tx) = &app.player.command_tx {
-                    if tx.send(ConnectorCommand::StartAudioVisualization).is_err() {
-                        log::error!(
-                            "[UniLyricApp new] 启动时发送 StartAudioVisualization 命令失败。"
-                        );
-                    }
-                } else {
-                    log::warn!(
-                        "[UniLyricApp new] 启动时 command_tx 不可用，无法发送 StartAudioVisualization。"
-                    );
-                }
+        app
+    }
+
+    pub(crate) fn shutdown_amll_actor(&mut self) {
+        if let Some(tx) = &self.amll_connector.command_tx {
+            if tx.try_send(ConnectorCommand::Shutdown).is_err() {
+                tracing::warn!("[Shutdown] 发送 Shutdown 命令到 actor 失败 (可能已关闭)。");
             }
         }
-
-        app
+        if let Some(handle) = self.amll_connector.actor_handle.take() {
+            handle.abort();
+        }
     }
 }

@@ -1,16 +1,14 @@
-use crate::amll_connector::{ConnectorCommand, WebsocketStatus, amll_connector_manager};
-
+use crate::amll_connector::WebsocketStatus;
 use crate::app_definition::UniLyricApp;
 
 use crate::types::{AutoSearchSource, AutoSearchStatus};
 
+use crate::app_actions::{AmllConnectorAction, PlayerAction, UserAction};
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::{Color32, TextWrapMode};
 use log::LevelFilter;
 use lyrics_helper_rs::converter::LyricFormat;
 use lyrics_helper_rs::model::track::FullLyricsResult;
-
-use std::hash::{Hash, Hasher};
 
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
 const BUTTON_STRIP_SPACING: f32 = 4.0;
@@ -492,7 +490,8 @@ impl UniLyricApp {
 
                     view_menu.separator();
 
-                    let amll_connector_feature_enabled = self.player.config.lock().unwrap().enabled;
+                    let amll_connector_feature_enabled =
+                        self.amll_connector.config.lock().unwrap().enabled;
                     view_menu
                         .add_enabled_ui(amll_connector_feature_enabled, |ui_enabled_check| {
                             let mut show_amll_sidebar_copy = self.ui.show_amll_connector_sidebar;
@@ -1020,10 +1019,10 @@ impl UniLyricApp {
                                 crate::app_actions::LyricsAction::MainInputChanged(text),
                             ));
                         } else {
-                            log::error!("无法从剪贴板获取文本");
+                            tracing::error!("无法从剪贴板获取文本");
                         }
                     } else {
-                        log::error!("无法访问剪贴板");
+                        tracing::error!("无法访问剪贴板");
                     }
                 }
             });
@@ -1299,7 +1298,7 @@ impl UniLyricApp {
             title_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |btn_ui| {
                 let send_to_player_enabled: bool;
                 {
-                    let connector_config_guard = self.player.config.lock().unwrap();
+                    let connector_config_guard = self.amll_connector.config.lock().unwrap();
                     send_to_player_enabled = connector_config_guard.enabled
                         && !self.lyrics.output_text.is_empty()
                         && !self.lyrics.conversion_in_progress;
@@ -1309,19 +1308,20 @@ impl UniLyricApp {
                 if btn_ui
                     .add_enabled(send_to_player_enabled, send_button)
                     .clicked()
-                    && let Some(tx) = &self.player.command_tx
+                    && let Some(tx) = &self.amll_connector.command_tx
                 {
                     if tx
-                        .send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
+                        .try_send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
                             self.lyrics.output_text.clone(),
                         ))
                         .is_err()
                     {
-                        log::error!("[Unilyric UI] 发送 TTML 歌词失败。");
+                        tracing::error!("[Unilyric UI] 发送 TTML 歌词失败。");
                     } else {
-                        log::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
+                        tracing::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
                     }
                 }
+
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
 
                 if btn_ui
@@ -1408,270 +1408,192 @@ impl UniLyricApp {
         ui.heading("AMLL Connector");
         ui.separator();
 
-        ui.strong("WebSocket 连接:");
+        ui.strong("AMLL Player 连接:");
 
-        let current_status = self.player.status.lock().unwrap().clone();
-        let websocket_url_display: String;
-        {
-            let config_guard_display = self.player.config.lock().unwrap();
-            websocket_url_display = config_guard_display.websocket_url.clone();
-        }
+        ui.vertical(|ui| {
+            let current_status = self.amll_connector.status.lock().unwrap().clone();
+            let websocket_url_display = self
+                .amll_connector
+                .config
+                .lock()
+                .unwrap()
+                .websocket_url
+                .clone();
 
-        ui.label(format!("目标 URL: {websocket_url_display}"));
+            ui.label(format!("目标 URL: {}", websocket_url_display));
 
-        match current_status {
-            WebsocketStatus::断开 => {
-                if ui.button("连接到 AMLL Player").clicked() {
-                    {
-                        let mut config_guard = self.player.config.lock().unwrap();
-                        if !config_guard.enabled {
-                            log::debug!(
-                                "[Unilyric UI] AMLL Connector 功能原为禁用，现设置为启用。"
-                            );
-                            config_guard.enabled = true;
-                        }
+            match current_status {
+                WebsocketStatus::断开 => {
+                    if ui.button("连接到 AMLL Player").clicked() {
+                        self.send_action(UserAction::AmllConnector(AmllConnectorAction::Connect));
                     }
-                    amll_connector_manager::ensure_running(self);
-                    let current_config_for_command = self.player.config.lock().unwrap().clone();
-                    if let Some(tx) = &self.player.command_tx {
-                        log::debug!(
-                            "[Unilyric UI] 发送 UpdateConfig 命令以触发连接尝试: {current_config_for_command:?}"
-                        );
-                        if tx
-                            .send(ConnectorCommand::UpdateConfig(current_config_for_command))
-                            .is_err()
-                        {
-                            log::error!("[Unilyric UI] 发送启用/连接的 UpdateConfig 命令失败。");
-                        }
-                    } else {
-                        log::error!(
-                            "[Unilyric UI] 连接按钮：调用 ensure_running 后，media_connector_command_tx 仍然不可用！"
-                        );
-                    }
+                    ui.weak("状态: 未连接");
                 }
-                ui.weak("状态: 未连接");
-            }
-            WebsocketStatus::连接中 => {
-                ui.horizontal(|h_ui| {
-                    h_ui.add(Spinner::new());
-                    h_ui.label("正在连接...");
-                });
-            }
-            WebsocketStatus::已连接 => {
-                if ui.button("断开连接").clicked() {
-                    if let Some(tx) = &self.player.command_tx {
-                        if tx.send(ConnectorCommand::DisconnectWebsocket).is_err() {
-                            log::error!("[Unilyric UI] 发送 DisconnectWebsocket 命令失败。");
-                        }
-                    } else {
-                        log::warn!(
-                            "[Unilyric UI] 断开连接按钮：media_connector_command_tx 不可用。"
-                        );
-                    }
+                WebsocketStatus::连接中 => {
+                    ui.horizontal(|h_ui| {
+                        h_ui.add(Spinner::new());
+                        h_ui.label("正在连接...");
+                    });
                 }
-                ui.colored_label(Color32::GREEN, "状态: 已连接");
-            }
-            WebsocketStatus::错误(err_msg_ref) => {
-                if ui.button("重试连接").clicked() {
-                    {
-                        let mut config_guard = self.player.config.lock().unwrap();
-                        if !config_guard.enabled {
-                            config_guard.enabled = true;
-                        }
+                WebsocketStatus::已连接 => {
+                    if ui.button("断开连接").clicked() {
+                        self.send_action(UserAction::AmllConnector(
+                            AmllConnectorAction::Disconnect,
+                        ));
                     }
-                    amll_connector_manager::ensure_running(self);
-                    let current_config_for_command = self.player.config.lock().unwrap().clone();
-                    if let Some(tx) = &self.player.command_tx {
-                        log::debug!(
-                            "[Unilyric UI] 发送 UpdateConfig 命令以触发重试连接: {current_config_for_command:?}"
-                        );
-                        if tx
-                            .send(ConnectorCommand::UpdateConfig(current_config_for_command))
-                            .is_err()
-                        {
-                            log::error!("[Unilyric UI] 错误后重试：发送 UpdateConfig 命令失败。");
-                        }
-                    } else {
-                        log::error!(
-                            "[Unilyric UI] 重试连接按钮：调用 ensure_running 后，media_connector_command_tx 仍然不可用！"
-                        );
-                    }
+                    ui.colored_label(Color32::GREEN, "状态: 已连接");
                 }
-                ui.colored_label(Color32::RED, "状态: 错误");
-                ui.small(err_msg_ref);
+                WebsocketStatus::错误(err_msg_ref) => {
+                    if ui.button("重试连接").clicked() {
+                        self.send_action(UserAction::AmllConnector(AmllConnectorAction::Retry));
+                    }
+                    ui.colored_label(Color32::RED, "状态: 错误");
+                    ui.small(err_msg_ref);
+                }
             }
-        }
+        });
 
         ui.separator();
 
         ui.strong("SMTC 源应用:");
-        {
-            let available_sessions_guard = self.player.available_smtc_sessions.lock().unwrap();
-            let mut selected_session_id_guard =
-                self.player.selected_smtc_session_id.lock().unwrap();
 
-            let mut selected_id_for_combo: Option<String> = selected_session_id_guard.clone();
+        let available_sessions = self.player.available_sessions.clone();
+        let mut selected_id = self.player.last_requested_session_id.clone();
 
-            let combo_label_text = match selected_id_for_combo.as_ref() {
-                Some(id) => available_sessions_guard
-                    .iter()
-                    .find(|s| &s.session_id == id)
-                    .map_or_else(
-                        || format!("自动 (选择 '{id}' 已失效)"),
-                        |s_info| s_info.display_name.clone(),
-                    ),
-                None => "自动 (系统默认)".to_string(),
-            };
+        let combo_label_text = match selected_id.as_ref() {
+            Some(id) => available_sessions
+                .iter()
+                .find(|s| &s.session_id == id)
+                .map_or_else(
+                    || format!("自动 (选择 '{}' 已失效)", id),
+                    |s_info| s_info.display_name.clone(),
+                ),
+            None => "自动 (系统默认)".to_string(),
+        };
 
-            let combo_changed_smtc =
-                egui::ComboBox::from_id_salt("smtc_source_selector_v3_fixed_scoped")
-                    .selected_text(combo_label_text)
-                    .show_ui(ui, |combo_ui| {
-                        let mut changed_in_combo = false;
-                        if combo_ui
-                            .selectable_label(selected_id_for_combo.is_none(), "自动 (系统默认)")
-                            .clicked()
-                            && selected_id_for_combo.is_some()
-                        {
-                            selected_id_for_combo = None;
-                            changed_in_combo = true;
-                        }
-                        for session_info in available_sessions_guard.iter() {
-                            if combo_ui
-                                .selectable_label(
-                                    selected_id_for_combo.as_ref()
-                                        == Some(&session_info.session_id),
-                                    &session_info.display_name,
-                                )
-                                .clicked()
-                                && selected_id_for_combo.as_ref() != Some(&session_info.session_id)
-                            {
-                                selected_id_for_combo = Some(session_info.session_id.clone());
-                                changed_in_combo = true;
-                            }
-                        }
-                        changed_in_combo
-                    })
-                    .inner
-                    .unwrap_or(false);
-
-            if combo_changed_smtc {
-                *selected_session_id_guard = selected_id_for_combo.clone();
-                let session_to_send = selected_id_for_combo.unwrap_or_default();
-
-                *self
-                    .player
-                    .last_requested_volume_for_session
-                    .lock()
-                    .unwrap() = None;
-                *self.player.current_smtc_volume.lock().unwrap() = None;
-
-                if let Some(tx) = &self.player.command_tx
-                    && tx
-                        .send(ConnectorCommand::SelectSmtcSession(session_to_send))
-                        .is_err()
+        let combo_changed = egui::ComboBox::from_id_salt("smtc_source_selector_refactored")
+            .selected_text(combo_label_text)
+            .show_ui(ui, |combo_ui| {
+                let mut changed_in_combo = false;
+                if combo_ui
+                    .selectable_label(selected_id.is_none(), "自动 (系统默认)")
+                    .clicked()
                 {
-                    log::error!("[Unilyric UI] 发送 SelectSmtcSession 命令失败。");
+                    selected_id = None;
+                    changed_in_combo = true;
                 }
-            }
+                for session_info in &available_sessions {
+                    if combo_ui
+                        .selectable_label(
+                            selected_id.as_ref() == Some(&session_info.session_id),
+                            &session_info.display_name,
+                        )
+                        .clicked()
+                    {
+                        selected_id = Some(session_info.session_id.clone());
+                        changed_in_combo = true;
+                    }
+                }
+                changed_in_combo
+            })
+            .inner
+            .unwrap_or(false);
+
+        if combo_changed {
+            self.send_action(UserAction::Player(PlayerAction::SelectSmtcSession(
+                selected_id.unwrap_or_default(),
+            )));
         }
+
         ui.separator();
         ui.strong("当前监听 (SMTC):");
-        match self.player.current_media_info.try_lock() {
-            Ok(media_info_guard) => {
-                if let Some(info) = &*media_info_guard {
-                    ui.label(format!("歌曲: {}", info.title.as_deref().unwrap_or("未知")));
-                    ui.label(format!(
-                        "艺术家: {}",
-                        info.artist.as_deref().unwrap_or("未知")
-                    ));
-                    ui.label(format!(
-                        "专辑: {}",
-                        info.album_title.as_deref().unwrap_or("未知")
-                    ));
-                    if let Some(playing) = info.is_playing {
-                        ui.label(if playing {
-                            "状态: 播放中"
-                        } else {
-                            "状态: 已暂停"
-                        });
-                    }
-                    ui.strong("时间轴偏移:");
-                    ui.horizontal(|h_ui| {
-                        h_ui.label("偏移量:");
-                        let mut current_offset = self.player.smtc_time_offset_ms;
-                        let response = h_ui.add(
-                            egui::DragValue::new(&mut current_offset)
-                                .speed(10.0)
-                                .suffix(" ms"),
-                        );
-                        if response.changed() {
-                            self.player.smtc_time_offset_ms = current_offset;
-                            let mut settings = self.app_settings.lock().unwrap();
-                            if settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms {
-                                settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
-                                if settings.save().is_err() {
-                                    log::error!("[Unilyric UI] 侧边栏偏移量持久化到设置失败。");
-                                }
+
+        let now_playing = &self.player.current_now_playing;
+        if now_playing.title.is_some() {
+            ui.label(format!(
+                "歌曲: {}",
+                now_playing.title.as_deref().unwrap_or("未知")
+            ));
+            ui.label(format!(
+                "艺术家: {}",
+                now_playing.artist.as_deref().unwrap_or("未知")
+            ));
+            ui.label(format!(
+                "专辑: {}",
+                now_playing.album_title.as_deref().unwrap_or("未知")
+            ));
+
+            if let Some(playing) = now_playing.is_playing {
+                ui.label(if playing {
+                    "状态: 播放中"
+                } else {
+                    "状态: 已暂停"
+                });
+            }
+
+            ui.strong("时间轴偏移:");
+            ui.horizontal(|h_ui| {
+                h_ui.label("偏移量:");
+                let mut current_offset = self.player.smtc_time_offset_ms;
+                let response = h_ui.add(
+                    egui::DragValue::new(&mut current_offset)
+                        .speed(10.0)
+                        .suffix(" ms"),
+                );
+                if response.changed() {
+                    self.player.smtc_time_offset_ms = current_offset;
+                    if let Ok(mut settings) = self.app_settings.lock() {
+                        if settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms {
+                            settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
+                            if let Err(e) = settings.save() {
+                                tracing::error!(
+                                    "[Unilyric UI] 侧边栏偏移量持久化到设置失败: {}",
+                                    e
+                                );
                             }
                         }
-                    });
-                    if let Some(cover_bytes) = &info.cover_data
-                        && !cover_bytes.is_empty()
-                    {
-                        let image_id_cow: std::borrow::Cow<'static, str> =
-                            info.cover_data_hash.map_or_else(
-                                || {
-                                    let mut hasher =
-                                        std::collections::hash_map::DefaultHasher::new();
-                                    cover_bytes[..std::cmp::min(cover_bytes.len(), 16)]
-                                        .hash(&mut hasher);
-                                    format!("smtc_cover_data_partial_hash_{}", hasher.finish())
-                                        .into()
-                                },
-                                |hash| format!("smtc_cover_hash_{hash}").into(),
-                            );
-                        let image_source = egui::ImageSource::Bytes {
-                            uri: image_id_cow,
-                            bytes: cover_bytes.clone().into(),
-                        };
-                        ui.add_sized(
-                            egui::vec2(200.0, 200.0),
-                            egui::Image::new(image_source)
-                                .max_size(egui::vec2(200.0, 200.0))
-                                .maintain_aspect_ratio(true)
-                                .bg_fill(Color32::TRANSPARENT),
-                        );
                     }
-                } else {
-                    ui.weak("无SMTC信息 / 未选择特定源");
+                }
+            });
+
+            if let Some(cover_bytes) = &now_playing.cover_data {
+                if !cover_bytes.is_empty() {
+                    let image_id_cow = now_playing.cover_data_hash.map_or_else(
+                        || "smtc_cover_no_hash".into(),
+                        |hash| format!("smtc_cover_hash_{}", hash).into(),
+                    );
+                    let image_source = egui::ImageSource::Bytes {
+                        uri: image_id_cow,
+                        bytes: cover_bytes.clone().into(),
+                    };
+                    ui.add_sized(
+                        egui::vec2(200.0, 200.0),
+                        egui::Image::new(image_source)
+                            .max_size(egui::vec2(200.0, 200.0))
+                            .maintain_aspect_ratio(true)
+                            .bg_fill(Color32::TRANSPARENT),
+                    );
                 }
             }
-            Err(_) => {
-                ui.weak("SMTC信息读取中...");
-            }
+        } else {
+            ui.weak("无SMTC信息 / 未选择特定源");
         }
+
         ui.separator();
 
         ui.strong("本地歌词:");
-        let can_save_to_local = !self.lyrics.output_text.is_empty()
-            && self
-                .player
-                .current_media_info
-                .try_lock()
-                .is_ok_and(|g| g.is_some())
-            && self.fetcher.last_source_format.is_some();
+        let can_save_to_local =
+            !self.lyrics.output_text.is_empty() && self.player.current_now_playing.title.is_some();
 
         let save_button_widget = Button::new("💾 保存输出框歌词到本地");
         let mut response = ui.add_enabled(can_save_to_local, save_button_widget);
         if !can_save_to_local {
-            response = response.on_hover_text("需先搜索到歌词才能缓存");
+            response = response.on_disabled_hover_text("需先有歌词输出和媒体信息才能缓存");
         }
         if response.clicked() {
-            self.send_action(crate::app_actions::UserAction::Player(
-                crate::app_actions::PlayerAction::SaveToLocalCache,
-            ));
+            self.send_action(UserAction::Player(PlayerAction::SaveToLocalCache));
         }
+
         ui.separator();
 
         ui.strong("自动歌词搜索状态:");

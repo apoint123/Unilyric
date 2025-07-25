@@ -1,11 +1,11 @@
-use crate::amll_connector::NowPlayingInfo;
 use crate::app_definition::UniLyricApp;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus};
+use smtc_suite::NowPlayingInfo;
 
-use log::{debug, error, info, warn};
 use lyrics_helper_rs::SearchMode;
 use lyrics_helper_rs::model::track::Track;
 use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 
 pub(crate) fn initial_auto_fetch_and_send_lyrics(
     app: &mut UniLyricApp,
@@ -43,13 +43,13 @@ pub(crate) fn initial_auto_fetch_and_send_lyrics(
     let search_mode = if app_settings.use_provider_subset
         && !app_settings.auto_search_provider_subset.is_empty()
     {
-        log::info!("[AutoFetch] 使用子集模式进行搜索。");
+        tracing::info!("[AutoFetch] 使用子集模式进行搜索。");
         SearchMode::Subset(app_settings.auto_search_provider_subset.clone())
     } else if app_settings.always_search_all_sources {
-        log::info!("[AutoFetch] 使用并行模式进行全面搜索。");
+        tracing::info!("[AutoFetch] 使用并行模式进行全面搜索。");
         SearchMode::Parallel
     } else {
-        log::info!("[AutoFetch] 使用有序模式进行快速搜索。");
+        tracing::info!("[AutoFetch] 使用有序模式进行快速搜索。");
         SearchMode::Ordered
     };
     // 释放锁
@@ -118,15 +118,18 @@ pub(crate) fn trigger_manual_refetch_for_source(
     app: &mut UniLyricApp,
     source_to_refetch: AutoSearchSource,
 ) {
-    let track_info = match app
-        .tokio_runtime
-        .block_on(async { app.player.current_media_info.lock().await.clone() })
-    {
-        Some(info) => info,
-        None => {
-            log::warn!("[ManualRefetch] 无SMTC信息，无法重新搜索。");
+    let track_info = match app.player.current_now_playing.clone() {
+        info if info.title.is_some() => info,
+        _ => {
+            tracing::warn!("[ManualRefetch] 无SMTC信息，无法重新搜索。");
             return;
         }
+    };
+
+    let helper = if let Some(h) = app.lyrics_helper.as_ref() {
+        Arc::clone(h)
+    } else {
+        return;
     };
 
     let smtc_title = if let Some(t) = track_info.title {
@@ -138,11 +141,6 @@ pub(crate) fn trigger_manual_refetch_for_source(
         .artist
         .map(|s| s.split('/').map(|n| n.trim().to_string()).collect())
         .unwrap_or_default();
-    let helper = if let Some(h) = app.lyrics_helper.as_ref() {
-        Arc::clone(h)
-    } else {
-        return;
-    };
 
     let status_arc_to_update = match source_to_refetch {
         AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),

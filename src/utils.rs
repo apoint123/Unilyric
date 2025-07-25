@@ -8,12 +8,12 @@ pub fn get_app_data_dir() -> Option<PathBuf> {
         if !data_dir.exists()
             && let Err(e) = std::fs::create_dir_all(data_dir)
         {
-            log::error!("[UniLyric] 无法创建应用数据目录 {data_dir:?}: {e}");
+            tracing::error!("[UniLyric] 无法创建应用数据目录 {data_dir:?}: {e}");
             return None;
         }
         Some(data_dir.to_path_buf())
     } else {
-        log::error!("[UniLyric] 无法获取应用数据目录。");
+        tracing::error!("[UniLyric] 无法获取应用数据目录。");
         None
     }
 }

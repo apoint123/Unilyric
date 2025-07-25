@@ -1,8 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod types;
-#[macro_use]
-mod utils;
 mod amll_connector;
 mod app;
 mod app_actions;
@@ -13,10 +10,10 @@ mod app_settings;
 mod app_ui;
 mod app_update;
 mod io;
-mod websocket_server;
+mod types;
+mod utils;
 
 use app_settings::AppSettings;
-use once_cell::sync::Lazy;
 use std::sync::mpsc;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
@@ -67,10 +64,10 @@ fn setup_tracing(
     ui_log_sender: mpsc::Sender<types::LogEntry>,
     settings: &app_settings::LogSettings,
 ) {
-    let our_crates_level = settings.console_log_level.to_string().to_lowercase();
+    let our_crates_level = "debug".to_string();
     let console_filter_str = format!(
         // 默认将所有模块的日志级别设为 `warn`，以保持安静
-        "warn,unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
     );
 
     let console_filter = EnvFilter::new(console_filter_str);
@@ -90,7 +87,7 @@ fn setup_tracing(
         .with_filter(console_filter);
 
     let ui_filter_str = format!(
-        "warn,unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
     );
     let ui_filter = EnvFilter::new(ui_filter_str);
 

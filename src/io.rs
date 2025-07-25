@@ -25,7 +25,7 @@ pub fn handle_save_file(app: &mut UniLyricApp) {
         .save_file()
     {
         if let Err(e) = fs::write(&path, &app.lyrics.output_text) {
-            log::error!("保存文件 {path:?} 失败: {e}");
+            tracing::error!("保存文件 {path:?} 失败: {e}");
         } else {
             app.lyrics.last_saved_file_path = Some(path);
         }
@@ -43,17 +43,17 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
                 match content_type {
                     LrcContentType::Translation => {
                         app.lyrics.display_translation_lrc_output = content;
-                        log::info!("已加载翻译LRC文件: {path:?}");
+                        tracing::info!("已加载翻译LRC文件: {path:?}");
                     }
                     LrcContentType::Romanization => {
                         app.lyrics.display_romanization_lrc_output = content;
-                        log::info!("已加载罗马音LRC文件: {path:?}");
+                        tracing::info!("已加载罗马音LRC文件: {path:?}");
                     }
                 }
                 app.handle_convert();
             }
             Err(e) => {
-                log::error!("读取LRC文件 {path:?} 失败: {e}");
+                tracing::error!("读取LRC文件 {path:?} 失败: {e}");
             }
         }
     }
@@ -77,6 +77,6 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
         app.handle_convert();
         // sync_ui_from_parsed_data 会在转换完成后自动调用
     } else {
-        log::error!("无法读取文件内容: {path:?}");
+        tracing::error!("无法读取文件内容: {path:?}");
     }
 }

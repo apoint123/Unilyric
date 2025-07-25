@@ -1,13 +1,11 @@
-use crate::amll_connector::amll_connector_manager::{self};
 use crate::app_definition::UniLyricApp;
 use crate::app_update;
 use crate::types::{AutoSearchSource, EditableMetadataEntry};
 use eframe::egui::{self};
-use log::{info, warn};
 use lyrics_helper_rs::model::track::FullLyricsResult;
 use rand::Rng;
-use std::sync::Arc;
 use std::time::Duration;
+use tracing::{info, warn};
 
 /// TTML 数据库上传用户操作的枚举
 #[derive(Clone, Debug)]
@@ -185,60 +183,6 @@ impl UniLyricApp {
         }
     }
 
-    pub fn stop_progress_timer(&mut self) {
-        if let Some(shutdown_tx) = self.player.progress_timer_shutdown_tx.take() {
-            let _ = shutdown_tx.send(());
-            if let Some(handle) = self.player.progress_timer_join_handle.take() {
-                let _ = self.tokio_runtime.block_on(handle);
-            }
-            log::trace!("[ProgressTimer] 进度模拟定时器已停止。");
-        }
-    }
-
-    pub fn start_progress_timer_if_needed(&mut self) {
-        let is_playing = self.player.is_currently_playing_sensed_by_smtc;
-        let connector_enabled = self.player.config.lock().unwrap().enabled;
-
-        if connector_enabled && is_playing && self.player.progress_timer_shutdown_tx.is_none() {
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-            self.player.progress_timer_shutdown_tx = Some(shutdown_tx);
-
-            let update_tx = self.player.update_tx_for_worker.clone();
-            let interval = self.player.progress_simulation_interval;
-            let media_info_arc = Arc::clone(&self.player.current_media_info);
-
-            let command_tx = self.player.command_tx.clone().unwrap(); // 确保此时 command_tx 存在
-            let config_arc = Arc::clone(&self.player.config);
-
-            let task_handle =
-                self.tokio_runtime
-                    .spawn(amll_connector_manager::run_progress_timer_task(
-                        interval,
-                        media_info_arc,
-                        command_tx,
-                        config_arc,
-                        shutdown_rx,
-                        update_tx,
-                    ));
-
-            self.player.progress_timer_join_handle = Some(task_handle);
-            log::trace!("[ProgressTimer] 进度模拟定时器已启动。");
-        } else if !is_playing {
-            self.stop_progress_timer();
-        }
-    }
-
-    pub fn process_smtc_update_for_websocket(
-        &mut self,
-        _track_info: &crate::amll_connector::NowPlayingInfo,
-    ) {
-        // TODO: 实现将SMTC更新发送到WebSocket客户端的逻辑
-    }
-
-    pub fn send_time_update_to_websocket(&mut self, _time_ms: u64) {
-        // TODO: 实现将时间更新发送到WebSocket客户端的逻辑
-    }
-
     pub fn load_lyrics_from_stored_result(
         &mut self,
         source: AutoSearchSource,
@@ -281,6 +225,9 @@ impl UniLyricApp {
 
 impl eframe::App for UniLyricApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // 仅供调试，不要开启！
+        // ctx.set_debug_on_hover(true);
+
         if self.lyrics_helper.is_none() {
             if let Ok(helper) = self.lyrics_helper_rx.try_recv() {
                 info!("[UniLyricApp] LyricsHelper 已成功初始化并接收。");
@@ -300,14 +247,18 @@ impl eframe::App for UniLyricApp {
         app_update::handle_download_results(self);
 
         app_update::process_log_messages(self);
-        app_update::process_connector_updates(self);
+        app_update::process_smtc_updates(self);
         app_update::handle_auto_fetch_results(self);
 
-        let mut desired_repaint_delay = Duration::from_millis(1000);
-        if self.player.config.lock().unwrap().enabled {
-            desired_repaint_delay = desired_repaint_delay.min(Duration::from_millis(500));
-        }
-        ctx.request_repaint_after(desired_repaint_delay);
+        app_update::process_connector_updates(self);
+
+        // let mut desired_repaint_delay = Duration::from_millis(1000);
+        // if self.amll_connector.config.lock().unwrap().enabled {
+        //     desired_repaint_delay = desired_repaint_delay.min(Duration::from_millis(100));
+        // }
+        // ctx.request_repaint_after(desired_repaint_delay);
+
+        ctx.request_repaint_after(Duration::from_millis(1000));
 
         app_update::draw_ui_elements(self, ctx);
         app_update::handle_file_drops(self, ctx);
@@ -324,26 +275,9 @@ impl eframe::App for UniLyricApp {
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.shutdown_initiated {
             self.shutdown_initiated = true;
-            log::trace!("[UniLyricApp 更新循环] 检测到窗口关闭请求。正在启动关闭序列...");
+            tracing::trace!("[UniLyricApp 更新循环] 检测到窗口关闭请求。正在启动关闭序列...");
 
-            if let Some(tx) = &self.player.command_tx
-                && tx
-                    .send(crate::amll_connector::ConnectorCommand::Shutdown)
-                    .is_err()
-            {
-                log::warn!("[UniLyricApp] 向 AMLL Connector Worker 发送 Shutdown 命令失败。");
-            }
-            if let Some(ws_tx) = self.websocket_server.command_tx.take() {
-                self.tokio_runtime.spawn(async move {
-                    if ws_tx
-                        .send(crate::websocket_server::ServerCommand::Shutdown)
-                        .await
-                        .is_err()
-                    {
-                        log::warn!("[UniLyricApp] 向 WebSocket 服务器任务发送 Shutdown 命令失败。");
-                    }
-                });
-            }
+            self.shutdown_amll_actor();
         }
     }
 }

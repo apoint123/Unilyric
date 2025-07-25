@@ -1,13 +1,12 @@
 use eframe::egui;
-use log::{error, info, warn};
+use tracing::{error, info, warn};
 
 use crate::amll_connector::ConnectorUpdate;
 use crate::app::TtmlDbUploadUserAction;
-use crate::app_actions::{PlayerAction, UserAction};
 use crate::app_definition::UniLyricApp;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel};
-use crate::websocket_server::{PlaybackInfoPayload, ServerCommand};
 use egui_toast::{Toast, ToastKind, ToastOptions};
+use smtc_suite::MediaUpdate;
 
 pub(crate) fn process_log_messages(app: &mut UniLyricApp) {
     let mut has_warn_or_higher_this_frame = false;
@@ -45,33 +44,86 @@ pub(crate) fn process_log_messages(app: &mut UniLyricApp) {
 }
 
 pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
-    while let Ok(update) = app.player.update_rx.try_recv() {
-        let action = match update {
+    while let Ok(update) = app.amll_connector.update_rx.try_recv() {
+        match update {
             ConnectorUpdate::WebsocketStatusChanged(status) => {
-                UserAction::Player(PlayerAction::WebsocketStatusChanged(status))
+                tracing::info!("[App Update] 收到 AMLL Connector 状态更新: {:?}", status);
+
+                *app.amll_connector.status.lock().unwrap() = status;
+            }
+
+            ConnectorUpdate::MediaCommand(cmd) => {
+                tracing::info!("[App Update] 收到来自 AMLL Player 的媒体命令: {:?}", cmd);
+                if let Some(tx) = &app.player.command_tx {
+                    if tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err() {
+                        tracing::error!("[App Update] 执行来自 AMLL Player 的命令失败。");
+                    }
+                }
             }
             ConnectorUpdate::NowPlayingTrackChanged(info) => {
-                UserAction::Player(PlayerAction::SmtcTrackChanged(info))
+                app.player.current_now_playing = info;
             }
-            ConnectorUpdate::SmtcSessionListChanged(sessions) => {
-                UserAction::Player(PlayerAction::SmtcSessionListChanged(sessions))
+            _ => {}
+        }
+    }
+}
+
+pub(crate) fn process_smtc_updates(app: &mut UniLyricApp) {
+    let mut updates_this_frame = Vec::new();
+    if let Some(rx) = &app.player.update_rx {
+        while let Ok(update) = rx.try_recv() {
+            updates_this_frame.push(update);
+        }
+    }
+
+    for update in updates_this_frame {
+        match update {
+            MediaUpdate::TrackChanged(new_info) => {
+                let is_new_song = app.player.current_now_playing.title != new_info.title
+                    || app.player.current_now_playing.artist != new_info.artist;
+
+                app.player.current_now_playing = new_info.clone();
+
+                if is_new_song {
+                    crate::app_fetch_core::initial_auto_fetch_and_send_lyrics(
+                        app,
+                        new_info.clone(),
+                    );
+                }
             }
-            ConnectorUpdate::SelectedSmtcSessionVanished(id) => {
-                UserAction::Player(PlayerAction::SelectedSmtcSessionVanished(id))
+            MediaUpdate::SessionsChanged(sessions) => {
+                tracing::info!(
+                    "[SMTC Update] 可用会话列表已更新，共 {} 个。",
+                    sessions.len()
+                );
+                app.player.available_sessions = sessions;
             }
-            ConnectorUpdate::AudioSessionVolumeChanged {
-                session_id: _,
+            MediaUpdate::SelectedSessionVanished(session_id) => {
+                tracing::warn!("[SMTC Update] 选中的会话 '{session_id}' 已消失。");
+                // UI 状态会自动在下次渲染时更新，因为 available_sessions 也会随之改变
+                app.ui.toasts.add(egui_toast::Toast {
+                    text: "当前媒体源已关闭".into(),
+                    kind: egui_toast::ToastKind::Warning,
+                    options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
+                    style: Default::default(),
+                });
+            }
+            MediaUpdate::VolumeChanged {
+                session_id,
                 volume,
                 is_muted,
-            } => UserAction::Player(PlayerAction::AudioVolumeChanged { volume, is_muted }),
-            ConnectorUpdate::SimulatedProgressUpdate(time_ms) => {
-                UserAction::Player(PlayerAction::SimulatedProgressUpdate(time_ms))
+            } => {
+                tracing::trace!(
+                    "[SMTC Update] 会话 {session_id} 音量变为 {volume} (静音: {is_muted})"
+                );
             }
-            // AudioDataPacket 通常不需要UI处理，可以忽略或只记录日志
-            ConnectorUpdate::AudioDataPacket(_) => continue,
-        };
-        // 发送事件，而不是立即处理
-        app.send_action(action);
+            MediaUpdate::Error(e) => {
+                tracing::error!("[SMTC Update] smtc-suite 报告了一个错误: {e}");
+            }
+            _ => {
+                // 忽略其他事件，如 AudioData, TrackChangedForced 等
+            }
+        }
     }
 }
 
@@ -158,39 +210,17 @@ pub(crate) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     }
                 }
                 if !app.fetcher.current_ui_populated
-                    && app.player.config.lock().unwrap().enabled
-                    && let Some(tx) = &app.player.command_tx
+                    && app.amll_connector.config.lock().unwrap().enabled
+                    && let Some(tx) = &app.amll_connector.command_tx
                 {
-                    info!("[UniLyricApp] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
                     let empty_ttml_body = ws_protocol::Body::SetLyricFromTTML { data: "".into() };
                     if tx
-                        .send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
+                        .try_send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
                             empty_ttml_body,
                         ))
                         .is_err()
                     {
                         error!("[UniLyricApp] (未找到歌词) 发送空TTML失败。");
-                    }
-                }
-                if app.websocket_server.enabled && !app.fetcher.current_ui_populated {
-                    let mut current_title = None;
-                    let mut current_artist = None;
-                    if let Ok(media_info_guard) = app.player.current_media_info.try_lock()
-                        && let Some(info) = &*media_info_guard
-                    {
-                        current_title = info.title.clone();
-                        current_artist = info.artist.clone();
-                    }
-                    let empty_lyrics_payload = PlaybackInfoPayload {
-                        title: current_title,
-                        artist: current_artist,
-                        ttml_lyrics: None,
-                    };
-                    if let Some(ws_tx) = &app.websocket_server.command_tx
-                        && let Err(e) = ws_tx
-                            .try_send(ServerCommand::BroadcastPlaybackInfo(empty_lyrics_payload))
-                    {
-                        warn!("[UniLyricApp] 发送空歌词PlaybackInfo到WebSocket失败: {e}");
                     }
                 }
             }
@@ -355,7 +385,16 @@ pub(crate) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
     });
     app.draw_log_panel(ctx);
 
-    let amll_connector_feature_is_enabled = app.player.config.lock().unwrap().enabled;
+    let available_width = ctx.screen_rect().width();
+    let input_panel_width = (available_width * 0.25).clamp(200.0, 400.0);
+
+    egui::SidePanel::left("input_panel")
+        .default_width(input_panel_width)
+        .show(ctx, |ui| {
+            app.draw_input_panel_contents(ui);
+        });
+
+    let amll_connector_feature_is_enabled = app.amll_connector.config.lock().unwrap().enabled;
 
     if !amll_connector_feature_is_enabled {
         app.ui.show_amll_connector_sidebar = false;
@@ -370,16 +409,8 @@ pub(crate) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
             });
     }
 
-    let available_width = ctx.screen_rect().width();
-    let input_panel_width = (available_width * 0.25).clamp(200.0, 400.0);
     let lrc_panel_width = (available_width * 0.20).clamp(150.0, 350.0);
     let markers_panel_width = (available_width * 0.18).clamp(120.0, 300.0);
-
-    egui::SidePanel::left("input_panel")
-        .default_width(input_panel_width)
-        .show(ctx, |ui| {
-            app.draw_input_panel_contents(ui);
-        });
 
     if app.ui.show_markers_panel {
         egui::SidePanel::right("markers_panel")
