@@ -20,6 +20,9 @@ jobs:
         with:
           toolchain: nightly
 
+      - name: 安装 NASM
+        uses: ilammy/setup-nasm@v1
+
       - name: 缓存 Cargo 依赖
         uses: Swatinem/rust-cache@master
         with:
@@ -34,8 +37,9 @@ jobs:
       - name: 上传产物
         uses: softprops/action-gh-release@master
         with:
-          tag_name: "release-${{ github.sha }}"
-          name: "发布 ${{ github.sha }}"
+          prerelease: true
+          tag_name: "nightly-${{ github.sha }}"
+          name: "预览构建 ${{ github.sha }}"
           body: |
             由 Commit ${{ github.sha }} 自动构建并发布
             
