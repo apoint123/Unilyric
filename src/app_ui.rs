@@ -1,13 +1,12 @@
 use crate::amll_connector::WebsocketStatus;
 use crate::app_definition::UniLyricApp;
 
-use crate::types::{AutoSearchSource, AutoSearchStatus};
+use crate::types::{AutoSearchSource, AutoSearchStatus, ChineseConversionVariant};
 
-use crate::app_actions::{AmllConnectorAction, PlayerAction, UserAction};
+use crate::app_actions::{AmllConnectorAction, LyricsAction, PlayerAction, UIAction, UserAction};
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::{Color32, TextWrapMode};
 use log::LevelFilter;
-use lyrics_helper_rs::converter::LyricFormat;
 use lyrics_helper_rs::model::track::FullLyricsResult;
 
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
@@ -116,187 +115,109 @@ impl UniLyricApp {
                         .parsed_lyric_data
                         .as_ref()
                         .is_some_and(|d| !d.lines.is_empty());
-                let disabled_hover_text = "请先加载主歌词";
 
                 tools_menu.label(egui::RichText::new("通用简繁转换").strong());
-                if tools_menu
-                    .add_enabled(conversion_enabled, egui::Button::new("简体 → 繁体 (通用)"))
-                    .on_disabled_hover_text(disabled_hover_text)
-                    .clicked()
-                {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::ConvertChinese("s2t.json".to_string()),
-                    ));
-                }
-                if tools_menu
-                    .add_enabled(conversion_enabled, egui::Button::new("繁体 → 简体 (通用)"))
-                    .on_disabled_hover_text(disabled_hover_text)
-                    .clicked()
-                {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::ConvertChinese("t2s.json".to_string()),
-                    ));
-                }
+                self.draw_chinese_conversion_menu_item(
+                    tools_menu,
+                    ChineseConversionVariant::S2T,
+                    "简体 → 繁体 (通用)",
+                    conversion_enabled,
+                );
+                self.draw_chinese_conversion_menu_item(
+                    tools_menu,
+                    ChineseConversionVariant::T2S,
+                    "繁体 → 简体 (通用)",
+                    conversion_enabled,
+                );
                 tools_menu.separator();
 
                 tools_menu.label(egui::RichText::new("地区性转换 (含用语)").strong());
                 tools_menu.menu_button("简体 →", |sub_menu| {
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("台湾正体"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "s2twp.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "s2hk.json".to_string(),
-                            ),
-                        ));
-                    }
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::S2TWP,
+                        "台湾正体",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::S2HK,
+                        "香港繁体",
+                        conversion_enabled,
+                    );
                 });
                 tools_menu.menu_button("繁体 →", |sub_menu| {
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("大陆简体 (含用语)"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "tw2sp.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("大陆简体 (仅文字)"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "tw2s.json".to_string(),
-                            ),
-                        ));
-                    }
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::TW2SP,
+                        "大陆简体 (含用语)",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::TW2S,
+                        "大陆简体 (仅文字)",
+                        conversion_enabled,
+                    );
                 });
                 tools_menu.separator();
 
                 tools_menu.label(egui::RichText::new("仅文字转换").strong());
                 tools_menu.menu_button("繁体互转", |sub_menu| {
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("台湾繁体 → 香港繁体"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "tw2t.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体 → 台湾繁体"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "hk2t.json".to_string(),
-                            ),
-                        ));
-                    }
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::TW2T,
+                        "台湾繁体 → 香港繁体",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::HK2T,
+                        "香港繁体 → 台湾繁体",
+                        conversion_enabled,
+                    );
                 });
                 tools_menu.menu_button("其他转换", |sub_menu| {
-                    if sub_menu
-                        .add_enabled(
-                            conversion_enabled,
-                            egui::Button::new("简体 → 台湾繁体 (仅文字)"),
-                        )
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "s2tw.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(
-                            conversion_enabled,
-                            egui::Button::new("繁体 → 台湾繁体 (异体字)"),
-                        )
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "t2tw.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(
-                            conversion_enabled,
-                            egui::Button::new("繁体 → 香港繁体 (异体字)"),
-                        )
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "t2hk.json".to_string(),
-                            ),
-                        ));
-                    }
-                    if sub_menu
-                        .add_enabled(conversion_enabled, egui::Button::new("香港繁体 → 简体"))
-                        .on_disabled_hover_text(disabled_hover_text)
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
-                            crate::app_actions::LyricsAction::ConvertChinese(
-                                "hk2s.json".to_string(),
-                            ),
-                        ));
-                    }
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::S2TW,
+                        "简体 → 台湾繁体 (仅文字)",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::T2TW,
+                        "繁体 → 台湾繁体 (异体字)",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::T2HK,
+                        "繁体 → 香港繁体 (异体字)",
+                        conversion_enabled,
+                    );
+                    self.draw_chinese_conversion_menu_item(
+                        sub_menu,
+                        ChineseConversionVariant::HK2S,
+                        "香港繁体 → 简体",
+                        conversion_enabled,
+                    );
                 });
                 tools_menu.separator();
 
                 tools_menu.label(egui::RichText::new("日语汉字转换").strong());
-                if tools_menu
-                    .add_enabled(
-                        conversion_enabled,
-                        egui::Button::new("日语新字体 → 繁体旧字体"),
-                    )
-                    .on_disabled_hover_text(disabled_hover_text)
-                    .clicked()
-                {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::ConvertChinese("jp2t.json".to_string()),
-                    ));
-                }
-                if tools_menu
-                    .add_enabled(
-                        conversion_enabled,
-                        egui::Button::new("繁体旧字体 → 日语新字体"),
-                    )
-                    .on_disabled_hover_text(disabled_hover_text)
-                    .clicked()
-                {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::ConvertChinese("t2jp.json".to_string()),
-                    ));
-                }
+                self.draw_chinese_conversion_menu_item(
+                    tools_menu,
+                    ChineseConversionVariant::JP2T,
+                    "日语新字体 → 繁体旧字体",
+                    conversion_enabled,
+                );
+                self.draw_chinese_conversion_menu_item(
+                    tools_menu,
+                    ChineseConversionVariant::T2JP,
+                    "繁体旧字体 → 日语新字体",
+                    conversion_enabled,
+                );
             });
 
             // --- 源格式选择 ---
@@ -351,87 +272,15 @@ impl UniLyricApp {
             let mut _target_format_changed_this_frame = false;
             let mut temp_target_format = self.lyrics.target_format;
 
-            // 当源格式为LRC时，限制可选的目标格式 (这是一个重要的业务逻辑)
-            let source_is_lrc_for_target_restriction =
-                self.lyrics.source_format == LyricFormat::Lrc;
-
-            // 如果源是LRC，且当前目标不是LQE, SPL, LRC之一，则自动切换到LRC (或LQE)
-            if source_is_lrc_for_target_restriction
-                && !matches!(
-                    self.lyrics.target_format,
-                    LyricFormat::Lqe | LyricFormat::Spl | LyricFormat::Lrc | LyricFormat::Ttml
-                )
-            {
-                self.lyrics.target_format = LyricFormat::Lrc; // 默认切换到LRC自身
-                temp_target_format = self.lyrics.target_format;
-            }
-
-            // 判断源格式是否为逐行歌词 (LRC, LYL)，或者虽然是TTML/JSON/SPL但其内容是逐行歌词
-            let restrict_target_to_line_based = self
-                .lyrics
-                .parsed_lyric_data
-                .as_ref()
-                .is_some_and(|d| d.is_line_timed_source);
-            // 定义哪些格式是严格需要逐字时间信息的 (不能从纯逐行格式转换而来)
-            let truly_word_based_formats_requiring_syllables = [
-                LyricFormat::Ass,
-                LyricFormat::Qrc,
-                LyricFormat::Yrc,
-                LyricFormat::Lys,
-                LyricFormat::Krc,
-            ];
-
             egui::ComboBox::from_id_salt("target_format_toolbar")
                 .selected_text(self.lyrics.target_format.to_string())
                 .show_ui(ui_bar, |ui_combo| {
                     for fmt_option in &self.lyrics.available_formats {
-                        let mut enabled = true; // 默认可选
-                        let mut hover_text_for_disabled: Option<String> = None; // 禁用时的提示
-
-                        // 规则1: 如果源是LRC，目标只能是 LQE, SPL, LRC
-                        if source_is_lrc_for_target_restriction {
-                            if !matches!(
-                                *fmt_option,
-                                LyricFormat::Lqe
-                                    | LyricFormat::Spl
-                                    | LyricFormat::Lrc
-                                    | LyricFormat::Ttml
-                            ) {
-                                enabled = false;
-                                hover_text_for_disabled =
-                                    Some("LRC源格式只能输出为LQE, SPL, TTML 或 LRC".to_string());
-                            }
-                        }
-                        // 规则2: 如果源是逐行歌词，目标不能是严格的逐字歌词
-                        else if restrict_target_to_line_based
-                            && truly_word_based_formats_requiring_syllables.contains(fmt_option)
-                        {
-                            enabled = false;
-                            hover_text_for_disabled = Some(format!(
-                                "{:?} 为逐行格式，无法转换为逐字格式 {:?}",
-                                self.lyrics.source_format.to_string(),
-                                fmt_option.to_string()
-                            ));
-                        }
-
                         let display_text = fmt_option.to_string();
-                        let mut response = ui_combo
-                            .add_enabled_ui(enabled, |ui_inner| {
-                                ui_inner.selectable_value(
-                                    &mut temp_target_format,
-                                    *fmt_option,
-                                    display_text,
-                                )
-                            })
-                            .inner;
-                        if !enabled {
-                            // 如果禁用，添加提示
-                            if let Some(text_to_show_on_disabled_hover) = hover_text_for_disabled {
-                                response =
-                                    response.on_disabled_hover_text(text_to_show_on_disabled_hover);
-                            }
-                        }
-                        if response.clicked() && enabled {
+                        if ui_combo
+                            .selectable_value(&mut temp_target_format, *fmt_option, display_text)
+                            .clicked()
+                        {
                             ui_combo.close_menu();
                         }
                     }
@@ -924,13 +773,12 @@ impl UniLyricApp {
                             egui::Layout::right_to_left(egui::Align::Center),
                             |btn_ui| {
                                 if btn_ui.button("关闭").clicked() {
-                                    // 关闭按钮
-                                    self.ui.show_bottom_log_panel = false;
-                                    self.ui.new_trigger_log_exists = false; // 关闭时清除新日志提示
+                                    self.send_action(UserAction::UI(UIAction::HidePanel(
+                                        crate::app_actions::PanelType::Log,
+                                    )));
                                 }
                                 if btn_ui.button("清空").clicked() {
-                                    // 清空按钮
-                                    self.ui.log_display_buffer.clear(); // 清空日志缓冲区
+                                    self.send_action(UserAction::UI(UIAction::ClearLogs));
                                 }
                             },
                         );
@@ -1420,7 +1268,7 @@ impl UniLyricApp {
                 .websocket_url
                 .clone();
 
-            ui.label(format!("目标 URL: {}", websocket_url_display));
+            ui.label(format!("目标 URL: {websocket_url_display}"));
 
             match current_status {
                 WebsocketStatus::断开 => {
@@ -1465,7 +1313,7 @@ impl UniLyricApp {
                 .iter()
                 .find(|s| &s.session_id == id)
                 .map_or_else(
-                    || format!("自动 (选择 '{}' 已失效)", id),
+                    || format!("自动 (选择 '{id}' 已失效)"),
                     |s_info| s_info.display_name.clone(),
                 ),
             None => "自动 (系统默认)".to_string(),
@@ -1542,8 +1390,8 @@ impl UniLyricApp {
                 );
                 if response.changed() {
                     self.player.smtc_time_offset_ms = current_offset;
-                    if let Ok(mut settings) = self.app_settings.lock() {
-                        if settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms {
+                    if let Ok(mut settings) = self.app_settings.lock()
+                        && settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms {
                             settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
                             if let Err(e) = settings.save() {
                                 tracing::error!(
@@ -1552,15 +1400,14 @@ impl UniLyricApp {
                                 );
                             }
                         }
-                    }
                 }
             });
 
-            if let Some(cover_bytes) = &now_playing.cover_data {
-                if !cover_bytes.is_empty() {
+            if let Some(cover_bytes) = &now_playing.cover_data
+                && !cover_bytes.is_empty() {
                     let image_id_cow = now_playing.cover_data_hash.map_or_else(
                         || "smtc_cover_no_hash".into(),
-                        |hash| format!("smtc_cover_hash_{}", hash).into(),
+                        |hash| format!("smtc_cover_hash_{hash}").into(),
                     );
                     let image_source = egui::ImageSource::Bytes {
                         uri: image_id_cow,
@@ -1574,7 +1421,6 @@ impl UniLyricApp {
                             .bg_fill(Color32::TRANSPARENT),
                     );
                 }
-            }
         } else {
             ui.weak("无SMTC信息 / 未选择特定源");
         }
@@ -1682,8 +1528,8 @@ impl UniLyricApp {
             });
         }
 
-        if let Some((source, result)) = action_load_lyrics {
-            self.load_lyrics_from_stored_result(source, result);
+        if let Some((_source, result)) = action_load_lyrics {
+            self.send_action(UserAction::Lyrics(LyricsAction::LoadFetchedResult(result)));
         }
         if let Some(source) = action_refetch {
             crate::app_fetch_core::trigger_manual_refetch_for_source(self, source);

@@ -8,7 +8,7 @@ use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use smtc_suite::MediaUpdate;
 
-pub(crate) fn process_log_messages(app: &mut UniLyricApp) {
+pub(super) fn process_log_messages(app: &mut UniLyricApp) {
     let mut has_warn_or_higher_this_frame = false;
     let mut first_warn_or_higher_message: Option<String> = None;
 
@@ -43,7 +43,7 @@ pub(crate) fn process_log_messages(app: &mut UniLyricApp) {
     }
 }
 
-pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
+pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
     while let Ok(update) = app.amll_connector.update_rx.try_recv() {
         match update {
             ConnectorUpdate::WebsocketStatusChanged(status) => {
@@ -54,80 +54,84 @@ pub(crate) fn process_connector_updates(app: &mut UniLyricApp) {
 
             ConnectorUpdate::MediaCommand(cmd) => {
                 tracing::info!("[App Update] 收到来自 AMLL Player 的媒体命令: {:?}", cmd);
-                if let Some(tx) = &app.player.command_tx {
-                    if tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err() {
+                if let Some(tx) = &app.player.command_tx
+                    && tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err() {
                         tracing::error!("[App Update] 执行来自 AMLL Player 的命令失败。");
                     }
-                }
             }
             ConnectorUpdate::NowPlayingTrackChanged(info) => {
                 app.player.current_now_playing = info;
             }
+            ConnectorUpdate::SmtcUpdate(media_update) => match media_update {
+                MediaUpdate::TrackChanged(new_info) => {
+                    let is_new_song = app.player.current_now_playing.title != new_info.title
+                        || app.player.current_now_playing.artist != new_info.artist;
+
+                    if is_new_song {
+                        app.player.current_now_playing = new_info.clone();
+
+                        crate::app_fetch_core::clear_last_fetch_results(app);
+                        crate::app_fetch_core::initial_auto_fetch_and_send_lyrics(
+                            app,
+                            new_info.clone(),
+                        );
+                    } else {
+                        let current_info = &mut app.player.current_now_playing;
+
+                        if let Some(pos) = new_info.position_ms {
+                            current_info.position_ms = Some(pos);
+                        }
+                        if let Some(time) = new_info.position_report_time {
+                            current_info.position_report_time = Some(time);
+                        }
+                        if let Some(playing) = new_info.is_playing {
+                            current_info.is_playing = Some(playing);
+                        }
+
+                        if let Some(cover) = new_info.cover_data {
+                            current_info.cover_data = Some(cover);
+                            current_info.cover_data_hash = new_info.cover_data_hash;
+                        }
+
+                        if let Some(duration) = new_info.duration_ms {
+                            current_info.duration_ms = Some(duration);
+                        }
+                        if let Some(shuffle) = new_info.is_shuffle_active {
+                            current_info.is_shuffle_active = Some(shuffle);
+                        }
+                        if let Some(repeat) = new_info.repeat_mode {
+                            current_info.repeat_mode = Some(repeat);
+                        }
+                    }
+                }
+                MediaUpdate::SessionsChanged(sessions) => {
+                    tracing::info!(
+                        "[SMTC Update] 可用会话列表已更新，共 {} 个。",
+                        sessions.len()
+                    );
+                    app.player.available_sessions = sessions;
+                }
+                MediaUpdate::SelectedSessionVanished(session_id) => {
+                    tracing::warn!("[SMTC Update] 选中的会话 '{session_id}' 已消失。");
+                    app.ui.toasts.add(egui_toast::Toast {
+                        text: "当前媒体源已关闭".into(),
+                        kind: egui_toast::ToastKind::Warning,
+                        options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
+                        style: Default::default(),
+                    });
+                }
+                MediaUpdate::Error(e) => {
+                    tracing::error!("[SMTC Update] smtc-suite 报告了一个错误: {e}");
+                }
+                _ => {}
+            },
+
             _ => {}
         }
     }
 }
 
-pub(crate) fn process_smtc_updates(app: &mut UniLyricApp) {
-    let mut updates_this_frame = Vec::new();
-    if let Some(rx) = &app.player.update_rx {
-        while let Ok(update) = rx.try_recv() {
-            updates_this_frame.push(update);
-        }
-    }
-
-    for update in updates_this_frame {
-        match update {
-            MediaUpdate::TrackChanged(new_info) => {
-                let is_new_song = app.player.current_now_playing.title != new_info.title
-                    || app.player.current_now_playing.artist != new_info.artist;
-
-                app.player.current_now_playing = new_info.clone();
-
-                if is_new_song {
-                    crate::app_fetch_core::initial_auto_fetch_and_send_lyrics(
-                        app,
-                        new_info.clone(),
-                    );
-                }
-            }
-            MediaUpdate::SessionsChanged(sessions) => {
-                tracing::info!(
-                    "[SMTC Update] 可用会话列表已更新，共 {} 个。",
-                    sessions.len()
-                );
-                app.player.available_sessions = sessions;
-            }
-            MediaUpdate::SelectedSessionVanished(session_id) => {
-                tracing::warn!("[SMTC Update] 选中的会话 '{session_id}' 已消失。");
-                // UI 状态会自动在下次渲染时更新，因为 available_sessions 也会随之改变
-                app.ui.toasts.add(egui_toast::Toast {
-                    text: "当前媒体源已关闭".into(),
-                    kind: egui_toast::ToastKind::Warning,
-                    options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
-                    style: Default::default(),
-                });
-            }
-            MediaUpdate::VolumeChanged {
-                session_id,
-                volume,
-                is_muted,
-            } => {
-                tracing::trace!(
-                    "[SMTC Update] 会话 {session_id} 音量变为 {volume} (静音: {is_muted})"
-                );
-            }
-            MediaUpdate::Error(e) => {
-                tracing::error!("[SMTC Update] smtc-suite 报告了一个错误: {e}");
-            }
-            _ => {
-                // 忽略其他事件，如 AudioData, TrackChangedForced 等
-            }
-        }
-    }
-}
-
-pub(crate) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
+pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     match app.fetcher.result_rx.try_recv() {
         Ok(auto_fetch_result) => match auto_fetch_result {
             AutoFetchResult::Success {
@@ -165,35 +169,32 @@ pub(crate) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     *status_arc.lock().unwrap() = AutoSearchStatus::Success(source_format);
                 }
 
-                if !app.fetcher.current_ui_populated {
-                    app.fetcher.current_ui_populated = true;
+                app.send_action(crate::app_actions::UserAction::Lyrics(
+                    crate::app_actions::LyricsAction::AutoFetchCompleted(
+                        crate::types::AutoFetchResult::Success {
+                            source,
+                            full_lyrics_result,
+                        },
+                    ),
+                ));
 
-                    let all_search_status_arcs = [
-                        &app.fetcher.local_cache_status,
-                        &app.fetcher.qqmusic_status,
-                        &app.fetcher.kugou_status,
-                        &app.fetcher.netease_status,
-                        &app.fetcher.amll_db_status,
-                        &app.fetcher.musixmatch_status,
-                    ];
+                let all_search_status_arcs = [
+                    &app.fetcher.local_cache_status,
+                    &app.fetcher.qqmusic_status,
+                    &app.fetcher.kugou_status,
+                    &app.fetcher.netease_status,
+                    &app.fetcher.amll_db_status,
+                    &app.fetcher.musixmatch_status,
+                ];
 
-                    for status_arc in all_search_status_arcs {
-                        let mut guard = status_arc.lock().unwrap();
-                        if matches!(*guard, AutoSearchStatus::Searching) {
-                            *guard = AutoSearchStatus::NotFound;
-                        }
+                for status_arc in all_search_status_arcs {
+                    let mut guard = status_arc.lock().unwrap();
+                    if matches!(*guard, AutoSearchStatus::Searching) {
+                        *guard = AutoSearchStatus::NotFound;
                     }
-
-                    app.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::AutoFetchCompleted(
-                            crate::types::AutoFetchResult::Success {
-                                source,
-                                full_lyrics_result,
-                            },
-                        ),
-                    ));
                 }
             }
+
             AutoFetchResult::NotFound => {
                 info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
                 let sources_to_update_on_not_found = [
@@ -235,7 +236,7 @@ pub(crate) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     }
 }
 
-pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
+pub(super) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
     match app.ttml_db_upload.action_rx.try_recv() {
         Ok(action) => match action {
             TtmlDbUploadUserAction::InProgressUpdate(msg) => {
@@ -379,7 +380,7 @@ pub(crate) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
     }
 }
 
-pub(crate) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
+pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
         app.draw_toolbar(ui);
     });
@@ -465,7 +466,7 @@ pub(crate) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
     }
 }
 
-pub(crate) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
+pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
     if !ctx.input(|i| i.raw.dropped_files.is_empty()) {
         let files = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(file) = files.first() {
@@ -478,7 +479,9 @@ pub(crate) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
                     ));
                     app.lyrics.input_text = text_content;
                     app.lyrics.metadata_source_is_download = false;
-                    app.handle_convert();
+                    app.send_action(crate::app_actions::UserAction::Lyrics(
+                        crate::app_actions::LyricsAction::Convert,
+                    ));
                 } else {
                     warn!("[Unilyric] 拖放的字节数据不是有效的UTF-8文本。");
                 }
@@ -508,7 +511,7 @@ pub(crate) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
 
 /// 检查并处理来自异步歌词转换任务的结果。
 /// 此函数应在每帧的 update 循环中调用。
-pub(crate) fn handle_conversion_results(app: &mut UniLyricApp) {
+pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
     if app.lyrics.conversion_result_rx.is_some()
         && let Ok(result) = app.lyrics.conversion_result_rx.as_ref().unwrap().try_recv()
     {
@@ -522,7 +525,7 @@ pub(crate) fn handle_conversion_results(app: &mut UniLyricApp) {
 }
 
 /// 处理来自异步歌词搜索任务的结果。
-pub(crate) fn handle_search_results(app: &mut UniLyricApp) {
+pub(super) fn handle_search_results(app: &mut UniLyricApp) {
     if let Some(rx) = &app.lyrics.search_result_rx
         && let Ok(result) = rx.try_recv()
     {
@@ -536,7 +539,7 @@ pub(crate) fn handle_search_results(app: &mut UniLyricApp) {
 }
 
 /// 处理来自异步歌词下载任务的结果。
-pub(crate) fn handle_download_results(app: &mut UniLyricApp) {
+pub(super) fn handle_download_results(app: &mut UniLyricApp) {
     if let Some(rx) = &app.lyrics.download_result_rx
         && let Ok(result) = rx.try_recv()
     {

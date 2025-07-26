@@ -1,40 +1,36 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::sync::{Arc, Mutex};
-
-use crate::amll_connector::{
-    AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus,
+use std::sync::{
+    Arc, Mutex,
+    mpsc::{Receiver as StdReceiver, Sender as StdSender, channel as std_channel},
 };
-use crate::app::TtmlDbUploadUserAction;
-use crate::app_settings::AppSettings;
-use crate::types::{AutoFetchResult, AutoSearchStatus, LocalLyricCacheEntry, LogEntry};
-use crate::utils;
+
 use egui_toast::Toasts;
-use lyrics_helper_rs::converter::LyricFormat;
+use lyrics_helper_rs::{
+    SearchResult,
+    converter::{LyricFormat, types::FullConversionResult},
+    error::LyricsHelperError,
+    model::track::FullLyricsResult,
+};
 use reqwest::Client;
 use smtc_suite::{MediaCommand, MediaUpdate, NowPlayingInfo, SmtcSessionInfo};
-use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender, channel as std_channel};
-use tokio::sync::mpsc::Sender as TokioSender;
-use tokio::sync::mpsc::channel as tokio_channel;
-use tokio::task::JoinHandle;
+use tokio::{
+    sync::mpsc::{Sender as TokioSender, channel as tokio_channel},
+    task::JoinHandle,
+};
 
-use crate::app_actions::UserAction;
+use crate::{
+    amll_connector::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
+    app::TtmlDbUploadUserAction,
+    app_actions::UserAction,
+    app_settings::AppSettings,
+    types::{AutoFetchResult, AutoSearchStatus, LocalLyricCacheEntry, LogEntry},
+    utils,
+};
 
-pub(super) type SearchResultRx = StdReceiver<
-    Result<Vec<lyrics_helper_rs::SearchResult>, lyrics_helper_rs::error::LyricsHelperError>,
->;
-pub(super) type DownloadResultRx = StdReceiver<
-    Result<
-        lyrics_helper_rs::model::track::FullLyricsResult,
-        lyrics_helper_rs::error::LyricsHelperError,
-    >,
->;
-pub(super) type ConversionResultRx = StdReceiver<
-    Result<
-        lyrics_helper_rs::converter::types::FullConversionResult,
-        lyrics_helper_rs::error::LyricsHelperError,
-    >,
->;
+pub(super) type SearchResultRx = StdReceiver<Result<Vec<SearchResult>, LyricsHelperError>>;
+pub(super) type DownloadResultRx = StdReceiver<Result<FullLyricsResult, LyricsHelperError>>;
+pub(super) type ConversionResultRx = StdReceiver<Result<FullConversionResult, LyricsHelperError>>;
 
 pub(super) struct UiState {
     pub(super) show_bottom_log_panel: bool,
@@ -295,26 +291,9 @@ impl UniLyricApp {
             download_result_rx: None,
         };
 
-        let (mut smtc_command_tx, mut smtc_update_rx) = (None, None);
-        match smtc_suite::MediaManager::start() {
-            Ok(controller) => {
-                tracing::info!("[UniLyricApp new] smtc-suite 媒体服务已成功启动。");
-                let smtc_suite::MediaController {
-                    command_tx,
-                    update_rx,
-                } = controller;
-                smtc_command_tx = Some(command_tx);
-                smtc_update_rx = Some(update_rx);
-            }
-            Err(e) => {
-                tracing::error!("[UniLyricApp new] 启动 smtc-suite 媒体服务失败: {e}");
-            }
-        };
-
         let smtc_controller = smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
         let smtc_cmd_tx = smtc_controller.command_tx;
-        let smtc_update_rx_for_ui = smtc_controller.update_rx.clone(); // UI 保留一个克隆用于显示
-        let smtc_update_rx_for_actor = smtc_controller.update_rx; // actor 拿走原始的
+        let smtc_update_rx_for_actor = smtc_controller.update_rx;
 
         let (amll_update_tx, amll_update_rx) = std::sync::mpsc::channel::<ConnectorUpdate>();
         let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
@@ -324,13 +303,13 @@ impl UniLyricApp {
                 amll_command_rx,
                 amll_update_tx,
                 mc_config.clone(),
-                smtc_cmd_tx,
+                smtc_cmd_tx.clone(),
                 smtc_update_rx_for_actor,
             ));
 
         let player_state = PlayerState {
-            command_tx: smtc_command_tx,
-            update_rx: smtc_update_rx,
+            command_tx: Some(smtc_cmd_tx),
+            update_rx: None,
             current_now_playing: NowPlayingInfo::default(),
             available_sessions: Vec::new(),
             smtc_time_offset_ms: settings.smtc_time_offset_ms,
@@ -428,14 +407,29 @@ impl UniLyricApp {
         app
     }
 
-    pub(crate) fn shutdown_amll_actor(&mut self) {
+    pub(super) fn shutdown_amll_actor(&mut self) {
+        tracing::debug!("[Shutdown] `shutdown_amll_actor` 已被调用。");
+
+        if let Some(tx) = &self.player.command_tx {
+            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite 服务...");
+            if tx.send(MediaCommand::Shutdown).is_err() {
+                tracing::warn!(
+                    "[Shutdown] 发送 Shutdown 命令到 smtc-suite 失败 (服务可能已关闭)。"
+                );
+            }
+        }
+
         if let Some(tx) = &self.amll_connector.command_tx {
+            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
             if tx.try_send(ConnectorCommand::Shutdown).is_err() {
                 tracing::warn!("[Shutdown] 发送 Shutdown 命令到 actor 失败 (可能已关闭)。");
             }
         }
         if let Some(handle) = self.amll_connector.actor_handle.take() {
+            tracing::debug!("[Shutdown] 正在中止 actor 的主任务句柄...");
             handle.abort();
         }
+
+        tracing::debug!("[Shutdown] `shutdown_amll_actor` 执行完毕。");
     }
 }

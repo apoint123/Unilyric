@@ -2,10 +2,17 @@ use super::{
     types::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
     websocket_client,
 };
-use crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender};
+use crossbeam_channel::{
+    Receiver as CrossbeamReceiver, RecvTimeoutError, Sender as CrossbeamSender,
+};
 use smtc_suite::SmtcControlCommand;
 use smtc_suite::{MediaCommand, MediaUpdate};
-use std::sync::mpsc::Sender as StdSender;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+    mpsc::Sender as StdSender,
+};
+use std::time::Duration;
 use tokio::sync::mpsc::{
     Receiver as TokioReceiver, Sender as TokioSender, channel as tokio_channel,
 };
@@ -19,6 +26,7 @@ pub async fn amll_connector_actor(
     smtc_command_tx: CrossbeamSender<MediaCommand>,
     smtc_update_rx: CrossbeamReceiver<MediaUpdate>,
 ) {
+    tracing::info!("[AMLL Actor] Actor 任务已启动。");
     let mut config = initial_config;
     let mut ws_outgoing_tx: Option<TokioSender<ProtocolBody>> = None;
     let mut ws_shutdown_signal_tx: Option<oneshot::Sender<()>> = None;
@@ -36,18 +44,38 @@ pub async fn amll_connector_actor(
         ws_shutdown_signal_tx = Some(new_shutdown_tx);
     }
 
+    let bridge_shutdown_signal = Arc::new(AtomicBool::new(false));
+
     let (smtc_update_tx_async, mut smtc_update_rx_async) = tokio_channel(128);
-    tokio::spawn(async move {
-        tokio::task::spawn_blocking(move || {
-            while let Ok(update) = smtc_update_rx.recv() {
-                if smtc_update_tx_async.blocking_send(update).is_err() {
-                    break;
+    let smtc_bridge_handle = {
+        let signal = Arc::clone(&bridge_shutdown_signal);
+        tokio::spawn(async move {
+            tracing::debug!("[SMTC Bridge] 桥接任务已启动。");
+            tokio::task::spawn_blocking(move || {
+                loop {
+                    if signal.load(Ordering::Relaxed) {
+                        tracing::debug!("[SMTC Bridge] 收到关闭信号，正在退出循环。");
+                        break;
+                    }
+
+                    // 防止无限阻塞
+                    match smtc_update_rx.recv_timeout(Duration::from_millis(100)) {
+                        Ok(update) => {
+                            if smtc_update_tx_async.blocking_send(update).is_err() {
+                                break;
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) => continue, // 超时是正常情况
+                        Err(RecvTimeoutError::Disconnected) => break, // 通道关闭
+                    }
                 }
-            }
+                tracing::debug!("[SMTC Bridge] 桥接任务正常退出。");
+            })
+            .await
+            .unwrap();
+            tracing::debug!("[SMTC Bridge] 桥接任务已完成。");
         })
-        .await
-        .unwrap();
-    });
+    };
 
     tracing::debug!("[AMLL Actor] 已启动并进入主事件循环。");
 
@@ -56,7 +84,14 @@ pub async fn amll_connector_actor(
             Some(command) = command_rx.recv() => {
                 match command {
                     ConnectorCommand::Shutdown => {
-                        tracing::info!("[AMLL Actor] 收到 Shutdown 命令，准备退出。");
+                        tracing::debug!("[AMLL Actor] 已收到 Shutdown 命令。");
+
+                        bridge_shutdown_signal.store(true, Ordering::Relaxed);
+
+                        if let Err(e) = smtc_bridge_handle.await {
+                             tracing::warn!("[AMLL Actor] 等待 SMTC 桥接任务完成时出错: {}", e);
+                        }
+
                         if let Some(tx) = ws_shutdown_signal_tx.take() { let _ = tx.send(()); }
                         if let Some(handle) = ws_client_handle.take() { handle.abort(); }
                         break;
@@ -65,7 +100,7 @@ pub async fn amll_connector_actor(
                         let old_config = config.clone();
                         config = new_config;
                         let should_be_running = config.enabled;
-                        let is_running = ws_client_handle.as_ref().map_or(false, |h| !h.is_finished());
+                        let is_running = ws_client_handle.as_ref().is_some_and(|h| !h.is_finished());
                         let url_changed = old_config.websocket_url != config.websocket_url;
                         if should_be_running && (!is_running || url_changed) {
                             tracing::info!("[AMLL Actor] 配置要求客户端运行，正在启动/重启...");
@@ -86,18 +121,16 @@ pub async fn amll_connector_actor(
                         let _ = update_tx.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开));
                     },
                     ConnectorCommand::SendLyricTtml(ttml) => {
-                        if let Some(tx) = &ws_outgoing_tx {
-                           if tx.try_send(ProtocolBody::SetLyricFromTTML { data: ttml.into() }).is_err() {
+                        if let Some(tx) = &ws_outgoing_tx
+                           && tx.try_send(ProtocolBody::SetLyricFromTTML { data: ttml.into() }).is_err() {
                                 tracing::warn!("[AMLL Actor] 发送 TTML 到客户端任务失败 (通道已满或关闭)。");
                             }
-                        }
                     },
                     ConnectorCommand::SendProtocolBody(body) => {
-                         if let Some(tx) = &ws_outgoing_tx {
-                            if tx.try_send(body).is_err() {
+                         if let Some(tx) = &ws_outgoing_tx
+                            && tx.try_send(body).is_err() {
                                 tracing::warn!("[AMLL Actor] 发送 ProtocolBody 到客户端任务失败 (通道已满或关闭)。");
                             }
-                        }
                     },
                     _ => {}
                 }
@@ -119,6 +152,10 @@ pub async fn amll_connector_actor(
             },
 
             Some(update) = smtc_update_rx_async.recv() => {
+                 if update_tx.send(ConnectorUpdate::SmtcUpdate(update.clone())).is_err() {
+                     tracing::warn!("[AMLL Actor] 转发 SMTC 更新到 UI 线程失败，UI 可能已关闭。");
+                 }
+
                 if let MediaUpdate::TrackChanged(track_info) = update {
                     tracing::trace!("[AMLL Actor] 收到 SmtcTrackChanged 更新，直接处理...");
 
@@ -141,11 +178,10 @@ pub async fn amll_connector_actor(
                                 duration: track_info.duration_ms.unwrap_or(0),
                             };
                             let _ = tx.try_send(set_music_info_body);
-                            if let Some(ref cover_data) = track_info.cover_data {
-                                if !cover_data.is_empty() {
+                            if let Some(ref cover_data) = track_info.cover_data
+                                && !cover_data.is_empty() {
                                     let _ = tx.try_send(ProtocolBody::SetMusicAlbumCoverImageData { data: cover_data.to_vec() });
                                 }
-                            }
                         }
                         if let Some(is_playing) = track_info.is_playing {
                             let _ = tx.try_send(if is_playing { ProtocolBody::OnResumed } else { ProtocolBody::OnPaused });
@@ -154,14 +190,11 @@ pub async fn amll_connector_actor(
                             let _ = tx.try_send(ProtocolBody::OnPlayProgress { progress });
                         }
                     }
-
-                    let _ = update_tx.send(ConnectorUpdate::NowPlayingTrackChanged(track_info));
                 }
             },
-
         }
     }
-    tracing::info!("[AMLL Actor] 事件循环已结束。");
+    tracing::info!("[AMLL Actor] 主事件循环已结束，Actor 任务即将完成。");
 }
 
 fn start_websocket_client_task(

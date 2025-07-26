@@ -4,7 +4,8 @@ use crate::app_actions::{
     UIAction, UserAction,
 };
 use crate::app_definition::UniLyricApp;
-use crate::types::LrcContentType;
+use crate::types::{ChineseConversionVariant, EditableMetadataEntry, LrcContentType};
+use rand::Rng;
 use smtc_suite::MediaCommand;
 use tracing::warn;
 use tracing::{debug, error, info};
@@ -202,10 +203,10 @@ impl UniLyricApp {
                 }
             };
 
-            if let Some(cmd) = command {
-                if let Err(e) = tx.try_send(cmd) {
-                    tracing::error!("[AMLL Action] 发送命令到 actor 失败: {}", e);
-                }
+            if let Some(cmd) = command
+                && let Err(e) = tx.try_send(cmd)
+            {
+                tracing::error!("[AMLL Action] 发送命令到 actor 失败: {}", e);
             }
         }
         ActionResult::Success
@@ -262,8 +263,8 @@ impl UniLyricApp {
                     }
                 }
             }
-            LyricsAction::ConvertChinese(config_name) => {
-                info!("[Convert] Starting Chinese conversion with config: {config_name}");
+            LyricsAction::ConvertChinese(variant) => {
+                info!("[Convert] Starting Chinese conversion with variant: {variant:?}");
 
                 if self.lyrics.conversion_in_progress {
                     warn!("[Convert] Conversion already in progress, skipping new request.");
@@ -349,7 +350,7 @@ impl UniLyricApp {
                     // 使用中文转换选项
                     let options = lyrics_helper_rs::converter::types::ConversionOptions {
                         chinese_conversion: lyrics_helper_rs::converter::types::ChineseConversionOptions {
-                            config_name: Some(config_name.clone()),
+                            config_name: Some(variant.to_filename().to_string()),
                             mode: lyrics_helper_rs::converter::types::ChineseConversionMode::Replace,
                             ..Default::default()
                         },
@@ -406,22 +407,7 @@ impl UniLyricApp {
                 ActionResult::Success
             }
             LyricsAction::ClearAllData => {
-                self.lyrics.input_text.clear();
-                self.lyrics.output_text.clear();
-                self.lyrics.display_translation_lrc_output.clear();
-                self.lyrics.display_romanization_lrc_output.clear();
-                self.lyrics.parsed_lyric_data = None;
-                self.lyrics.loaded_translation_lrc = None;
-                self.lyrics.loaded_romanization_lrc = None;
-                self.lyrics.current_markers.clear();
-                self.lyrics.metadata_is_user_edited = false;
-
-                self.lyrics
-                    .editable_metadata
-                    .retain(|entry| entry.is_pinned);
-                for entry in &mut self.lyrics.editable_metadata {
-                    entry.is_from_file = false;
-                }
+                self.clear_lyrics_state_for_new_song_internal();
                 ActionResult::Success
             }
             LyricsAction::Search => {
@@ -508,43 +494,25 @@ impl UniLyricApp {
                 self.lyrics.download_in_progress = false;
                 match result {
                     Ok(full_lyrics_result) => {
-                        let source = crate::types::AutoSearchSource::from(
-                            full_lyrics_result.parsed.source_name.clone(),
-                        );
-                        info!("[Download] 从 {source:?} 下载歌词成功。");
+                        let source_name = full_lyrics_result.parsed.source_name.clone();
+                        info!("[Download] 从 {source_name} 下载歌词成功，将立即加载。");
 
                         self.ui.show_search_window = false;
 
-                        info!("[ProcessFetched] 处理来自 {source:?} 的歌词");
+                        info!("[ProcessFetched] 开始处理已下载的歌词结果。");
 
-                        // 直接清空数据，不发送事件以避免异步问题
-                        self.lyrics.input_text.clear();
-                        self.lyrics.output_text.clear();
-                        self.lyrics.display_translation_lrc_output.clear();
-                        self.lyrics.display_romanization_lrc_output.clear();
-                        self.lyrics.parsed_lyric_data = None;
-                        self.lyrics.loaded_translation_lrc = None;
-                        self.lyrics.loaded_romanization_lrc = None;
-                        self.lyrics.current_markers.clear();
-                        self.lyrics.metadata_is_user_edited = false;
-                        self.lyrics
-                            .editable_metadata
-                            .retain(|entry| entry.is_pinned);
-                        for entry in &mut self.lyrics.editable_metadata {
-                            entry.is_from_file = false;
-                        }
+                        self.clear_lyrics_state_for_new_song_internal();
 
                         let parsed_data = full_lyrics_result.parsed;
                         let raw_data = full_lyrics_result.raw;
 
-                        // 使用获取到的原始文本和格式填充状态
                         self.lyrics.input_text = raw_data.content;
                         self.lyrics.source_format = parsed_data.source_format;
                         self.fetcher.last_source_format = Some(parsed_data.source_format);
-
                         self.lyrics.metadata_source_is_download = true;
 
                         self.trigger_convert();
+
                         ActionResult::Success
                     }
                     Err(e) => {
@@ -561,7 +529,7 @@ impl UniLyricApp {
                 use rand::Rng;
                 // 为新条目生成一个相对唯一的ID
                 let new_entry_id_num =
-                    self.lyrics.editable_metadata.len() as u32 + rand::thread_rng().r#gen::<u32>();
+                    self.lyrics.editable_metadata.len() as u32 + rand::rng().random::<u32>();
 
                 let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
                 self.lyrics
@@ -620,7 +588,41 @@ impl UniLyricApp {
                 }
             }
             LyricsAction::AutoFetchCompleted(auto_fetch_result) => {
-                self.handle_auto_fetch_result(auto_fetch_result);
+                // 这是“自动加载”的逻辑
+                if let crate::types::AutoFetchResult::Success {
+                    source,
+                    full_lyrics_result,
+                } = auto_fetch_result
+                {
+                    if !self.fetcher.current_ui_populated {
+                        info!("[AutoFetch] UI未被填充，正在自动加载来自 {source:?} 的歌词。");
+
+                        self.send_action(UserAction::Lyrics(LyricsAction::LoadFetchedResult(
+                            full_lyrics_result,
+                        )));
+                    } else {
+                        info!("[AutoFetch] UI已被填充，跳过对 {source:?} 结果的自动加载。");
+                    }
+                }
+                ActionResult::Success
+            }
+            LyricsAction::LoadFetchedResult(result) => {
+                // 手动加载的逻辑，无条件执行
+                info!("[ProcessFetched] 用户或系统请求加载一个歌词结果。");
+
+                self.fetcher.current_ui_populated = true;
+
+                self.clear_lyrics_state_for_new_song_internal();
+
+                let parsed_data = result.parsed;
+                let raw_data = result.raw;
+
+                self.lyrics.input_text = raw_data.content;
+                self.lyrics.source_format = parsed_data.source_format;
+                self.fetcher.last_source_format = Some(parsed_data.source_format);
+                self.lyrics.metadata_source_is_download = true;
+
+                self.trigger_convert();
                 ActionResult::Success
             }
             LyricsAction::LrcInputChanged(text, content_type) => {
@@ -657,6 +659,26 @@ impl UniLyricApp {
                 }
                 ActionResult::Success
             }
+        }
+    }
+
+    fn clear_lyrics_state_for_new_song_internal(&mut self) {
+        info!("[State] 正在为新歌曲清理歌词状态。");
+        self.lyrics.input_text.clear();
+        self.lyrics.output_text.clear();
+        self.lyrics.display_translation_lrc_output.clear();
+        self.lyrics.display_romanization_lrc_output.clear();
+        self.lyrics.parsed_lyric_data = None;
+        self.lyrics.loaded_translation_lrc = None;
+        self.lyrics.loaded_romanization_lrc = None;
+        self.lyrics.current_markers.clear();
+        self.lyrics.metadata_is_user_edited = false;
+
+        self.lyrics
+            .editable_metadata
+            .retain(|entry| entry.is_pinned);
+        for entry in &mut self.lyrics.editable_metadata {
+            entry.is_from_file = false;
         }
     }
 
@@ -724,7 +746,10 @@ impl UniLyricApp {
             }
             UIAction::HidePanel(panel) => {
                 match panel {
-                    PanelType::Log => self.ui.show_bottom_log_panel = false,
+                    PanelType::Log => {
+                        self.ui.show_bottom_log_panel = false;
+                        self.ui.new_trigger_log_exists = false;
+                    }
                     PanelType::Markers => self.ui.show_markers_panel = false,
                     PanelType::Translation => self.ui.show_translation_lrc_panel = false,
                     PanelType::Romanization => self.ui.show_romanization_lrc_panel = false,
@@ -737,6 +762,10 @@ impl UniLyricApp {
             }
             UIAction::SetWrapText(wrap) => {
                 self.ui.wrap_text = wrap;
+                ActionResult::Success
+            }
+            UIAction::ClearLogs => {
+                self.ui.log_display_buffer.clear();
                 ActionResult::Success
             }
         }
@@ -756,16 +785,22 @@ impl UniLyricApp {
                 command_tx.send(MediaCommand::Control(control_command))
             }
             PlayerAction::SelectSmtcSession(session_id) => {
-                tracing::info!("[PlayerAction] 请求选择新的 SMTC 会话: {}", session_id);
-                self.player.last_requested_session_id = Some(session_id.clone());
-
-                if let Ok(mut settings) = self.app_settings.lock() {
-                    settings.last_selected_smtc_session_id = Some(session_id.clone());
-                    if let Err(e) = settings.save() {
-                        tracing::warn!("[PlayerAction] 保存上次选择的会MTC会话ID失败: {}", e);
-                    }
+                let session_id_for_state: Option<String>;
+                if session_id.is_empty() {
+                    tracing::info!("[PlayerAction] 自动选择会话。");
+                    session_id_for_state = None;
+                } else {
+                    tracing::info!("[PlayerAction] 选择新的 SMTC 会话: {}", session_id);
+                    session_id_for_state = Some(session_id.clone());
                 }
 
+                self.player.last_requested_session_id = session_id_for_state.clone();
+                if let Ok(mut settings) = self.app_settings.lock() {
+                    settings.last_selected_smtc_session_id = session_id_for_state;
+                    if let Err(e) = settings.save() {
+                        tracing::warn!("[PlayerAction] 保存上次选择的SMTC会话ID失败: {}", e);
+                    }
+                }
                 command_tx.send(MediaCommand::SelectSession(session_id))
             }
             PlayerAction::SaveToLocalCache => {
@@ -897,21 +932,20 @@ impl UniLyricApp {
                         "[Settings] 设置已保存。新 AMLL Connector配置: {new_mc_config_from_settings:?}"
                     );
 
-                    if new_mc_config_from_settings.enabled {
-                        if let Some(tx) = &self.amll_connector.command_tx
-                            && old_mc_config != new_mc_config_from_settings
+                    if new_mc_config_from_settings.enabled
+                        && let Some(tx) = &self.amll_connector.command_tx
+                        && old_mc_config != new_mc_config_from_settings
+                    {
+                        debug!("[Settings] 发送 UpdateConfig 命令给AMLL Connector worker。");
+                        if tx
+                            .try_send(crate::amll_connector::ConnectorCommand::UpdateConfig(
+                                new_mc_config_from_settings.clone(),
+                            ))
+                            .is_err()
                         {
-                            debug!("[Settings] 发送 UpdateConfig 命令给AMLL Connector worker。");
-                            if tx
-                                .try_send(crate::amll_connector::ConnectorCommand::UpdateConfig(
-                                    new_mc_config_from_settings.clone(),
-                                ))
-                                .is_err()
-                            {
-                                error!(
-                                    "[Settings] 发送 UpdateConfig 命令给AMLL Connector worker 失败。"
-                                );
-                            }
+                            error!(
+                                "[Settings] 发送 UpdateConfig 命令给AMLL Connector worker 失败。"
+                            );
                         }
                     }
 
@@ -938,7 +972,7 @@ impl UniLyricApp {
     /// 处理自动获取结果
     fn handle_auto_fetch_result(&mut self, auto_fetch_result: crate::types::AutoFetchResult) {
         use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus};
-        use tracing::{error, info, warn};
+        use tracing::{error, info};
 
         match auto_fetch_result {
             AutoFetchResult::Success {
@@ -997,22 +1031,7 @@ impl UniLyricApp {
 
                     info!("[ProcessFetched] 处理来自 {source:?} 的歌词");
 
-                    // 直接清空数据，不发送事件以避免异步问题
-                    self.lyrics.input_text.clear();
-                    self.lyrics.output_text.clear();
-                    self.lyrics.display_translation_lrc_output.clear();
-                    self.lyrics.display_romanization_lrc_output.clear();
-                    self.lyrics.parsed_lyric_data = None;
-                    self.lyrics.loaded_translation_lrc = None;
-                    self.lyrics.loaded_romanization_lrc = None;
-                    self.lyrics.current_markers.clear();
-                    self.lyrics.metadata_is_user_edited = false;
-                    self.lyrics
-                        .editable_metadata
-                        .retain(|entry| entry.is_pinned);
-                    for entry in &mut self.lyrics.editable_metadata {
-                        entry.is_from_file = false;
-                    }
+                    self.clear_lyrics_state_for_new_song_internal();
 
                     let parsed_data = full_lyrics_result.parsed;
                     let raw_data = full_lyrics_result.raw;
@@ -1066,6 +1085,60 @@ impl UniLyricApp {
             AutoFetchResult::FetchError(err_msg) => {
                 error!("[AutoFetch] 自动获取歌词时发生错误: {err_msg}");
             }
+        }
+    }
+
+    /// 从解析后的数据（`self.lyrics.parsed_lyric_data`）同步UI相关的状态。
+    /// 例如，更新元数据编辑器。
+    pub fn sync_ui_from_parsed_data(&mut self) {
+        if let Some(data) = &self.lyrics.parsed_lyric_data {
+            info!("正在根据最新的转换结果同步元数据UI...");
+
+            // 步骤 1: 保留所有被用户固定的条目
+            let mut new_metadata: Vec<EditableMetadataEntry> = self
+                .lyrics
+                .editable_metadata
+                .iter()
+                .filter(|entry| entry.is_pinned)
+                .cloned()
+                .collect();
+
+            // 步骤 2: 获取已固定条目的键，避免重复添加
+            let pinned_keys: std::collections::HashSet<String> =
+                new_metadata.iter().map(|entry| entry.key.clone()).collect();
+
+            // 步骤 3: 遍历从新数据中解析出的元数据
+            for (key, values) in &data.raw_metadata {
+                // 如果这个键没有被固定，就添加它
+                if !pinned_keys.contains(key) {
+                    new_metadata.push(EditableMetadataEntry {
+                        key: key.clone(),
+                        value: values.join("; "),
+                        is_pinned: false,
+                        is_from_file: true,
+                        id: egui::Id::new(format!("meta_entry_{}", rand::rng().random::<u64>())),
+                    });
+                }
+            }
+
+            // 步骤 4: 用合并后的新列表替换旧列表
+            self.lyrics.editable_metadata = new_metadata;
+        }
+    }
+
+    pub(super) fn draw_chinese_conversion_menu_item(
+        &mut self,
+        ui: &mut egui::Ui,
+        variant: ChineseConversionVariant,
+        label: &str,
+        enabled: bool,
+    ) {
+        if ui
+            .add_enabled(enabled, egui::Button::new(label))
+            .on_disabled_hover_text("请先加载主歌词")
+            .clicked()
+        {
+            self.send_action(UserAction::Lyrics(LyricsAction::ConvertChinese(variant)));
         }
     }
 }

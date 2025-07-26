@@ -10,7 +10,7 @@ use tokio::time::sleep;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message as WsMessage,
 };
-use tracing::{debug, warn};
+use tracing::warn;
 
 use super::types::WebsocketStatus;
 use ws_protocol::{
@@ -236,31 +236,30 @@ async fn handle_protocol_body(
         }
         ProtocolBody::SetVolume { volume } => {
             let now = Instant::now();
-            let process_this_volume_set =
-                if let Some(last_time) = state.last_volume_set_processed_time {
-                    now.duration_since(last_time) >= MIN_VOLUME_SET_INTERVAL
-                } else {
-                    true
-                };
-            if process_this_volume_set {
+            let should_process = if let Some(last_time) = state.last_volume_set_processed_time {
+                now.duration_since(last_time) >= MIN_VOLUME_SET_INTERVAL
+            } else {
+                true
+            };
+
+            if should_process {
                 tracing::info!("[WebSocket 客户端] 收到服务器命令: 设置音量为 {volume:.2}");
                 state.last_volume_set_processed_time = Some(now);
-                if process_this_volume_set {
-                    tracing::info!("[WebSocket 客户端] 收到服务器命令: 设置音量为 {volume:.2}");
-                    state.last_volume_set_processed_time = Some(now);
-                    if (0.0..=1.0).contains(&volume) {
-                        if media_cmd_tx
-                            .try_send(SmtcControlCommand::SetVolume(volume as f32))
-                            .is_err()
-                        {
-                            tracing::warn!(
-                                "[WebSocket 客户端] 发送设置音量命令到 Actor 失败 (通道已满或关闭)。"
-                            );
-                        }
+                if (0.0..=1.0).contains(&volume) {
+                    if media_cmd_tx
+                        .try_send(SmtcControlCommand::SetVolume(volume as f32))
+                        .is_err()
+                    {
+                        tracing::warn!(
+                            "[WebSocket 客户端] 发送设置音量命令到 Actor 失败 (通道已满或关闭)。"
+                        );
                     }
+                } else {
+                    tracing::warn!("[WebSocket 客户端] 收到无效的音量值: {volume}。");
                 }
             }
         }
+
         p @ (ProtocolBody::SetLyricFromTTML { .. }
         | ProtocolBody::SetMusicInfo { .. }
         | ProtocolBody::OnPlayProgress { .. }

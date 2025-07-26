@@ -16,7 +16,7 @@ pub fn handle_save_file(app: &mut UniLyricApp) {
     if let Some(path) = rfd::FileDialog::new()
         .set_file_name("lyrics")
         .add_filter(
-            &format!(
+            format!(
                 "{} file",
                 app.lyrics.target_format.to_extension_str().to_uppercase()
             ),
@@ -50,7 +50,9 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
                         tracing::info!("已加载罗马音LRC文件: {path:?}");
                     }
                 }
-                app.handle_convert();
+                app.send_action(crate::app_actions::UserAction::Lyrics(
+                    crate::app_actions::LyricsAction::Convert,
+                ));
             }
             Err(e) => {
                 tracing::error!("读取LRC文件 {path:?} 失败: {e}");
@@ -69,12 +71,14 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
     if let Ok(content) = fs::read_to_string(&path) {
         app.lyrics.input_text = content;
         // 尝试从文件扩展名推断源格式
-        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            if let Some(format) = LyricFormat::from_string(ext) {
+        if let Some(ext) = path.extension().and_then(|s| s.to_str())
+            && let Some(format) = LyricFormat::from_string(ext) {
                 app.lyrics.source_format = format;
             }
-        }
-        app.handle_convert();
+        app.send_action(crate::app_actions::UserAction::Lyrics(
+            crate::app_actions::LyricsAction::Convert,
+        ));
+
         // sync_ui_from_parsed_data 会在转换完成后自动调用
     } else {
         tracing::error!("无法读取文件内容: {path:?}");

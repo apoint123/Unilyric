@@ -4,8 +4,8 @@ mod amll_connector;
 mod app;
 mod app_actions;
 mod app_definition;
-mod app_events;
 pub mod app_fetch_core;
+mod app_handlers;
 mod app_settings;
 mod app_ui;
 mod app_update;
@@ -67,7 +67,7 @@ fn setup_tracing(
     let our_crates_level = "debug".to_string();
     let console_filter_str = format!(
         // 默认将所有模块的日志级别设为 `warn`，以保持安静
-        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},smtc_suite={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
     );
 
     let console_filter = EnvFilter::new(console_filter_str);
@@ -75,7 +75,7 @@ fn setup_tracing(
     let file_filter = if settings.enable_file_log {
         let our_crates_file_level = settings.file_log_level.to_string().to_lowercase();
         let file_filter_str = format!(
-            "warn,unilyric={our_crates_file_level},lyrics_helper_rs={our_crates_file_level}"
+            "warn,unilyric={our_crates_file_level},smtc_suite={our_crates_level},lyrics_helper_rs={our_crates_file_level}"
         );
         EnvFilter::new(file_filter_str)
     } else {
@@ -87,7 +87,7 @@ fn setup_tracing(
         .with_filter(console_filter);
 
     let ui_filter_str = format!(
-        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
+        "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},smtc_suite={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
     );
     let ui_filter = EnvFilter::new(ui_filter_str);
 

@@ -1,6 +1,6 @@
 // 导入 serde 库，用于配置的序列化和反序列化
 use serde::{Deserialize, Serialize};
-use smtc_suite::{NowPlayingInfo, SmtcControlCommand};
+use smtc_suite::{MediaUpdate, NowPlayingInfo, SmtcControlCommand};
 // 导入标准库的 Instant，用于 SharedPlayerState 中的时间戳
 use std::time::Instant;
 // 导入 ws_protocol 库中的 Body 枚举，作为 WebSocket 消息的协议体
@@ -77,6 +77,7 @@ pub enum ConnectorUpdate {
     WebsocketStatusChanged(WebsocketStatus),
     MediaCommand(SmtcControlCommand),
     NowPlayingTrackChanged(NowPlayingInfo),
+    SmtcUpdate(MediaUpdate),
     SmtcSessionListChanged(Vec<SmtcSessionInfo>),
     SelectedSmtcSessionVanished(String),
     AudioSessionVolumeChanged {

@@ -7,7 +7,7 @@ use lyrics_helper_rs::model::track::Track;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
-pub(crate) fn initial_auto_fetch_and_send_lyrics(
+pub(super) fn initial_auto_fetch_and_send_lyrics(
     app: &mut UniLyricApp,
     track_info: NowPlayingInfo,
 ) {
@@ -56,7 +56,6 @@ pub(crate) fn initial_auto_fetch_and_send_lyrics(
     drop(app_settings);
 
     app.fetcher.last_source_format = None;
-    app.fetcher.current_ui_populated = false;
     update_all_search_status(app, AutoSearchStatus::Searching);
 
     let result_tx = app.fetcher.result_tx.clone();
@@ -114,7 +113,7 @@ pub(crate) fn initial_auto_fetch_and_send_lyrics(
 }
 
 /// 触发对特定源的手动重新搜索。
-pub(crate) fn trigger_manual_refetch_for_source(
+pub(super) fn trigger_manual_refetch_for_source(
     app: &mut UniLyricApp,
     source_to_refetch: AutoSearchSource,
 ) {
@@ -186,11 +185,19 @@ pub(crate) fn trigger_manual_refetch_for_source(
     });
 }
 
-pub(crate) fn update_all_search_status(app: &UniLyricApp, status: AutoSearchStatus) {
+pub(super) fn update_all_search_status(app: &UniLyricApp, status: AutoSearchStatus) {
     *app.fetcher.local_cache_status.lock().unwrap() = status.clone();
     *app.fetcher.qqmusic_status.lock().unwrap() = status.clone();
     *app.fetcher.kugou_status.lock().unwrap() = status.clone();
     *app.fetcher.netease_status.lock().unwrap() = status.clone();
     *app.fetcher.amll_db_status.lock().unwrap() = status.clone();
     *app.fetcher.musixmatch_status.lock().unwrap() = status.clone();
+}
+
+pub(super) fn clear_last_fetch_results(app: &UniLyricApp) {
+    *app.fetcher.last_qq_result.lock().unwrap() = None;
+    *app.fetcher.last_kugou_result.lock().unwrap() = None;
+    *app.fetcher.last_netease_result.lock().unwrap() = None;
+    *app.fetcher.last_amll_db_result.lock().unwrap() = None;
+    *app.fetcher.last_musixmatch_result.lock().unwrap() = None;
 }
