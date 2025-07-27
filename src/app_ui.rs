@@ -1144,29 +1144,38 @@ impl UniLyricApp {
         ui.horizontal(|title_ui| {
             title_ui.heading("输出结果");
             title_ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |btn_ui| {
-                let send_to_player_enabled: bool;
+                let send_to_player_enabled;
                 {
                     let connector_config_guard = self.amll_connector.config.lock().unwrap();
                     send_to_player_enabled = connector_config_guard.enabled
-                        && !self.lyrics.output_text.is_empty()
+                        && self.lyrics.parsed_lyric_data.is_some()
                         && !self.lyrics.conversion_in_progress;
                 }
 
                 let send_button = Button::new("发送到AMLL Player");
-                if btn_ui
-                    .add_enabled(send_to_player_enabled, send_button)
-                    .clicked()
-                    && let Some(tx) = &self.amll_connector.command_tx
+                let mut send_button_response =
+                    btn_ui.add_enabled(send_to_player_enabled, send_button);
+
+                if !send_to_player_enabled {
+                    send_button_response = send_button_response
+                        .on_disabled_hover_text("需要先成功转换出可用的歌词数据");
+                }
+
+                if send_button_response.clicked()
+                    && let (Some(tx), Some(parsed_data)) = (
+                        &self.amll_connector.command_tx,
+                        self.lyrics.parsed_lyric_data.as_ref(),
+                    )
                 {
                     if tx
-                        .try_send(crate::amll_connector::ConnectorCommand::SendLyricTtml(
-                            self.lyrics.output_text.clone(),
+                        .try_send(crate::amll_connector::ConnectorCommand::SendLyric(
+                            parsed_data.clone(),
                         ))
                         .is_err()
                     {
-                        tracing::error!("[Unilyric UI] 发送 TTML 歌词失败。");
+                        tracing::error!("[Unilyric UI] 手动发送歌词失败。");
                     } else {
-                        tracing::info!("[Unilyrc UI] 已从输出面板手动发送 TTML。");
+                        tracing::info!("[Unilyrc UI] 已从输出面板手动发送歌词。");
                     }
                 }
 
@@ -1391,36 +1400,35 @@ impl UniLyricApp {
                 if response.changed() {
                     self.player.smtc_time_offset_ms = current_offset;
                     if let Ok(mut settings) = self.app_settings.lock()
-                        && settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms {
-                            settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
-                            if let Err(e) = settings.save() {
-                                tracing::error!(
-                                    "[Unilyric UI] 侧边栏偏移量持久化到设置失败: {}",
-                                    e
-                                );
-                            }
+                        && settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms
+                    {
+                        settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
+                        if let Err(e) = settings.save() {
+                            tracing::error!("[Unilyric UI] 侧边栏偏移量持久化到设置失败: {}", e);
                         }
+                    }
                 }
             });
 
             if let Some(cover_bytes) = &now_playing.cover_data
-                && !cover_bytes.is_empty() {
-                    let image_id_cow = now_playing.cover_data_hash.map_or_else(
-                        || "smtc_cover_no_hash".into(),
-                        |hash| format!("smtc_cover_hash_{hash}").into(),
-                    );
-                    let image_source = egui::ImageSource::Bytes {
-                        uri: image_id_cow,
-                        bytes: cover_bytes.clone().into(),
-                    };
-                    ui.add_sized(
-                        egui::vec2(200.0, 200.0),
-                        egui::Image::new(image_source)
-                            .max_size(egui::vec2(200.0, 200.0))
-                            .maintain_aspect_ratio(true)
-                            .bg_fill(Color32::TRANSPARENT),
-                    );
-                }
+                && !cover_bytes.is_empty()
+            {
+                let image_id_cow = now_playing.cover_data_hash.map_or_else(
+                    || "smtc_cover_no_hash".into(),
+                    |hash| format!("smtc_cover_hash_{hash}").into(),
+                );
+                let image_source = egui::ImageSource::Bytes {
+                    uri: image_id_cow,
+                    bytes: cover_bytes.clone().into(),
+                };
+                ui.add_sized(
+                    egui::vec2(200.0, 200.0),
+                    egui::Image::new(image_source)
+                        .max_size(egui::vec2(200.0, 200.0))
+                        .maintain_aspect_ratio(true)
+                        .bg_fill(Color32::TRANSPARENT),
+                );
+            }
         } else {
             ui.weak("无SMTC信息 / 未选择特定源");
         }

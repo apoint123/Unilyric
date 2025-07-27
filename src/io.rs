@@ -72,9 +72,10 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
         app.lyrics.input_text = content;
         // 尝试从文件扩展名推断源格式
         if let Some(ext) = path.extension().and_then(|s| s.to_str())
-            && let Some(format) = LyricFormat::from_string(ext) {
-                app.lyrics.source_format = format;
-            }
+            && let Some(format) = LyricFormat::from_string(ext)
+        {
+            app.lyrics.source_format = format;
+        }
         app.send_action(crate::app_actions::UserAction::Lyrics(
             crate::app_actions::LyricsAction::Convert,
         ));

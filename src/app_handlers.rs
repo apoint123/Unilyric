@@ -225,7 +225,7 @@ impl UniLyricApp {
                     Ok(full_result) => {
                         info!("[Convert Result] 转换任务成功完成。");
                         self.lyrics.output_text = full_result.output_lyrics;
-                        self.lyrics.parsed_lyric_data = Some(full_result.source_data);
+                        self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
 
                         if !self.lyrics.metadata_is_user_edited {
                             self.sync_ui_from_parsed_data();
@@ -237,11 +237,9 @@ impl UniLyricApp {
                                     "[AMLL] 转换完成，正在自动发送 TTML 歌词到 Player。"
                                 );
                                 if tx
-                                    .try_send(
-                                        crate::amll_connector::ConnectorCommand::SendLyricTtml(
-                                            self.lyrics.output_text.clone(),
-                                        ),
-                                    )
+                                    .try_send(crate::amll_connector::ConnectorCommand::SendLyric(
+                                        full_result.source_data,
+                                    ))
                                     .is_err()
                                 {
                                     tracing::error!(
@@ -1071,10 +1069,13 @@ impl UniLyricApp {
                     && let Some(tx) = &self.amll_connector.command_tx
                 {
                     info!("[UniLyricApp] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
-                    let empty_ttml_body = ws_protocol::Body::SetLyricFromTTML { data: "".into() };
+                    let empty_ttml =
+                        crate::amll_connector::protocol::ClientMessage::SetLyricFromTTML {
+                            data: "".into(),
+                        };
                     if tx
-                        .try_send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                            empty_ttml_body,
+                        .try_send(crate::amll_connector::ConnectorCommand::SendClientMessage(
+                            empty_ttml,
                         ))
                         .is_err()
                     {

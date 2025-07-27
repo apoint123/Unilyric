@@ -66,7 +66,6 @@ fn setup_tracing(
 ) {
     let our_crates_level = "debug".to_string();
     let console_filter_str = format!(
-        // 默认将所有模块的日志级别设为 `warn`，以保持安静
         "warn,Unilyric={our_crates_level},lyrics_helper_rs={our_crates_level},smtc_suite={our_crates_level},eframe={our_crates_level},egui_winit={our_crates_level},wgpu_core=warn,wgpu_hal=warn"
     );
 
@@ -108,7 +107,6 @@ fn setup_tracing(
                     let (non_blocking_writer, guard) =
                         tracing_appender::non_blocking(file_appender);
 
-                    // 将 guard 存储在静态变量中，保证应用程序生命周期内不被丢弃
                     static LOG_GUARD: once_cell::sync::Lazy<
                         std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
                     > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(None));

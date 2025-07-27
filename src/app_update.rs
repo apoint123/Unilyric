@@ -2,6 +2,8 @@ use eframe::egui;
 use tracing::{error, info, warn};
 
 use crate::amll_connector::ConnectorUpdate;
+use crate::amll_connector::protocol::ClientMessage;
+use crate::amll_connector::protocol_strings::NullString;
 use crate::app::TtmlDbUploadUserAction;
 use crate::app_definition::UniLyricApp;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel};
@@ -55,12 +57,10 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
             ConnectorUpdate::MediaCommand(cmd) => {
                 tracing::info!("[App Update] 收到来自 AMLL Player 的媒体命令: {:?}", cmd);
                 if let Some(tx) = &app.player.command_tx
-                    && tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err() {
-                        tracing::error!("[App Update] 执行来自 AMLL Player 的命令失败。");
-                    }
-            }
-            ConnectorUpdate::NowPlayingTrackChanged(info) => {
-                app.player.current_now_playing = info;
+                    && tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err()
+                {
+                    tracing::error!("[App Update] 执行来自 AMLL Player 的命令失败。");
+                }
             }
             ConnectorUpdate::SmtcUpdate(media_update) => match media_update {
                 MediaUpdate::TrackChanged(new_info) => {
@@ -125,8 +125,6 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                 }
                 _ => {}
             },
-
-            _ => {}
         }
     }
 }
@@ -214,10 +212,12 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     && app.amll_connector.config.lock().unwrap().enabled
                     && let Some(tx) = &app.amll_connector.command_tx
                 {
-                    let empty_ttml_body = ws_protocol::Body::SetLyricFromTTML { data: "".into() };
+                    let empty_ttml_message = ClientMessage::SetLyricFromTTML {
+                        data: NullString("".to_string()),
+                    };
                     if tx
-                        .try_send(crate::amll_connector::ConnectorCommand::SendProtocolBody(
-                            empty_ttml_body,
+                        .try_send(crate::amll_connector::ConnectorCommand::SendClientMessage(
+                            empty_ttml_message,
                         ))
                         .is_err()
                     {

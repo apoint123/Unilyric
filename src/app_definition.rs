@@ -13,7 +13,7 @@ use lyrics_helper_rs::{
     model::track::FullLyricsResult,
 };
 use reqwest::Client;
-use smtc_suite::{MediaCommand, MediaUpdate, NowPlayingInfo, SmtcSessionInfo};
+use smtc_suite::{MediaCommand, NowPlayingInfo, SmtcSessionInfo};
 use tokio::{
     sync::mpsc::{Sender as TokioSender, channel as tokio_channel},
     task::JoinHandle,
@@ -77,7 +77,6 @@ pub(super) struct LyricState {
 
 pub(super) struct PlayerState {
     pub(super) command_tx: Option<crossbeam_channel::Sender<MediaCommand>>,
-    pub(super) update_rx: Option<crossbeam_channel::Receiver<MediaUpdate>>,
     pub(super) current_now_playing: NowPlayingInfo,
     pub(super) available_sessions: Vec<SmtcSessionInfo>,
     pub(super) smtc_time_offset_ms: i64,
@@ -142,7 +141,6 @@ pub(super) struct UniLyricApp {
     // --- 核心依赖与配置 ---
     pub(super) lyrics_helper: Option<Arc<lyrics_helper_rs::LyricsHelper>>,
     pub(super) lyrics_helper_rx: StdReceiver<Arc<lyrics_helper_rs::LyricsHelper>>,
-    pub(super) http_client: Client,
     pub(super) app_settings: Arc<Mutex<AppSettings>>,
     pub(super) tokio_runtime: Arc<tokio::runtime::Runtime>,
     pub(super) ui_log_receiver: StdReceiver<LogEntry>,
@@ -152,7 +150,6 @@ pub(super) struct UniLyricApp {
 
     // --- 标记 ---
     pub(super) shutdown_initiated: bool,
-    pub(super) is_any_file_hovering_window: bool,
 }
 
 impl UniLyricApp {
@@ -309,7 +306,6 @@ impl UniLyricApp {
 
         let player_state = PlayerState {
             command_tx: Some(smtc_cmd_tx),
-            update_rx: None,
             current_now_playing: NowPlayingInfo::default(),
             available_sessions: Vec::new(),
             smtc_time_offset_ms: settings.smtc_time_offset_ms,
@@ -362,13 +358,11 @@ impl UniLyricApp {
             ttml_db_upload: ttml_db_upload_state,
             lyrics_helper: None,
             lyrics_helper_rx,
-            http_client: async_http_client,
             app_settings: Arc::new(Mutex::new(settings.clone())),
             tokio_runtime: runtime_instance,
             ui_log_receiver,
             actions_this_frame: Vec::new(),
             shutdown_initiated: false,
-            is_any_file_hovering_window: false,
         };
 
         // --- 初始化本地歌词缓存 ---
@@ -408,10 +402,10 @@ impl UniLyricApp {
     }
 
     pub(super) fn shutdown_amll_actor(&mut self) {
-        tracing::debug!("[Shutdown] `shutdown_amll_actor` 已被调用。");
+        tracing::trace!("[Shutdown] `shutdown_amll_actor` 已被调用。");
 
         if let Some(tx) = &self.player.command_tx {
-            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite 服务...");
+            tracing::trace!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite 服务...");
             if tx.send(MediaCommand::Shutdown).is_err() {
                 tracing::warn!(
                     "[Shutdown] 发送 Shutdown 命令到 smtc-suite 失败 (服务可能已关闭)。"
@@ -420,16 +414,16 @@ impl UniLyricApp {
         }
 
         if let Some(tx) = &self.amll_connector.command_tx {
-            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
+            tracing::trace!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
             if tx.try_send(ConnectorCommand::Shutdown).is_err() {
                 tracing::warn!("[Shutdown] 发送 Shutdown 命令到 actor 失败 (可能已关闭)。");
             }
         }
         if let Some(handle) = self.amll_connector.actor_handle.take() {
-            tracing::debug!("[Shutdown] 正在中止 actor 的主任务句柄...");
+            tracing::trace!("[Shutdown] 正在中止 actor 的主任务句柄...");
             handle.abort();
         }
 
-        tracing::debug!("[Shutdown] `shutdown_amll_actor` 执行完毕。");
+        tracing::trace!("[Shutdown] `shutdown_amll_actor` 执行完毕。");
     }
 }
