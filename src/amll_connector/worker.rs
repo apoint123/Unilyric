@@ -10,6 +10,7 @@ use std::{
 use crossbeam_channel::{
     Receiver as CrossbeamReceiver, RecvTimeoutError, Sender as CrossbeamSender,
 };
+use ferrous_opencc::OpenCC;
 use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
 use tokio::sync::{
     mpsc::{
@@ -18,6 +19,8 @@ use tokio::sync::{
     },
     oneshot,
 };
+
+use crate::amll_connector::types::ActorSettings;
 
 use super::{
     protocol::{Artist, ClientMessage},
@@ -146,18 +149,77 @@ fn handle_update_send_error<T>(
     }
 }
 
+fn send_music_info_to_ws(client: &WebSocketClientState, info: &smtc_suite::NowPlayingInfo) {
+    let artists_vec = info.artist.as_ref().map_or_else(Vec::new, |name| {
+        vec![Artist {
+            id: Default::default(),
+            name: name.as_str().into(),
+        }]
+    });
+    let msg = ClientMessage::SetMusicInfo {
+        music_id: Default::default(),
+        music_name: info
+            .title
+            .clone()
+            .map_or(Default::default(), |s| s.as_str().into()),
+        album_id: Default::default(),
+        album_name: info
+            .album_title
+            .clone()
+            .map_or(Default::default(), |s| s.as_str().into()),
+        artists: artists_vec,
+        duration: info.duration_ms.unwrap_or(0),
+    };
+    handle_websocket_send_error(client.outgoing_tx().try_send(msg), "SetMusicInfo");
+}
+
+fn send_cover_to_ws(client: &WebSocketClientState, cover_data: &[u8]) {
+    if !cover_data.is_empty() {
+        let msg = ClientMessage::SetMusicAlbumCoverImageData {
+            data: cover_data.to_vec(),
+        };
+        handle_websocket_send_error(
+            client.outgoing_tx().try_send(msg),
+            "SetMusicAlbumCoverImageData",
+        );
+    }
+}
+
+fn send_play_state_to_ws(client: &WebSocketClientState, info: &smtc_suite::NowPlayingInfo) {
+    if let Some(is_playing) = info.is_playing {
+        let msg = if is_playing {
+            ClientMessage::OnResumed
+        } else {
+            ClientMessage::OnPaused
+        };
+        handle_websocket_send_error(client.outgoing_tx().try_send(msg), "播放状态");
+    }
+}
+
+fn send_progress_to_ws(client: &WebSocketClientState, info: &smtc_suite::NowPlayingInfo) {
+    if let Some(progress) = info.position_ms {
+        let msg = ClientMessage::OnPlayProgress { progress };
+        handle_websocket_send_error(client.outgoing_tx().try_send(msg), "OnPlayProgress");
+    }
+}
+
 pub async fn amll_connector_actor(
     mut command_rx: TokioReceiver<ConnectorCommand>,
     update_tx: StdSender<ConnectorUpdate>,
     initial_config: AMLLConnectorConfig,
     smtc_command_tx: CrossbeamSender<MediaCommand>,
     smtc_update_rx: CrossbeamReceiver<MediaUpdate>,
+    t2s_converter: Option<Arc<OpenCC>>,
 ) {
     tracing::debug!("[AMLL Actor] Actor 任务已启动。");
     let mut config = initial_config;
+    let mut actor_settings = ActorSettings {
+        enable_t2s_conversion: true, // UI启动后会立即同步
+    };
     let mut websocket_client: Option<WebSocketClientState> = None;
     let mut last_sent_title: Option<String> = None;
-
+    let mut cached_original_info: Option<smtc_suite::NowPlayingInfo> = None;
+    let mut cached_converted_info: Option<smtc_suite::NowPlayingInfo> = None;
     let (ws_status_tx, mut ws_status_rx) = tokio_channel(CHANNEL_BUFFER_SIZE);
     let (media_cmd_tx, mut media_cmd_rx) = tokio_channel(CHANNEL_BUFFER_SIZE);
 
@@ -295,6 +357,10 @@ pub async fn amll_connector_actor(
                             }
                         }
                     },
+                    ConnectorCommand::UpdateActorSettings(new_settings) => {
+                        tracing::debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
+                        actor_settings = new_settings;
+                    },
                     ConnectorCommand::DisconnectWebsocket => {
                         tracing::debug!("[AMLL Actor] 收到 Disconnect 命令，正在关闭 WebSocket 客户端...");
                         if let Some(client) = websocket_client.take() {
@@ -338,64 +404,138 @@ pub async fn amll_connector_actor(
             },
 
             Some(media_cmd) = media_cmd_rx.recv() => {
-                tracing::debug!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
-                handle_update_send_error(
-                    update_tx.send(ConnectorUpdate::MediaCommand(media_cmd)),
-                    "媒体命令"
+                tracing::info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
+                let command_to_send = MediaCommand::Control(media_cmd);
+                handle_smtc_send_error(
+                    smtc_command_tx.send(command_to_send),
+                    "来自WebSocket的控制命令"
                 );
             },
 
             Some(update) = smtc_update_rx_async.recv() => {
-                handle_update_send_error(
-                    update_tx.send(ConnectorUpdate::SmtcUpdate(update.clone())),
-                    "SMTC更新"
-                );
+                let mut update_to_send_to_ui: Option<MediaUpdate> = None;
+                let mut track_info_for_ws: Option<smtc_suite::NowPlayingInfo> = None;
 
-                if let MediaUpdate::TrackChanged(track_info) = update {
-                    tracing::trace!("[AMLL Actor] 收到 SmtcTrackChanged 更新，直接处理...");
+                match update {
+                    MediaUpdate::TrackChanged(new_info) => {
+                        let is_new_song = match &cached_original_info {
+                            Some(cached) => cached.title != new_info.title || cached.artist != new_info.artist,
+                            None => true,
+                        };
 
+                        if is_new_song {
+                            tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
+                            cached_original_info = Some(new_info.clone());
+
+                            let mut converted_info = new_info;
+                            if actor_settings.enable_t2s_conversion && let Some(ref converter) = t2s_converter {
+                                if let Some(ref title) = converted_info.title { converted_info.title = Some(converter.convert(title)); }
+                                if let Some(ref artist) = converted_info.artist { converted_info.artist = Some(converter.convert(artist)); }
+                                if let Some(ref album_title) = converted_info.album_title { converted_info.album_title = Some(converter.convert(album_title)); }
+                            }
+
+                            if let Some(client) = &websocket_client {
+                                send_music_info_to_ws(client, &converted_info);
+                                if let Some(ref cover_data) = converted_info.cover_data {
+                                    send_cover_to_ws(client, cover_data);
+                                }
+                            }
+
+                            cached_converted_info = Some(converted_info.clone());
+                            update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(converted_info))).ok();
+
+                        } else {
+                            if let (Some(cached_orig), Some(cached_conv)) = (&mut cached_original_info, &mut cached_converted_info) {
+                                if new_info.cover_data.is_some() && new_info.cover_data != cached_orig.cover_data {
+                                    tracing::debug!("[AMLL Actor] 检测到封面更新。");
+                                    cached_orig.cover_data = new_info.cover_data.clone();
+                                    cached_conv.cover_data = new_info.cover_data.clone();
+                                    if let Some(client) = &websocket_client {
+                                        send_cover_to_ws(client, new_info.cover_data.as_ref().unwrap());
+                                    }
+                                }
+
+                                cached_orig.update_with(&new_info);
+                                cached_conv.update_with(&new_info);
+
+                                if let Some(client) = &websocket_client {
+                                    send_play_state_to_ws(client, cached_conv);
+                                    send_progress_to_ws(client, cached_conv);
+                                }
+
+                                update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(cached_conv.clone()))).ok();
+                            }
+                        }
+                    }
+                    other_update => {
+                        if matches!(other_update, MediaUpdate::SessionsChanged(_) | MediaUpdate::SelectedSessionVanished(_)) {
+                            cached_original_info = None;
+                            cached_converted_info = None;
+                        }
+                        update_tx.send(ConnectorUpdate::SmtcUpdate(other_update)).ok();
+                    }
+                }
+
+                if let Some(final_update) = update_to_send_to_ui {
+                    handle_update_send_error(
+                        update_tx.send(ConnectorUpdate::SmtcUpdate(final_update)),
+                        "SMTC更新"
+                    );
+                }
+
+                if let Some(ref track_info) = track_info_for_ws {
                     let is_new_song = track_info.title.as_deref() != last_sent_title.as_deref();
                     if is_new_song {
                         last_sent_title = track_info.title.clone();
                     }
+                    if let Some(track_info) = track_info_for_ws {
+                        let is_new_song_for_ws = track_info.title.as_deref() != last_sent_title.as_deref();
+                        if is_new_song_for_ws {
+                            last_sent_title = track_info.title.clone();
+                        }
+                        if let Some(client) = &websocket_client {
+                            let tx = client.outgoing_tx();
+                            if is_new_song_for_ws {
+                                let artists_vec = track_info.artist.as_ref().map_or_else(Vec::new, |name| {
+                                    vec![Artist { id: Default::default(), name: name.as_str().into() }]
+                                });
+                                let set_music_info_body = ClientMessage::SetMusicInfo {
+                                    music_id: Default::default(),
+                                    music_name: track_info.title.clone().map_or(Default::default(), |s| s.as_str().into()),
+                                    album_id: Default::default(),
+                                    album_name: track_info.album_title.clone().map_or(Default::default(), |s| s.as_str().into()),
+                                    artists: artists_vec,
+                                    duration: track_info.duration_ms.unwrap_or(0),
+                                };
+                                handle_websocket_send_error(tx.try_send(set_music_info_body), "SetMusicInfo");
 
-                    if let Some(client) = &websocket_client {
-                        let tx = client.outgoing_tx();
-                        if is_new_song {
-                            let artists_vec = track_info.artist.as_ref().map_or_else(Vec::new, |name| {
-                                vec![Artist { id: Default::default(), name: name.as_str().into() }]
-                            });
-                            let set_music_info_body = ClientMessage::SetMusicInfo {
-                                music_id: Default::default(),
-                                music_name: track_info.title.clone().map_or(Default::default(), |s| s.as_str().into()),
-                                album_id: Default::default(),
-                                album_name: track_info.album_title.clone().map_or(Default::default(), |s| s.as_str().into()),
-                                artists: artists_vec,
-                                duration: track_info.duration_ms.unwrap_or(0),
-                            };
-                            handle_websocket_send_error(tx.try_send(set_music_info_body), "SetMusicInfo");
-
-                            if let Some(ref cover_data) = track_info.cover_data
-                                && !cover_data.is_empty() {
-                                    let cover_message = ClientMessage::SetMusicAlbumCoverImageData {
-                                        data: cover_data.to_vec()
-                                    };
-                                    handle_websocket_send_error(tx.try_send(cover_message), "SetMusicAlbumCoverImageData");
+                                if let Some(ref cover_data) = track_info.cover_data {
+                                    if !cover_data.is_empty() {
+                                        let cover_message = ClientMessage::SetMusicAlbumCoverImageData {
+                                            data: cover_data.to_vec()
+                                        };
+                                        handle_websocket_send_error(tx.try_send(cover_message), "SetMusicAlbumCoverImageData");
+                                    } else {
+                                        tracing::trace!("[AMLL Actor] 新歌封面数据为空，跳过发送。");
+                                    }
+                                } else {
+                                    tracing::trace!("[AMLL Actor] 新歌无封面数据，跳过发送。");
                                 }
-                        }
+                            }
 
-                        if let Some(is_playing) = track_info.is_playing {
-                            let play_state_message = if is_playing {
-                                ClientMessage::OnResumed
-                            } else {
-                                ClientMessage::OnPaused
-                            };
-                            handle_websocket_send_error(tx.try_send(play_state_message), "播放状态");
-                        }
+                            if let Some(is_playing) = track_info.is_playing {
+                                let play_state_message = if is_playing {
+                                    ClientMessage::OnResumed
+                                } else {
+                                    ClientMessage::OnPaused
+                                };
+                                handle_websocket_send_error(tx.try_send(play_state_message), "播放状态");
+                            }
 
-                        if let Some(progress) = track_info.position_ms {
-                            let progress_message = ClientMessage::OnPlayProgress { progress };
-                            handle_websocket_send_error(tx.try_send(progress_message), "OnPlayProgress");
+                            if let Some(progress) = track_info.position_ms {
+                                let progress_message = ClientMessage::OnPlayProgress { progress };
+                                handle_websocket_send_error(tx.try_send(progress_message), "OnPlayProgress");
+                            }
                         }
                     }
                 }

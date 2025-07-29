@@ -1,6 +1,6 @@
 use lyrics_helper_rs::converter::types::ParsedSourceData;
 use serde::{Deserialize, Serialize};
-use smtc_suite::{MediaUpdate, SmtcControlCommand};
+use smtc_suite::MediaUpdate;
 
 use crate::amll_connector::protocol::ClientMessage;
 
@@ -44,12 +44,17 @@ impl Default for WebsocketStatus {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ActorSettings {
+    pub enable_t2s_conversion: bool,
+}
+
 /// Unilyric 主应用发送给 amll_connector worker 的命令
 #[derive(Debug, Clone)]
 pub enum ConnectorCommand {
     UpdateConfig(AMLLConnectorConfig),
+    UpdateActorSettings(ActorSettings),
     SendLyric(ParsedSourceData),
-
     SendClientMessage(ClientMessage),
     Shutdown,
     DisconnectWebsocket,
@@ -59,19 +64,5 @@ pub enum ConnectorCommand {
 #[derive(Debug, Clone)]
 pub enum ConnectorUpdate {
     WebsocketStatusChanged(WebsocketStatus),
-    MediaCommand(SmtcControlCommand),
     SmtcUpdate(MediaUpdate),
-}
-
-/// 单个 SMTC 会话的标识信息
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct SmtcSessionInfo {
-    /// Windows 内部的会话 ID，用于唯一标识
-    pub session_id: String,
-    /// 源应用的 AppUserModelId (例如 "Spotify.exe")
-    pub source_app_user_model_id: String,
-    /// 用于向用户显示的友好名称
-    pub display_name: String,
-    // 可以考虑添加一个 is_current_system_default: bool 字段，
-    // 如果 smtc_handler 能够区分哪个是系统当前的默认会话。
 }

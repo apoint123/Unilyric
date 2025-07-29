@@ -53,15 +53,6 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
 
                 *app.amll_connector.status.lock().unwrap() = status;
             }
-
-            ConnectorUpdate::MediaCommand(cmd) => {
-                tracing::info!("[App Update] 收到来自 AMLL Player 的媒体命令: {:?}", cmd);
-                if let Some(tx) = &app.player.command_tx
-                    && tx.send(smtc_suite::MediaCommand::Control(cmd)).is_err()
-                {
-                    tracing::error!("[App Update] 执行来自 AMLL Player 的命令失败。");
-                }
-            }
             ConnectorUpdate::SmtcUpdate(media_update) => match media_update {
                 MediaUpdate::TrackChanged(new_info) => {
                     let is_new_song = app.player.current_now_playing.title != new_info.title

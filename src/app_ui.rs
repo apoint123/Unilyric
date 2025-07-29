@@ -559,12 +559,16 @@ impl UniLyricApp {
 
                 ui.add_space(10.0);
                 ui.strong("自动歌词搜索设置:");
-                ui.separator();
-                ui.add_space(5.0);
+
+                ui.checkbox(
+                    &mut self.ui.temp_edit_settings.enable_t2s_for_auto_search,
+                    "将繁体 SMTC 信息转为简体再搜索 (推荐)",
+                );
+                ui.add_space(10.0);
 
                 ui.checkbox(
                     &mut self.ui.temp_edit_settings.always_search_all_sources,
-                    "始终并行搜索所有源 (最准，但最慢)",
+                    "始终搜索所有源 (最准，但最慢)",
                 );
                 ui.add_space(10.0);
 
@@ -579,15 +583,12 @@ impl UniLyricApp {
                         egui::Frame::group(enabled_ui.style()).show(enabled_ui, |group_ui| {
                             group_ui.label("选择要使用的提供商:");
 
-                            // 我们需要一个所有可用提供商的列表
                             let all_providers = AutoSearchSource::default_order();
 
                             for provider in all_providers {
-                                // 我们需要将 AutoSearchSource 枚举转换为 String 来进行比较
                                 let provider_name =
                                     Into::<&'static str>::into(provider).to_string();
 
-                                // 检查当前提供商是否已经在用户的选择列表中
                                 let mut is_selected = self
                                     .ui
                                     .temp_edit_settings
@@ -599,13 +600,11 @@ impl UniLyricApp {
                                     .changed()
                                 {
                                     if is_selected {
-                                        // 如果用户刚刚勾选了它，就添加到列表中
                                         self.ui
                                             .temp_edit_settings
                                             .auto_search_provider_subset
                                             .push(provider_name);
                                     } else {
-                                        // 如果用户刚刚取消了勾选，就从列表中移除
                                         self.ui
                                             .temp_edit_settings
                                             .auto_search_provider_subset
@@ -615,18 +614,6 @@ impl UniLyricApp {
                             }
                         });
                     },
-                );
-
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(10.0);
-
-                ui.separator();
-                ui.add_space(10.0);
-                ui.strong("自动删除元数据行设置");
-                ui.checkbox(
-                    &mut self.ui.temp_edit_settings.enable_online_lyric_stripping,
-                    "基于关键词的移除",
                 );
 
                 ui.separator();
@@ -884,7 +871,6 @@ impl UniLyricApp {
                 let text_edit_widget = egui::TextEdit::multiline(&mut self.lyrics.input_text)
                     .hint_text("在此处粘贴或拖放主歌词文件")
                     .font(egui::TextStyle::Monospace)
-                    .interactive(!self.lyrics.conversion_in_progress)
                     .desired_width(f32::INFINITY);
 
                 let response = s_ui.add(text_edit_widget);
@@ -1238,25 +1224,19 @@ impl UniLyricApp {
         };
 
         scroll_area.auto_shrink([false, false]).show(ui, |s_ui| {
-            if self.lyrics.conversion_in_progress {
-                s_ui.centered_and_justified(|c_ui| {
-                    c_ui.spinner();
-                });
-            } else {
-                let mut label_widget = egui::Label::new(
-                    egui::RichText::new(&self.lyrics.output_text)
-                        .monospace()
-                        .size(13.0),
-                )
-                .selectable(true);
+            let mut label_widget = egui::Label::new(
+                egui::RichText::new(&self.lyrics.output_text)
+                    .monospace()
+                    .size(13.0),
+            )
+            .selectable(true);
 
-                if self.ui.wrap_text {
-                    label_widget = label_widget.wrap();
-                } else {
-                    label_widget = label_widget.extend();
-                }
-                s_ui.add(label_widget);
+            if self.ui.wrap_text {
+                label_widget = label_widget.wrap();
+            } else {
+                label_widget = label_widget.extend();
             }
+            s_ui.add(label_widget);
         });
     }
 

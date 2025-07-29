@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-lyrics_helper_rs = "*"
-
 arboard = "3.3.0"
 easer = "0.3.0"
 eframe = "0.31.1"
@@ -54,6 +52,8 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
 tracing-log = "0.2.0"
 tracing-appender = "0.2.3"
-smtc-suite = "2.3.2"
+lyrics_helper_rs = { git = "https://github.com/apoint123/lyrics_helper_rs.git" }
+smtc-suite = { git = "https://github.com/apoint123/smtc-suite.git" }
 crossbeam-channel = "0.5.15"
 binrw = "0.15.0"
+bytes = "1.10.1"

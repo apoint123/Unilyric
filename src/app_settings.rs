@@ -54,6 +54,7 @@ pub struct AppSettings {
     pub auto_search_provider_subset: Vec<String>,
 
     pub enable_online_lyric_stripping: bool,
+    pub enable_t2s_for_auto_search: bool,
 
     pub websocket_server_settings: WebsocketServerSettings,
 
@@ -83,6 +84,7 @@ impl Default for AppSettings {
             always_search_all_sources: false,
             last_selected_smtc_session_id: None,
             enable_online_lyric_stripping: true,
+            enable_t2s_for_auto_search: true,
             last_known_amll_index_head: None,
             checked_amll_update_since_last_success: false,
             auto_check_amll_index_update_on_startup: true,

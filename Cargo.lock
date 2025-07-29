@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "binrw",
+ "bytes",
  "chrono",
  "crossbeam-channel",
  "directories",
@@ -2973,8 +2974,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "lyrics_helper_rs"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4bb0f9f27bad5987f78069ea5efd5eda131986e1f3bea3c9722dc03da6db536"
+source = "git+https://github.com/apoint123/lyrics_helper_rs.git#d57e2d036a6472325909088ea8509e7414521029"
 dependencies = [
  "aes",
  "anyhow",
@@ -4966,9 +4966,8 @@ dependencies = [
 
 [[package]]
 name = "smtc-suite"
-version = "2.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d87942826613d783b118a35efb3ac9e4285e92f22f733353e0c22b5640ee9b52"
+version = "2.4.0"
+source = "git+https://github.com/apoint123/smtc-suite.git#2bf4100363bc43db44447b77bcc3b707b9506e33"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",

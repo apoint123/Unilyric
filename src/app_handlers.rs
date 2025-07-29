@@ -1,9 +1,12 @@
-use crate::amll_connector::ConnectorCommand;
+use crate::amll_connector::types::ActorSettings;
+use crate::amll_connector::{AMLLConnectorConfig, ConnectorCommand};
 use crate::app_actions::{
     AmllConnectorAction, FileAction, LyricsAction, PanelType, PlayerAction, SettingsAction,
     UIAction, UserAction,
 };
 use crate::app_definition::UniLyricApp;
+use crate::app_handlers::ConnectorCommand::SendLyric;
+use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
 use crate::types::{ChineseConversionVariant, EditableMetadataEntry, LrcContentType};
 use rand::Rng;
 use smtc_suite::MediaCommand;
@@ -236,12 +239,7 @@ impl UniLyricApp {
                                 tracing::info!(
                                     "[AMLL] 转换完成，正在自动发送 TTML 歌词到 Player。"
                                 );
-                                if tx
-                                    .try_send(crate::amll_connector::ConnectorCommand::SendLyric(
-                                        full_result.source_data,
-                                    ))
-                                    .is_err()
-                                {
+                                if tx.try_send(SendLyric(full_result.source_data)).is_err() {
                                     tracing::error!(
                                         "[AMLL] (转换完成时) 发送 TTML 歌词失败 (通道已满或关闭)。"
                                     );
@@ -914,11 +912,29 @@ impl UniLyricApp {
                     *app_settings_guard = new_settings_clone;
                     self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
 
-                    let new_mc_config_from_settings = crate::amll_connector::AMLLConnectorConfig {
+                    let new_mc_config_from_settings = AMLLConnectorConfig {
                         enabled: app_settings_guard.amll_connector_enabled,
                         websocket_url: app_settings_guard.amll_connector_websocket_url.clone(),
                     };
-                    let connector_enabled_runtime = new_mc_config_from_settings.enabled;
+
+                    let new_actor_settings = ActorSettings {
+                        enable_t2s_conversion: app_settings_guard.enable_t2s_for_auto_search,
+                    };
+
+                    if let Some(tx) = &self.amll_connector.command_tx {
+                        debug!(
+                            "[Settings] 发送 UpdateActorSettings 命令给 AMLL Connector worker。"
+                        );
+                        if tx
+                            .try_send(UpdateActorSettings(new_actor_settings))
+                            .is_err()
+                        {
+                            error!(
+                                "[Settings] 发送 UpdateActorSettings 命令给 AMLL Connector worker 失败。"
+                            );
+                        }
+                    }
+
                     drop(app_settings_guard);
 
                     let mut current_mc_config_guard = self.amll_connector.config.lock().unwrap();

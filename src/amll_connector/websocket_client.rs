@@ -95,7 +95,7 @@ async fn send_ws_message(writer: &mut WsWriter, body: ClientMessage) -> Result<(
                 }
             };
 
-            tracing::debug!(
+            tracing::trace!(
                 "[WebSocket 客户端] 准备发送消息 (类型: {}, 大小: {} 字节)",
                 body_type_for_log,
                 binary_data.len()
@@ -131,7 +131,7 @@ async fn handle_protocol_body(
 ) -> Result<(), LifecycleEndReason> {
     match parsed_body {
         ServerMessage::Ping => {
-            tracing::info!("[WebSocket 客户端] 收到服务器的 Ping 请求。准备回复 Pong。");
+            tracing::trace!("[WebSocket 客户端] 收到服务器的 Ping 请求。准备回复 Pong。");
             if internal_pong_tx.send(ClientMessage::Pong).await.is_err() {
                 let reason = "排队回复服务器 Ping 失败".to_string();
                 tracing::error!("[WebSocket 客户端] {reason}");
@@ -139,7 +139,7 @@ async fn handle_protocol_body(
             }
         }
         ServerMessage::Pong => {
-            tracing::info!("[WebSocket 客户端] 收到服务器的 Pong 回复。");
+            tracing::trace!("[WebSocket 客户端] 收到服务器的 Pong 回复。");
             if state.waiting_for_app_pong {
                 state.waiting_for_app_pong = false;
                 state.last_app_ping_sent_at = None;
@@ -345,7 +345,7 @@ async fn handle_connection(
                             return LifecycleEndReason::PongTimeout;
                         }
                 } else {
-                    tracing::info!("[WebSocket 客户端] 定时发送 Ping 到服务器。");
+                    tracing::trace!("[WebSocket 客户端] 定时发送 Ping 到服务器。");
                     if send_ws_message(&mut ws_writer, ClientMessage::Ping).await.is_err() {
                         return LifecycleEndReason::StreamFailure("发送应用层 Ping 失败".to_string());
                     }

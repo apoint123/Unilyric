@@ -3,20 +3,145 @@ use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus};
 use smtc_suite::NowPlayingInfo;
 
 use lyrics_helper_rs::SearchMode;
-use lyrics_helper_rs::model::track::Track;
+use lyrics_helper_rs::model::track::{FullLyricsResult, Track};
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
+
+fn is_track_match(
+    now_playing: &NowPlayingInfo,
+    cache_entry: &crate::types::LocalLyricCacheEntry,
+) -> bool {
+    let title_match = now_playing.title.as_deref().map_or(false, |playing_title| {
+        playing_title
+            .trim()
+            .eq_ignore_ascii_case(cache_entry.smtc_title.trim())
+    });
+
+    if !title_match {
+        return false;
+    }
+
+    let artists_playing = now_playing.artist.as_deref().unwrap_or_default();
+    if artists_playing.is_empty() && cache_entry.smtc_artists.is_empty() {
+        return true;
+    }
+
+    let playing_artists_set: std::collections::HashSet<String> = artists_playing
+        .split(['/', '、', ',', ';'])
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let cached_artists_set: std::collections::HashSet<String> = cache_entry
+        .smtc_artists
+        .iter()
+        .map(|s| s.trim().to_lowercase())
+        .collect();
+
+    if playing_artists_set == cached_artists_set {
+        return true;
+    }
+
+    if !playing_artists_set.is_empty() && playing_artists_set.is_subset(&cached_artists_set) {
+        return true;
+    }
+
+    false
+}
 
 pub(super) fn initial_auto_fetch_and_send_lyrics(
     app: &mut UniLyricApp,
     track_info: NowPlayingInfo,
 ) {
+    *app.fetcher.local_cache_status.lock().unwrap() = AutoSearchStatus::Searching;
+
+    let cache_index = app.local_cache.index.lock().unwrap();
+    let matched_entry = cache_index
+        .iter()
+        .find(|entry| is_track_match(&track_info, entry));
+
+    if let Some(entry) = matched_entry {
+        info!(
+            "[LocalCache] 在本地缓存中找到匹配项: {:?}",
+            entry.ttml_filename
+        );
+        if let Some(cache_dir) = &app.local_cache.dir_path {
+            let file_path = cache_dir.join(&entry.ttml_filename);
+            match std::fs::read_to_string(&file_path) {
+                Ok(ttml_content) => {
+                    if let Some(helper) = app.lyrics_helper.as_ref() {
+                        let result_tx = app.fetcher.result_tx.clone();
+                        let helper_clone = Arc::clone(helper);
+
+                        app.tokio_runtime.spawn(async move {
+                            let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
+                                ttml_content.clone(),
+                                lyrics_helper_rs::converter::LyricFormat::Ttml,
+                                None,
+                                None,
+                            );
+
+                            let input = lyrics_helper_rs::converter::types::ConversionInput {
+                                main_lyric,
+                                translations: vec![],
+                                romanizations: vec![],
+                                target_format: lyrics_helper_rs::converter::LyricFormat::Ttml,
+                                user_metadata_overrides: None,
+                            };
+
+                            let options =
+                                lyrics_helper_rs::converter::types::ConversionOptions::default();
+
+                            match helper_clone.convert_lyrics(input, &options).await {
+                                Ok(conversion_result) => {
+                                    let parsed_data = conversion_result.source_data;
+
+                                    let full_lyrics_result = FullLyricsResult {
+                                        raw: lyrics_helper_rs::model::track::RawLyrics {
+                                            content: ttml_content,
+                                            ..Default::default()
+                                        },
+                                        parsed: parsed_data,
+                                    };
+
+                                    let result_to_send = AutoFetchResult::Success {
+                                        source: AutoSearchSource::LocalCache,
+                                        full_lyrics_result,
+                                    };
+
+                                    if result_tx.send(result_to_send).is_err() {
+                                        error!(
+                                            "[LocalCache Task] 发送本地缓存的成功结果到主线程失败。"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[LocalCache] 解析缓存的TTML文件时发生错误: {}", e);
+                                }
+                            }
+                        });
+
+                        return;
+                    }
+                }
+                Err(e) => {
+                    error!("[LocalCache] 读取缓存文件 {:?} 失败: {}", file_path, e);
+                    *app.fetcher.local_cache_status.lock().unwrap() =
+                        AutoSearchStatus::Error(e.to_string());
+                }
+            }
+        }
+    } else {
+        info!("[LocalCache] 本地缓存未命中。");
+        *app.fetcher.local_cache_status.lock().unwrap() = AutoSearchStatus::NotFound;
+    }
+
     let smtc_title = match track_info.title.as_deref() {
         Some(t) if !t.trim().is_empty() && t != "无歌曲" && t != "无活动会话" => {
             t.trim().to_string()
         }
         _ => {
-            info!("[AutoFetch] SMTC 无有效歌曲名称，跳过搜索。");
+            info!("[AutoFetch] SMTC 无有效歌曲名称，跳过在线搜索。");
             return;
         }
     };
@@ -49,26 +174,56 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
         tracing::info!("[AutoFetch] 使用并行模式进行全面搜索。");
         SearchMode::Parallel
     } else {
-        tracing::info!("[AutoFetch] 使用有序模式进行快速搜索。");
+        tracing::info!("[AutoFetch] 使用顺序模式进行快速搜索。");
         SearchMode::Ordered
     };
+
+    let perform_t2s_conversion = app_settings.enable_t2s_for_auto_search;
+    let t2s_converter: Option<_> = if perform_t2s_conversion {
+        app.t2s_converter.clone()
+    } else {
+        None
+    };
+
     // 释放锁
     drop(app_settings);
 
     app.fetcher.last_source_format = None;
-    update_all_search_status(app, AutoSearchStatus::Searching);
+    *app.fetcher.qqmusic_status.lock().unwrap() = AutoSearchStatus::Searching;
+    *app.fetcher.kugou_status.lock().unwrap() = AutoSearchStatus::Searching;
+    *app.fetcher.netease_status.lock().unwrap() = AutoSearchStatus::Searching;
+    *app.fetcher.amll_db_status.lock().unwrap() = AutoSearchStatus::Searching;
+    *app.fetcher.musixmatch_status.lock().unwrap() = AutoSearchStatus::Searching;
 
     let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
+        let (title_to_search, artists_to_search);
+
+        let mut temp_converted_artists: Vec<String> = Vec::new();
+        if perform_t2s_conversion && t2s_converter.is_some() {
+            let converter = t2s_converter.as_ref().unwrap();
+
+            title_to_search = converter.convert(&smtc_title);
+
+            for artist in &smtc_artists {
+                temp_converted_artists.push(converter.convert(artist));
+            }
+            artists_to_search = temp_converted_artists;
+        } else {
+            title_to_search = smtc_title.clone();
+            artists_to_search = smtc_artists.clone();
+        }
+
         debug!(
-            "开始搜索歌词: title='{smtc_title}', artists='{smtc_artists:?}', mode='{search_mode:?}'"
+            "开始搜索歌词: title='{}', artists='{:?}', mode='{:?}'",
+            title_to_search, artists_to_search, search_mode
         );
 
-        let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
+        let artists_slices: Vec<&str> = artists_to_search.iter().map(|s| s.as_str()).collect();
         let track_to_search = Track {
-            title: Some(&smtc_title),
-            artists: if smtc_artists.is_empty() {
+            title: Some(&title_to_search),
+            artists: if artists_to_search.is_empty() {
                 None
             } else {
                 Some(&artists_slices)
@@ -185,19 +340,11 @@ pub(super) fn trigger_manual_refetch_for_source(
     });
 }
 
-pub(super) fn update_all_search_status(app: &UniLyricApp, status: AutoSearchStatus) {
-    *app.fetcher.local_cache_status.lock().unwrap() = status.clone();
-    *app.fetcher.qqmusic_status.lock().unwrap() = status.clone();
-    *app.fetcher.kugou_status.lock().unwrap() = status.clone();
-    *app.fetcher.netease_status.lock().unwrap() = status.clone();
-    *app.fetcher.amll_db_status.lock().unwrap() = status.clone();
-    *app.fetcher.musixmatch_status.lock().unwrap() = status.clone();
-}
-
-pub(super) fn clear_last_fetch_results(app: &UniLyricApp) {
+pub(super) fn clear_last_fetch_results(app: &mut UniLyricApp) {
     *app.fetcher.last_qq_result.lock().unwrap() = None;
     *app.fetcher.last_kugou_result.lock().unwrap() = None;
     *app.fetcher.last_netease_result.lock().unwrap() = None;
     *app.fetcher.last_amll_db_result.lock().unwrap() = None;
     *app.fetcher.last_musixmatch_result.lock().unwrap() = None;
+    app.fetcher.current_ui_populated = false;
 }
