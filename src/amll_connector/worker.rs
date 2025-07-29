@@ -1,15 +1,8 @@
 use std::{
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc::Sender as StdSender,
-    },
+    sync::{Arc, mpsc::Sender as StdSender},
     time::Duration,
 };
 
-use crossbeam_channel::{
-    Receiver as CrossbeamReceiver, RecvTimeoutError, Sender as CrossbeamSender,
-};
 use ferrous_opencc::OpenCC;
 use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
 use tokio::sync::{
@@ -29,9 +22,7 @@ use super::{
     websocket_client,
 };
 
-const SMTC_BRIDGE_TIMEOUT_MS: u64 = 100;
 const CHANNEL_BUFFER_SIZE: usize = 32;
-const SMTC_UPDATE_BUFFER_SIZE: usize = 128;
 const WEBSOCKET_SHUTDOWN_TIMEOUT_MS: u64 = 100;
 
 /// WebSocket 客户端的运行时状态
@@ -127,8 +118,8 @@ fn handle_websocket_send_error<T>(result: Result<(), TrySendError<T>>, message_t
     }
 }
 
-fn handle_smtc_send_error<T>(
-    result: Result<(), crossbeam_channel::SendError<T>>,
+async fn handle_smtc_send_error<T>(
+    result: Result<(), tokio::sync::mpsc::error::SendError<T>>,
     command_type: &str,
 ) {
     if let Err(e) = result {
@@ -207,8 +198,8 @@ pub async fn amll_connector_actor(
     mut command_rx: TokioReceiver<ConnectorCommand>,
     update_tx: StdSender<ConnectorUpdate>,
     initial_config: AMLLConnectorConfig,
-    smtc_command_tx: CrossbeamSender<MediaCommand>,
-    smtc_update_rx: CrossbeamReceiver<MediaUpdate>,
+    smtc_command_tx: TokioSender<MediaCommand>,
+    mut smtc_update_rx: TokioReceiver<MediaUpdate>,
     t2s_converter: Option<Arc<OpenCC>>,
 ) {
     tracing::debug!("[AMLL Actor] Actor 任务已启动。");
@@ -242,58 +233,6 @@ pub async fn amll_connector_actor(
         }
     }
 
-    let bridge_shutdown_signal = Arc::new(AtomicBool::new(false));
-
-    let (smtc_update_tx_async, mut smtc_update_rx_async) = tokio_channel(SMTC_UPDATE_BUFFER_SIZE);
-    let smtc_bridge_handle = {
-        let signal = Arc::clone(&bridge_shutdown_signal);
-        let smtc_update_rx_clone = smtc_update_rx.clone();
-
-        tokio::spawn(async move {
-            tracing::debug!("[SMTC Bridge] 桥接任务已启动。");
-
-            loop {
-                if signal.load(Ordering::Relaxed) {
-                    tracing::debug!("[SMTC Bridge] 收到关闭信号，正在退出循环。");
-                    break;
-                }
-
-                let recv_result = tokio::task::spawn_blocking({
-                    let rx = smtc_update_rx_clone.clone();
-                    move || rx.recv_timeout(Duration::from_millis(SMTC_BRIDGE_TIMEOUT_MS))
-                })
-                .await;
-
-                // 回到异步上下文处理结果
-                match recv_result {
-                    Ok(Ok(update)) => {
-                        // JoinHandle 成功, recv_timeout 成功
-                        if smtc_update_tx_async.send(update).await.is_err() {
-                            tracing::error!("[SMTC Bridge] 异步通道已关闭，桥接任务退出");
-                            break;
-                        }
-                    }
-                    Ok(Err(RecvTimeoutError::Timeout)) => {
-                        continue;
-                    }
-                    Ok(Err(RecvTimeoutError::Disconnected)) => {
-                        tracing::debug!("[SMTC Bridge] SMTC 更新通道已断开，桥接任务退出");
-                        break;
-                    }
-                    Err(join_err) => {
-                        // spawn_blocking 任务本身失败 (e.g., cancelled)
-                        tracing::warn!(
-                            "[SMTC Bridge] 桥接的阻塞任务失败: {}，桥接任务退出",
-                            join_err
-                        );
-                        break;
-                    }
-                }
-            }
-            tracing::debug!("[SMTC Bridge] 桥接任务已完成。");
-        })
-    };
-
     tracing::debug!("[AMLL Actor] 已启动并进入主事件循环。");
 
     loop {
@@ -302,14 +241,6 @@ pub async fn amll_connector_actor(
                 match command {
                     ConnectorCommand::Shutdown => {
                         tracing::debug!("[AMLL Actor] 已收到 Shutdown 命令。");
-
-                        bridge_shutdown_signal.store(true, Ordering::Relaxed);
-
-                        match smtc_bridge_handle.await {
-                            Ok(_) => tracing::debug!("[AMLL Actor] SMTC 桥接任务已正常完成"),
-                            Err(e) if e.is_cancelled() => tracing::debug!("[AMLL Actor] SMTC 桥接任务被取消"),
-                            Err(e) => tracing::warn!("[AMLL Actor] SMTC 桥接任务异常结束: {}", e),
-                        }
 
                         if let Some(client) = websocket_client.take() {
                             client.shutdown().await;
@@ -396,7 +327,7 @@ pub async fn amll_connector_actor(
                 tracing::debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
                 let enable_high_freq = matches!(status, WebsocketStatus::已连接);
                 let command = MediaCommand::SetHighFrequencyProgressUpdates(enable_high_freq);
-                handle_smtc_send_error(smtc_command_tx.send(command), "高频更新开关");
+                handle_smtc_send_error(smtc_command_tx.send(command).await, "高频更新开关").await;
                 handle_update_send_error(
                     update_tx.send(ConnectorUpdate::WebsocketStatusChanged(status)),
                     "WebSocket状态"
@@ -407,14 +338,14 @@ pub async fn amll_connector_actor(
                 tracing::info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
                 let command_to_send = MediaCommand::Control(media_cmd);
                 handle_smtc_send_error(
-                    smtc_command_tx.send(command_to_send),
+                    smtc_command_tx.send(command_to_send).await,
                     "来自WebSocket的控制命令"
-                );
+                ).await;
             },
 
-            Some(update) = smtc_update_rx_async.recv() => {
-                let mut update_to_send_to_ui: Option<MediaUpdate> = None;
-                let mut track_info_for_ws: Option<smtc_suite::NowPlayingInfo> = None;
+            Some(update) = smtc_update_rx.recv() => {
+                let update_to_send_to_ui: Option<MediaUpdate> = None;
+                let track_info_for_ws: Option<smtc_suite::NowPlayingInfo> = None;
 
                 match update {
                     MediaUpdate::TrackChanged(new_info) => {

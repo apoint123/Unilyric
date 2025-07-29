@@ -864,24 +864,47 @@ impl UniLyricApp {
         });
         ui.separator();
 
-        egui::ScrollArea::vertical()
-            .id_salt("input_scroll_vertical_only")
-            .auto_shrink([false, false])
-            .show(ui, |s_ui| {
-                let text_edit_widget = egui::TextEdit::multiline(&mut self.lyrics.input_text)
-                    .hint_text("在此处粘贴或拖放主歌词文件")
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(f32::INFINITY);
+        let scroll_area = if self.ui.wrap_text {
+            egui::ScrollArea::vertical().id_salt("input_scroll_vertical_only")
+        } else {
+            egui::ScrollArea::both()
+                .id_salt("input_scroll_both")
+                .auto_shrink([false, false])
+        };
 
-                let response = s_ui.add(text_edit_widget);
-                if response.changed() && !self.lyrics.conversion_in_progress {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::MainInputChanged(
-                            self.lyrics.input_text.clone(),
-                        ),
-                    ));
-                }
-            });
+        scroll_area.auto_shrink([false, false]).show(ui, |s_ui| {
+            let text_edit_widget = egui::TextEdit::multiline(&mut self.lyrics.input_text)
+                .hint_text("在此处粘贴或拖放主歌词文件")
+                .font(egui::TextStyle::Monospace)
+                .desired_width(f32::INFINITY);
+
+            let response = if !self.ui.wrap_text {
+                let font_id = egui::TextStyle::Monospace.resolve(s_ui.style());
+                let text_color = s_ui.visuals().text_color();
+
+                let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+                    let layout_job = egui::text::LayoutJob::simple(
+                        string.to_string(),
+                        font_id.clone(),
+                        text_color,
+                        f32::INFINITY,
+                    );
+                    ui.fonts(|f| f.layout_job(layout_job))
+                };
+
+                s_ui.add(text_edit_widget.layouter(&mut layouter))
+            } else {
+                s_ui.add(text_edit_widget)
+            };
+
+            if response.changed() && !self.lyrics.conversion_in_progress {
+                self.send_action(crate::app_actions::UserAction::Lyrics(
+                    crate::app_actions::LyricsAction::MainInputChanged(
+                        self.lyrics.input_text.clone(),
+                    ),
+                ));
+            }
+        });
     }
 
     /// 绘制翻译LRC面板的内容。
@@ -947,9 +970,15 @@ impl UniLyricApp {
             );
         });
 
-        // TextEdit 总是使用垂直滚动条
-        egui::ScrollArea::vertical()
-            .id_salt("translation_lrc_scroll_vertical")
+        let scroll_area = if self.ui.wrap_text {
+            egui::ScrollArea::vertical().id_salt("translation_lrc_scroll_vertical")
+        } else {
+            egui::ScrollArea::both()
+                .id_salt("translation_lrc_scroll_both")
+                .auto_shrink([false, false])
+        };
+
+        scroll_area
             .auto_shrink([false, false])
             .show(ui, |s_ui_content| {
                 let text_edit_widget =
@@ -959,7 +988,24 @@ impl UniLyricApp {
                         .desired_width(f32::INFINITY)
                         .desired_rows(10);
 
-                let response = s_ui_content.add(text_edit_widget);
+                let response = if !self.ui.wrap_text {
+                    let font_id = egui::TextStyle::Monospace.resolve(s_ui_content.style());
+                    let text_color = s_ui_content.visuals().text_color();
+
+                    let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+                        let layout_job = egui::text::LayoutJob::simple(
+                            string.to_string(),
+                            font_id.clone(),
+                            text_color,
+                            f32::INFINITY,
+                        );
+                        ui.fonts(|f| f.layout_job(layout_job))
+                    };
+                    s_ui_content.add(text_edit_widget.layouter(&mut layouter))
+                } else {
+                    s_ui_content.add(text_edit_widget)
+                };
+
                 if response.changed() {
                     text_edited_this_frame = true;
                 }
@@ -1048,9 +1094,15 @@ impl UniLyricApp {
             );
         });
 
-        // TextEdit 总是使用垂直滚动条
-        egui::ScrollArea::vertical()
-            .id_salt("romanization_lrc_scroll_vertical_v4") // 更新 ID
+        let scroll_area = if self.ui.wrap_text {
+            egui::ScrollArea::vertical().id_salt("romanization_lrc_scroll_vertical")
+        } else {
+            egui::ScrollArea::both()
+                .id_salt("romanization_lrc_scroll_both")
+                .auto_shrink([false, false])
+        };
+
+        scroll_area
             .auto_shrink([false, false])
             .show(ui, |s_ui_content| {
                 let text_edit_widget =
@@ -1060,7 +1112,24 @@ impl UniLyricApp {
                         .desired_width(f32::INFINITY)
                         .desired_rows(10);
 
-                let response = s_ui_content.add(text_edit_widget);
+                let response = if !self.ui.wrap_text {
+                    let font_id = egui::TextStyle::Monospace.resolve(s_ui_content.style());
+                    let text_color = s_ui_content.visuals().text_color();
+
+                    let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+                        let layout_job = egui::text::LayoutJob::simple(
+                            string.to_string(),
+                            font_id.clone(),
+                            text_color,
+                            f32::INFINITY,
+                        );
+                        ui.fonts(|f| f.layout_job(layout_job))
+                    };
+                    s_ui_content.add(text_edit_widget.layouter(&mut layouter))
+                } else {
+                    s_ui_content.add(text_edit_widget)
+                };
+
                 if response.changed() {
                     text_edited_this_frame = true;
                 }
@@ -1092,11 +1161,10 @@ impl UniLyricApp {
             .join("\n");
 
         let scroll_area = if wrap_text_arg {
-            // 使用传入的参数
-            egui::ScrollArea::vertical().id_salt("markers_panel_scroll_vertical_v4")
+            egui::ScrollArea::vertical().id_salt("markers_panel_scroll_vertical")
         } else {
             egui::ScrollArea::both()
-                .id_salt("markers_panel_scroll_both_v4")
+                .id_salt("markers_panel_scroll_both")
                 .auto_shrink([false, false])
         };
 
@@ -1219,7 +1287,7 @@ impl UniLyricApp {
             ScrollArea::vertical().id_salt("output_scroll_vertical_label")
         } else {
             ScrollArea::both()
-                .id_salt("output_scroll_both_label_v6")
+                .id_salt("output_scroll_both_label")
                 .auto_shrink([false, false])
         };
 
@@ -1308,7 +1376,7 @@ impl UniLyricApp {
             None => "自动 (系统默认)".to_string(),
         };
 
-        let combo_changed = egui::ComboBox::from_id_salt("smtc_source_selector_refactored")
+        let combo_changed = egui::ComboBox::from_id_salt("smtc_source_selector")
             .selected_text(combo_label_text)
             .show_ui(ui, |combo_ui| {
                 let mut changed_in_combo = false;

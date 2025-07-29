@@ -145,7 +145,7 @@ impl LyricState {
 }
 
 pub(super) struct PlayerState {
-    pub(super) command_tx: Option<crossbeam_channel::Sender<MediaCommand>>,
+    pub(super) command_tx: Option<TokioSender<MediaCommand>>,
     pub(super) current_now_playing: NowPlayingInfo,
     pub(super) available_sessions: Vec<SmtcSessionInfo>,
     pub(super) smtc_time_offset_ms: i64,
@@ -153,7 +153,7 @@ pub(super) struct PlayerState {
 }
 
 impl PlayerState {
-    fn new(_settings: &AppSettings, command_tx: crossbeam_channel::Sender<MediaCommand>) -> Self {
+    fn new(_settings: &AppSettings, command_tx: TokioSender<MediaCommand>) -> Self {
         Self {
             command_tx: Some(command_tx),
             current_now_playing: NowPlayingInfo::default(),
@@ -299,7 +299,8 @@ impl UniLyricApp {
         Self::setup_eframe_context(&cc.egui_ctx);
         let tokio_runtime = Self::create_tokio_runtime();
         let t2s_converter = Self::init_t2s_converter();
-        let smtc_controller = smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
+        let (smtc_controller, smtc_update_rx) =
+            smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
 
         let (lyrics_helper_tx, lyrics_helper_rx) =
             std_channel::<Arc<lyrics_helper_rs::LyricsHelper>>();
@@ -328,7 +329,7 @@ impl UniLyricApp {
                 amll_update_tx,
                 mc_config.clone(),
                 smtc_controller.command_tx.clone(),
-                smtc_controller.update_rx,
+                smtc_update_rx,
                 t2s_converter.clone(),
             ));
 
@@ -467,7 +468,7 @@ impl UniLyricApp {
 
         if let Some(tx) = &self.player.command_tx {
             tracing::trace!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite 服务...");
-            if tx.send(MediaCommand::Shutdown).is_err() {
+            if tx.try_send(MediaCommand::Shutdown).is_err() {
                 tracing::warn!(
                     "[Shutdown] 发送 Shutdown 命令到 smtc-suite 失败 (服务可能已关闭)。"
                 );

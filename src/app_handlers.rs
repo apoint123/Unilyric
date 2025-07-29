@@ -778,7 +778,7 @@ impl UniLyricApp {
         let send_result = match action {
             PlayerAction::Control(control_command) => {
                 tracing::debug!("[PlayerAction] 发送媒体控制命令: {:?}", control_command);
-                command_tx.send(MediaCommand::Control(control_command))
+                command_tx.try_send(MediaCommand::Control(control_command))
             }
             PlayerAction::SelectSmtcSession(session_id) => {
                 let session_id_for_state: Option<String>;
@@ -797,7 +797,7 @@ impl UniLyricApp {
                         tracing::warn!("[PlayerAction] 保存上次选择的SMTC会话ID失败: {}", e);
                     }
                 }
-                command_tx.send(MediaCommand::SelectSession(session_id))
+                command_tx.try_send(MediaCommand::SelectSession(session_id))
             }
             PlayerAction::SaveToLocalCache => {
                 return self.save_lyrics_to_local_cache();

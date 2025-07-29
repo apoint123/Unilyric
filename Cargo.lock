@@ -4967,7 +4967,7 @@ dependencies = [
 [[package]]
 name = "smtc-suite"
 version = "2.4.0"
-source = "git+https://github.com/apoint123/smtc-suite.git#2bf4100363bc43db44447b77bcc3b707b9506e33"
+source = "git+https://github.com/apoint123/smtc-suite.git#1ede32edec81d2eca58e8c38f094163b80c4e744"
 dependencies = [
  "base64 0.22.1",
  "crossbeam-channel",
