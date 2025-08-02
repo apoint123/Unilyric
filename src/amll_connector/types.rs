@@ -45,9 +45,7 @@ impl Default for WebsocketStatus {
 }
 
 #[derive(Debug, Clone)]
-pub struct ActorSettings {
-    pub enable_t2s_conversion: bool,
-}
+pub struct ActorSettings {}
 
 /// Unilyric 主应用发送给 amll_connector worker 的命令
 #[derive(Debug, Clone)]

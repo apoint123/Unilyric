@@ -1,9 +1,5 @@
-use std::{
-    sync::{Arc, mpsc::Sender as StdSender},
-    time::Duration,
-};
+use std::{sync::mpsc::Sender as StdSender, time::Duration};
 
-use ferrous_opencc::OpenCC;
 use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
 use tokio::sync::{
     mpsc::{
@@ -12,8 +8,6 @@ use tokio::sync::{
     },
     oneshot,
 };
-
-use crate::amll_connector::types::ActorSettings;
 
 use super::{
     protocol::{Artist, ClientMessage},
@@ -200,13 +194,10 @@ pub async fn amll_connector_actor(
     initial_config: AMLLConnectorConfig,
     smtc_command_tx: TokioSender<MediaCommand>,
     mut smtc_update_rx: TokioReceiver<MediaUpdate>,
-    t2s_converter: Option<Arc<OpenCC>>,
+    egui_ctx: egui::Context,
 ) {
     tracing::debug!("[AMLL Actor] Actor 任务已启动。");
     let mut config = initial_config;
-    let mut actor_settings = ActorSettings {
-        enable_t2s_conversion: true, // UI启动后会立即同步
-    };
     let mut websocket_client: Option<WebSocketClientState> = None;
     let mut last_sent_title: Option<String> = None;
     let mut cached_original_info: Option<smtc_suite::NowPlayingInfo> = None;
@@ -253,17 +244,16 @@ pub async fn amll_connector_actor(
                         let should_be_running = config.enabled;
                         let is_running = websocket_client
                             .as_ref()
-                            .map_or(false, |client| client.is_running());
+                            .is_some_and(|client| client.is_running());
                         let url_changed = old_config.websocket_url != config.websocket_url;
 
                         if should_be_running && (!is_running || url_changed) {
                             tracing::info!("[AMLL Actor] 配置已更改，正在启动/重启...");
 
-                            if let Some(old_client) = websocket_client.take() {
-                                if let Ok(handle) = old_client.send_shutdown_signal() {
+                            if let Some(old_client) = websocket_client.take()
+                                && let Ok(handle) = old_client.send_shutdown_signal() {
                                     handle.abort();
                                 }
-                            }
 
                             match start_websocket_client_task(&config, ws_status_tx.clone(), media_cmd_tx.clone()) {
                                 Ok((outgoing_tx, client_handle, shutdown_signal_tx)) => {
@@ -281,24 +271,21 @@ pub async fn amll_connector_actor(
                             }
                         } else if !should_be_running && is_running {
                             tracing::debug!("[AMLL Actor] 配置已禁用，正在停止客户端...");
-                            if let Some(client) = websocket_client.take() {
-                                if let Ok(handle) = client.send_shutdown_signal() {
+                            if let Some(client) = websocket_client.take()
+                                && let Ok(handle) = client.send_shutdown_signal() {
                                     handle.abort();
                                 }
-                            }
                         }
                     },
                     ConnectorCommand::UpdateActorSettings(new_settings) => {
                         tracing::debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
-                        actor_settings = new_settings;
                     },
                     ConnectorCommand::DisconnectWebsocket => {
                         tracing::debug!("[AMLL Actor] 收到 Disconnect 命令，正在关闭 WebSocket 客户端...");
-                        if let Some(client) = websocket_client.take() {
-                            if let Ok(handle) = client.send_shutdown_signal() {
+                        if let Some(client) = websocket_client.take()
+                            && let Ok(handle) = client.send_shutdown_signal() {
                                 handle.abort();
                             }
-                        }
                         handle_update_send_error(
                             update_tx.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开)),
                             "WebSocket断开状态"
@@ -332,6 +319,7 @@ pub async fn amll_connector_actor(
                     update_tx.send(ConnectorUpdate::WebsocketStatusChanged(status)),
                     "WebSocket状态"
                 );
+                egui_ctx.request_repaint();
             },
 
             Some(media_cmd) = media_cmd_rx.recv() => {
@@ -341,6 +329,7 @@ pub async fn amll_connector_actor(
                     smtc_command_tx.send(command_to_send).await,
                     "来自WebSocket的控制命令"
                 ).await;
+                egui_ctx.request_repaint();
             },
 
             Some(update) = smtc_update_rx.recv() => {
@@ -358,12 +347,7 @@ pub async fn amll_connector_actor(
                             tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
                             cached_original_info = Some(new_info.clone());
 
-                            let mut converted_info = new_info;
-                            if actor_settings.enable_t2s_conversion && let Some(ref converter) = t2s_converter {
-                                if let Some(ref title) = converted_info.title { converted_info.title = Some(converter.convert(title)); }
-                                if let Some(ref artist) = converted_info.artist { converted_info.artist = Some(converter.convert(artist)); }
-                                if let Some(ref album_title) = converted_info.album_title { converted_info.album_title = Some(converter.convert(album_title)); }
-                            }
+                            let converted_info = new_info;
 
                             if let Some(client) = &websocket_client {
                                 send_music_info_to_ws(client, &converted_info);
@@ -372,30 +356,43 @@ pub async fn amll_connector_actor(
                                 }
                             }
 
+                            egui_ctx.request_repaint();
+
                             cached_converted_info = Some(converted_info.clone());
                             update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(converted_info))).ok();
 
-                        } else {
-                            if let (Some(cached_orig), Some(cached_conv)) = (&mut cached_original_info, &mut cached_converted_info) {
-                                if new_info.cover_data.is_some() && new_info.cover_data != cached_orig.cover_data {
-                                    tracing::debug!("[AMLL Actor] 检测到封面更新。");
-                                    cached_orig.cover_data = new_info.cover_data.clone();
-                                    cached_conv.cover_data = new_info.cover_data.clone();
-                                    if let Some(client) = &websocket_client {
-                                        send_cover_to_ws(client, new_info.cover_data.as_ref().unwrap());
-                                    }
-                                }
+                        } else if let (Some(cached_orig), Some(cached_conv)) = (&mut cached_original_info, &mut cached_converted_info) {
+                            let mut needs_repaint = false;
 
-                                cached_orig.update_with(&new_info);
-                                cached_conv.update_with(&new_info);
-
+                            if new_info.cover_data.is_some() && new_info.cover_data != cached_orig.cover_data {
+                                tracing::debug!("[AMLL Actor] 检测到封面更新。");
+                                cached_orig.cover_data = new_info.cover_data.clone();
+                                cached_conv.cover_data = new_info.cover_data.clone();
                                 if let Some(client) = &websocket_client {
-                                    send_play_state_to_ws(client, cached_conv);
-                                    send_progress_to_ws(client, cached_conv);
+                                    send_cover_to_ws(client, new_info.cover_data.as_ref().unwrap());
                                 }
-
-                                update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(cached_conv.clone()))).ok();
+                                needs_repaint = true;
                             }
+
+                            let old_is_playing = cached_conv.is_playing;
+
+                            cached_orig.update_with(&new_info);
+                            cached_conv.update_with(&new_info);
+
+                            if old_is_playing != cached_conv.is_playing {
+                                needs_repaint = true;
+                            }
+
+                            if needs_repaint {
+                                egui_ctx.request_repaint();
+                            }
+
+                            if let Some(client) = &websocket_client {
+                                send_play_state_to_ws(client, cached_conv);
+                                send_progress_to_ws(client, cached_conv);
+                            }
+
+                            update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(cached_conv.clone()))).ok();
                         }
                     }
                     other_update => {
@@ -404,6 +401,7 @@ pub async fn amll_connector_actor(
                             cached_converted_info = None;
                         }
                         update_tx.send(ConnectorUpdate::SmtcUpdate(other_update)).ok();
+                        egui_ctx.request_repaint();
                     }
                 }
 

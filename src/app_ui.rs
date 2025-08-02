@@ -1,11 +1,12 @@
 use crate::amll_connector::WebsocketStatus;
 use crate::app_definition::UniLyricApp;
 
-use crate::types::{AutoSearchSource, AutoSearchStatus, ChineseConversionVariant};
+use crate::types::{AutoSearchSource, AutoSearchStatus};
 
 use crate::app_actions::{AmllConnectorAction, LyricsAction, PlayerAction, UIAction, UserAction};
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::{Color32, TextWrapMode};
+use ferrous_opencc::config::BuiltinConfig;
 use log::LevelFilter;
 use lyrics_helper_rs::model::track::FullLyricsResult;
 
@@ -119,13 +120,13 @@ impl UniLyricApp {
                 tools_menu.label(egui::RichText::new("通用简繁转换").strong());
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    ChineseConversionVariant::S2T,
+                    BuiltinConfig::S2t,
                     "简体 → 繁体 (通用)",
                     conversion_enabled,
                 );
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    ChineseConversionVariant::T2S,
+                    BuiltinConfig::T2s,
                     "繁体 → 简体 (通用)",
                     conversion_enabled,
                 );
@@ -135,13 +136,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("简体 →", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::S2TWP,
+                        BuiltinConfig::S2twp,
                         "台湾正体",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::S2HK,
+                        BuiltinConfig::S2hk,
                         "香港繁体",
                         conversion_enabled,
                     );
@@ -149,13 +150,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("繁体 →", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::TW2SP,
+                        BuiltinConfig::Tw2sp,
                         "大陆简体 (含用语)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::TW2S,
+                        BuiltinConfig::Tw2s,
                         "大陆简体 (仅文字)",
                         conversion_enabled,
                     );
@@ -166,13 +167,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("繁体互转", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::TW2T,
+                        BuiltinConfig::Tw2t,
                         "台湾繁体 → 香港繁体",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::HK2T,
+                        BuiltinConfig::Hk2t,
                         "香港繁体 → 台湾繁体",
                         conversion_enabled,
                     );
@@ -180,25 +181,25 @@ impl UniLyricApp {
                 tools_menu.menu_button("其他转换", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::S2TW,
+                        BuiltinConfig::S2tw,
                         "简体 → 台湾繁体 (仅文字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::T2TW,
+                        BuiltinConfig::T2tw,
                         "繁体 → 台湾繁体 (异体字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::T2HK,
+                        BuiltinConfig::T2hk,
                         "繁体 → 香港繁体 (异体字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        ChineseConversionVariant::HK2S,
+                        BuiltinConfig::Hk2s,
                         "香港繁体 → 简体",
                         conversion_enabled,
                     );
@@ -208,13 +209,13 @@ impl UniLyricApp {
                 tools_menu.label(egui::RichText::new("日语汉字转换").strong());
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    ChineseConversionVariant::JP2T,
+                    BuiltinConfig::Jp2t,
                     "日语新字体 → 繁体旧字体",
                     conversion_enabled,
                 );
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    ChineseConversionVariant::T2JP,
+                    BuiltinConfig::T2jp,
                     "繁体旧字体 → 日语新字体",
                     conversion_enabled,
                 );
@@ -507,6 +508,47 @@ impl UniLyricApp {
                         grid_ui.end_row();
                     });
                 ui.add_space(10.0);
+
+                ui.separator();
+                ui.strong("界面设置:");
+
+                ui.horizontal(|h_ui| {
+                    h_ui.label("界面字体:");
+
+                    let mut selected = self
+                        .ui
+                        .temp_edit_settings
+                        .selected_font_family
+                        .clone()
+                        .unwrap_or_else(|| "默认".to_string());
+
+                    egui::ComboBox::from_label("")
+                        .selected_text(&selected)
+                        .show_ui(h_ui, |combo_ui| {
+                            if combo_ui
+                                .selectable_value(
+                                    &mut selected,
+                                    "默认".to_string(),
+                                    "默认 (内置字体)",
+                                )
+                                .clicked()
+                            {
+                                self.ui.temp_edit_settings.selected_font_family = None;
+                            }
+
+                            for font_name in &self.ui.available_system_fonts {
+                                if combo_ui
+                                    .selectable_value(&mut selected, font_name.clone(), font_name)
+                                    .clicked()
+                                {
+                                    self.ui.temp_edit_settings.selected_font_family =
+                                        Some(font_name.clone());
+                                }
+                            }
+                        });
+                });
+
+                ui.separator();
 
                 egui::Grid::new("amll_connector_settings_grid")
                     .num_columns(2)
@@ -1524,11 +1566,6 @@ impl UniLyricApp {
                 AutoSearchSource::AmllDb,
                 &self.fetcher.amll_db_status,
                 Some(&self.fetcher.last_amll_db_result),
-            ),
-            (
-                AutoSearchSource::Musixmatch,
-                &self.fetcher.musixmatch_status,
-                Some(&self.fetcher.last_musixmatch_result),
             ),
         ];
 

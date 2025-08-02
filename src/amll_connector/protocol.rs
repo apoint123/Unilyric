@@ -187,7 +187,6 @@ mod tests {
                 roman_lyric: "Konnichiwa Sekai".into(),
                 is_bg: false,
                 is_duet: true,
-                ..Default::default()
             }],
         };
 

@@ -2,7 +2,6 @@ use crate::app_definition::UniLyricApp;
 use crate::app_update;
 use eframe::egui::{self};
 use std::time::Duration;
-use tracing::info;
 
 /// TTML 数据库上传用户操作的枚举
 #[derive(Clone, Debug)]
@@ -25,23 +24,11 @@ impl eframe::App for UniLyricApp {
         // 仅供调试，不要开启！
         // ctx.set_debug_on_hover(true);
 
-        if self.lyrics_helper.is_none() {
-            if let Ok(helper) = self.lyrics_helper_rx.try_recv() {
-                info!("[UniLyricApp] LyricsHelper 已成功初始化并接收。");
-                self.lyrics_helper = Some(helper);
-            } else {
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.centered_and_justified(|ui| {
-                        ui.label("正在初始化核心模块...");
-                    });
-                });
-                return;
-            }
-        }
-
         app_update::handle_conversion_results(self);
         app_update::handle_search_results(self);
         app_update::handle_download_results(self);
+
+        app_update::handle_provider_load_results(self);
 
         app_update::process_log_messages(self);
         app_update::handle_auto_fetch_results(self);

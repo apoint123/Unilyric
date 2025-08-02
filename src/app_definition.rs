@@ -1,12 +1,11 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::{
-    Arc, Mutex,
+    Arc, Mutex as StdMutex,
     mpsc::{Receiver as StdReceiver, Sender as StdSender, channel as std_channel},
 };
 
 use egui_toast::Toasts;
-use ferrous_opencc::OpenCC;
 use lyrics_helper_rs::{
     SearchResult,
     converter::{LyricFormat, types::FullConversionResult},
@@ -15,10 +14,12 @@ use lyrics_helper_rs::{
 };
 use smtc_suite::{MediaCommand, NowPlayingInfo, SmtcSessionInfo};
 use tokio::{
+    sync::Mutex as TokioMutex,
     sync::mpsc::{Sender as TokioSender, channel as tokio_channel},
     task::JoinHandle,
 };
 
+use crate::types::ProviderState;
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
     app::TtmlDbUploadUserAction,
@@ -46,6 +47,7 @@ pub(super) struct UiState {
     pub(super) log_display_buffer: Vec<LogEntry>,
     pub(super) temp_edit_settings: AppSettings,
     pub(super) toasts: Toasts,
+    pub(super) available_system_fonts: Vec<String>,
 }
 
 impl UiState {
@@ -68,6 +70,7 @@ impl UiState {
             show_markers_panel: false,
             show_search_window: false,
             log_display_buffer: Vec::with_capacity(200),
+            available_system_fonts: Vec::new(),
         }
     }
 }
@@ -99,6 +102,12 @@ pub(super) struct LyricState {
     pub(super) download_result_rx: Option<DownloadResultRx>,
 }
 
+pub(super) struct LyricsHelperState {
+    pub(super) helper: Arc<TokioMutex<lyrics_helper_rs::LyricsHelper>>,
+    pub(super) provider_state: ProviderState,
+    pub(super) provider_load_result_rx: Option<StdReceiver<Result<(), String>>>,
+}
+
 impl LyricState {
     fn new(_settings: &AppSettings) -> Self {
         Self {
@@ -128,7 +137,6 @@ impl LyricState {
                 LyricFormat::Spl,
                 LyricFormat::Lqe,
                 LyricFormat::Krc,
-                LyricFormat::Musixmatch,
             ],
             last_opened_file_path: None,
             last_saved_file_path: None,
@@ -167,8 +175,8 @@ impl PlayerState {
 pub(super) struct AmllConnectorState {
     pub command_tx: Option<TokioSender<ConnectorCommand>>,
     pub actor_handle: Option<JoinHandle<()>>,
-    pub status: Arc<Mutex<WebsocketStatus>>,
-    pub config: Arc<Mutex<AMLLConnectorConfig>>,
+    pub status: Arc<StdMutex<WebsocketStatus>>,
+    pub config: Arc<StdMutex<AMLLConnectorConfig>>,
     pub update_rx: std::sync::mpsc::Receiver<ConnectorUpdate>,
 }
 
@@ -182,8 +190,8 @@ impl AmllConnectorState {
         Self {
             command_tx: Some(command_tx),
             actor_handle: Some(actor_handle),
-            status: Arc::new(Mutex::new(WebsocketStatus::default())),
-            config: Arc::new(Mutex::new(config)),
+            status: Arc::new(StdMutex::new(WebsocketStatus::default())),
+            config: Arc::new(StdMutex::new(config)),
             update_rx,
         }
     }
@@ -196,21 +204,19 @@ pub(super) struct AutoFetchState {
     pub(super) last_source_format: Option<LyricFormat>,
     pub(super) last_source_for_stripping_check: Option<crate::types::AutoSearchSource>,
     pub(super) manual_refetch_request: Option<crate::types::AutoSearchSource>,
-    pub(super) local_cache_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) qqmusic_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) kugou_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) netease_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) amll_db_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) musixmatch_status: Arc<Mutex<AutoSearchStatus>>,
-    pub(super) last_qq_result: Arc<Mutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
+    pub(super) local_cache_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub(super) qqmusic_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub(super) kugou_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub(super) netease_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub(super) amll_db_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub(super) last_qq_result:
+        Arc<StdMutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
     pub(super) last_kugou_result:
-        Arc<Mutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
+        Arc<StdMutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
     pub(super) last_netease_result:
-        Arc<Mutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
+        Arc<StdMutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
     pub(super) last_amll_db_result:
-        Arc<Mutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
-    pub(super) last_musixmatch_result:
-        Arc<Mutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
+        Arc<StdMutex<Option<lyrics_helper_rs::model::track::FullLyricsResult>>>,
 }
 
 impl AutoFetchState {
@@ -222,24 +228,22 @@ impl AutoFetchState {
             last_source_format: None,
             last_source_for_stripping_check: None,
             manual_refetch_request: None,
-            local_cache_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            qqmusic_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            kugou_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            netease_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            amll_db_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            musixmatch_status: Arc::new(Mutex::new(AutoSearchStatus::default())),
-            last_qq_result: Arc::new(Mutex::new(None)),
-            last_kugou_result: Arc::new(Mutex::new(None)),
-            last_netease_result: Arc::new(Mutex::new(None)),
-            last_amll_db_result: Arc::new(Mutex::new(None)),
-            last_musixmatch_result: Arc::new(Mutex::new(None)),
+            local_cache_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
+            qqmusic_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
+            kugou_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
+            netease_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
+            amll_db_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
+            last_qq_result: Arc::new(StdMutex::new(None)),
+            last_kugou_result: Arc::new(StdMutex::new(None)),
+            last_netease_result: Arc::new(StdMutex::new(None)),
+            last_amll_db_result: Arc::new(StdMutex::new(None)),
         }
     }
 }
 
 #[derive(Default)]
 pub(super) struct LocalCacheState {
-    pub(super) index: Arc<Mutex<Vec<LocalLyricCacheEntry>>>,
+    pub(super) index: Arc<StdMutex<Vec<LocalLyricCacheEntry>>>,
     pub(super) index_path: Option<std::path::PathBuf>,
     pub(super) dir_path: Option<std::path::PathBuf>,
 }
@@ -274,12 +278,10 @@ pub(super) struct UniLyricApp {
     pub(super) local_cache: LocalCacheState,
     pub(super) ttml_db_upload: TtmlDbUploadState,
     pub(super) amll_connector: AmllConnectorState,
-    pub(super) t2s_converter: Option<Arc<OpenCC>>,
 
     // --- 核心依赖与配置 ---
-    pub(super) lyrics_helper: Option<Arc<lyrics_helper_rs::LyricsHelper>>,
-    pub(super) lyrics_helper_rx: StdReceiver<Arc<lyrics_helper_rs::LyricsHelper>>,
-    pub(super) app_settings: Arc<Mutex<AppSettings>>,
+    pub(super) lyrics_helper_state: LyricsHelperState,
+    pub(super) app_settings: Arc<StdMutex<AppSettings>>,
     pub(super) tokio_runtime: Arc<tokio::runtime::Runtime>,
     pub(super) ui_log_receiver: StdReceiver<LogEntry>,
 
@@ -296,27 +298,22 @@ impl UniLyricApp {
         settings: AppSettings,
         ui_log_receiver: StdReceiver<LogEntry>,
     ) -> Self {
-        Self::setup_eframe_context(&cc.egui_ctx);
+        let egui_ctx = cc.egui_ctx.clone();
+        Self::setup_fonts(&cc.egui_ctx, &settings);
         let tokio_runtime = Self::create_tokio_runtime();
-        let t2s_converter = Self::init_t2s_converter();
         let (smtc_controller, smtc_update_rx) =
             smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
 
-        let (lyrics_helper_tx, lyrics_helper_rx) =
-            std_channel::<Arc<lyrics_helper_rs::LyricsHelper>>();
         let (auto_fetch_tx, auto_fetch_rx) = std_channel::<AutoFetchResult>();
         let (upload_action_tx, upload_action_rx) = std_channel::<TtmlDbUploadUserAction>();
         let (amll_update_tx, amll_update_rx) = std_channel::<ConnectorUpdate>();
         let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
 
-        let ui_state = UiState::new(&settings);
         let lyric_state = LyricState::new(&settings);
         let player_state = PlayerState::new(&settings, smtc_controller.command_tx.clone());
         let auto_fetch_state = AutoFetchState::new(auto_fetch_tx, auto_fetch_rx);
         let ttml_db_upload_state = TtmlDbUploadState::new(upload_action_tx, upload_action_rx);
         let local_cache = LocalCacheState::default(); // 先用默认值，等下加载数据
-
-        Self::spawn_lyrics_helper_init(tokio_runtime.clone(), lyrics_helper_tx);
 
         let mc_config = AMLLConnectorConfig {
             enabled: settings.amll_connector_enabled,
@@ -330,7 +327,7 @@ impl UniLyricApp {
                 mc_config.clone(),
                 smtc_controller.command_tx.clone(),
                 smtc_update_rx,
-                t2s_converter.clone(),
+                egui_ctx.clone(),
             ));
 
         let amll_connector_state = AmllConnectorState::new(
@@ -340,18 +337,36 @@ impl UniLyricApp {
             mc_config,
         );
 
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        let mut font_families: Vec<String> = db
+            .faces()
+            .flat_map(|face| face.families.clone())
+            .map(|(family_name, _lang)| family_name)
+            .collect();
+        font_families.sort();
+        font_families.dedup();
+
+        let mut ui_state = UiState::new(&settings);
+        ui_state.available_system_fonts = font_families;
+
+        let helper = Arc::new(TokioMutex::new(lyrics_helper_rs::LyricsHelper::new()));
+        let lyrics_helper_state = LyricsHelperState {
+            helper,
+            provider_state: ProviderState::Uninitialized,
+            provider_load_result_rx: None,
+        };
+
         let mut app = Self {
             ui: ui_state,
             lyrics: lyric_state,
             player: player_state,
             amll_connector: amll_connector_state,
             fetcher: auto_fetch_state,
-            t2s_converter,
             local_cache,
             ttml_db_upload: ttml_db_upload_state,
-            lyrics_helper: None,
-            lyrics_helper_rx,
-            app_settings: Arc::new(Mutex::new(settings)),
+            lyrics_helper_state,
+            app_settings: Arc::new(StdMutex::new(settings)),
             tokio_runtime,
             ui_log_receiver,
             actions_this_frame: Vec::new(),
@@ -360,21 +375,62 @@ impl UniLyricApp {
 
         app.load_local_cache();
 
+        app.trigger_provider_loading();
+
         app
     }
 
-    fn setup_eframe_context(ctx: &egui::Context) {
+    fn setup_fonts(ctx: &egui::Context, settings: &AppSettings) {
         let mut fonts = egui::FontDefinitions::default();
         fonts.font_data.insert(
             "SarasaUiSC".to_owned(),
             egui::FontData::from_static(include_bytes!("../assets/fonts/SarasaUiSC-Regular.ttf"))
                 .into(),
         );
-        fonts
+
+        let mut user_font_loaded = false;
+        if let Some(font_family_name) = &settings.selected_font_family {
+            let mut db = fontdb::Database::new();
+            db.load_system_fonts();
+
+            let query = fontdb::Query {
+                families: &[fontdb::Family::Name(font_family_name)],
+                weight: fontdb::Weight::NORMAL,
+                stretch: fontdb::Stretch::Normal,
+                style: fontdb::Style::Normal,
+            };
+
+            if let Some(face_id) = db.query(&query) {
+                let loaded_font = db.with_face_data(face_id, |font_data, _face_index| {
+                    egui::FontData::from_owned(font_data.to_vec())
+                });
+
+                if let Some(font_data) = loaded_font {
+                    let font_key = format!("user_{}", font_family_name);
+                    fonts.font_data.insert(font_key.clone(), font_data.into());
+                    fonts
+                        .families
+                        .entry(egui::FontFamily::Proportional)
+                        .or_default()
+                        .insert(0, font_key);
+                    user_font_loaded = true;
+                } else {
+                    tracing::error!("读取字体文件失败: {}", font_family_name);
+                }
+            } else {
+                tracing::warn!("未找到上次选择的字体: {}", font_family_name);
+            }
+        }
+
+        let proportional_fonts = fonts
             .families
             .entry(egui::FontFamily::Proportional)
-            .or_default()
-            .insert(0, "SarasaUiSC".to_owned());
+            .or_default();
+        if !user_font_loaded {
+            proportional_fonts.insert(0, "SarasaUiSC".to_owned());
+        } else {
+            proportional_fonts.push("SarasaUiSC".to_owned());
+        }
         fonts
             .families
             .entry(egui::FontFamily::Monospace)
@@ -396,68 +452,35 @@ impl UniLyricApp {
         )
     }
 
-    fn init_t2s_converter() -> Option<Arc<OpenCC>> {
-        match OpenCC::from_config_name("tw2sp.json") {
-            Ok(converter) => Some(Arc::new(converter)),
-            Err(e) => {
-                tracing::error!("[UniLyricApp] 无法初始化 OpenCC 转换器: {e}");
-                None
-            }
-        }
-    }
-
-    fn spawn_lyrics_helper_init(
-        rt: Arc<tokio::runtime::Runtime>,
-        lyrics_helper_tx: StdSender<Arc<lyrics_helper_rs::LyricsHelper>>,
-    ) {
-        rt.spawn(async move {
-            tracing::info!("[LyricsHelper] 开始异步初始化...");
-            match lyrics_helper_rs::LyricsHelper::new().await {
-                Ok(helper) => {
-                    if lyrics_helper_tx.send(Arc::new(helper)).is_ok() {
-                        tracing::info!("[LyricsHelper] 异步初始化成功并已发送。");
-                    } else {
-                        tracing::error!(
-                            "[LyricsHelper] 异步初始化成功，但发送失败，UI线程可能已关闭。"
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[LyricsHelper] 异步初始化失败: {e}");
-                }
-            }
-        });
-    }
-
     fn load_local_cache(&mut self) {
         if let Some(data_dir) = utils::get_app_data_dir() {
             let cache_dir = data_dir.join("local_lyrics_cache");
-            if !cache_dir.exists() {
-                if let Err(e) = std::fs::create_dir_all(&cache_dir) {
-                    tracing::error!("[UniLyricApp] 无法创建本地歌词目录 {cache_dir:?}: {e}");
-                    return;
-                }
+            if !cache_dir.exists()
+                && let Err(e) = std::fs::create_dir_all(&cache_dir)
+            {
+                tracing::error!("[UniLyricApp] 无法创建本地歌词目录 {cache_dir:?}: {e}");
+                return;
             }
             self.local_cache.dir_path = Some(cache_dir.clone());
 
             let index_file = cache_dir.join("local_lyrics_index.jsonl");
-            if index_file.exists() {
-                if let Ok(file) = File::open(&index_file) {
-                    let reader = BufReader::new(file);
-                    let cache_entries: Vec<LocalLyricCacheEntry> = reader
-                        .lines()
-                        .filter_map(Result::ok)
-                        .filter(|line| !line.trim().is_empty())
-                        .filter_map(|line| serde_json::from_str(&line).ok())
-                        .collect();
+            if index_file.exists()
+                && let Ok(file) = File::open(&index_file)
+            {
+                let reader = BufReader::new(file);
+                let cache_entries: Vec<LocalLyricCacheEntry> = reader
+                    .lines()
+                    .map_while(Result::ok)
+                    .filter(|line| !line.trim().is_empty())
+                    .filter_map(|line| serde_json::from_str(&line).ok())
+                    .collect();
 
-                    tracing::info!(
-                        "[UniLyricApp] 从 {:?} 加载了 {} 条本地缓存歌词索引。",
-                        index_file,
-                        cache_entries.len()
-                    );
-                    *self.local_cache.index.lock().unwrap() = cache_entries;
-                }
+                tracing::info!(
+                    "[UniLyricApp] 从 {:?} 加载了 {} 条本地缓存歌词索引。",
+                    index_file,
+                    cache_entries.len()
+                );
+                *self.local_cache.index.lock().unwrap() = cache_entries;
             }
             self.local_cache.index_path = Some(index_file);
         }

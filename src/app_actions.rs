@@ -1,5 +1,5 @@
 use crate::app_settings::AppSettings;
-use crate::types::{ChineseConversionVariant, LrcContentType};
+use crate::types::LrcContentType;
 use lyrics_helper_rs::SearchResult;
 use lyrics_helper_rs::converter::LyricFormat;
 use lyrics_helper_rs::model::track::FullLyricsResult;
@@ -29,7 +29,7 @@ pub enum FileAction {
 pub enum LyricsAction {
     Convert,
     ConvertCompleted(Result<lyrics_helper_rs::converter::types::FullConversionResult, String>), // 转换完成
-    ConvertChinese(ChineseConversionVariant),
+    ConvertChinese(ferrous_opencc::config::BuiltinConfig),
     Search,
     SearchCompleted(Result<Vec<SearchResult>, String>), // 搜索完成
     Download(SearchResult),
@@ -47,6 +47,7 @@ pub enum LyricsAction {
     MainInputChanged(String),                          // 当主输入文本框内容改变时
     ClearAllData,
     LoadFetchedResult(FullLyricsResult),
+    GenerateFromParsed(FullLyricsResult),
 }
 
 #[derive(Debug, Clone)]

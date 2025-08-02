@@ -5,13 +5,13 @@ use smtc_suite::NowPlayingInfo;
 use lyrics_helper_rs::SearchMode;
 use lyrics_helper_rs::model::track::{FullLyricsResult, Track};
 use std::sync::Arc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 fn is_track_match(
     now_playing: &NowPlayingInfo,
     cache_entry: &crate::types::LocalLyricCacheEntry,
 ) -> bool {
-    let title_match = now_playing.title.as_deref().map_or(false, |playing_title| {
+    let title_match = now_playing.title.as_deref().is_some_and(|playing_title| {
         playing_title
             .trim()
             .eq_ignore_ascii_case(cache_entry.smtc_title.trim())
@@ -69,60 +69,59 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             let file_path = cache_dir.join(&entry.ttml_filename);
             match std::fs::read_to_string(&file_path) {
                 Ok(ttml_content) => {
-                    if let Some(helper) = app.lyrics_helper.as_ref() {
-                        let result_tx = app.fetcher.result_tx.clone();
-                        let helper_clone = Arc::clone(helper);
+                    let helper_clone = Arc::clone(&app.lyrics_helper_state.helper);
 
-                        app.tokio_runtime.spawn(async move {
-                            let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
-                                ttml_content.clone(),
-                                lyrics_helper_rs::converter::LyricFormat::Ttml,
-                                None,
-                                None,
-                            );
+                    let result_tx = app.fetcher.result_tx.clone();
 
-                            let input = lyrics_helper_rs::converter::types::ConversionInput {
-                                main_lyric,
-                                translations: vec![],
-                                romanizations: vec![],
-                                target_format: lyrics_helper_rs::converter::LyricFormat::Ttml,
-                                user_metadata_overrides: None,
-                            };
+                    app.tokio_runtime.spawn(async move {
+                        let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
+                            ttml_content.clone(),
+                            lyrics_helper_rs::converter::LyricFormat::Ttml,
+                            None,
+                            None,
+                        );
 
-                            let options =
-                                lyrics_helper_rs::converter::types::ConversionOptions::default();
+                        let input = lyrics_helper_rs::converter::types::ConversionInput {
+                            main_lyric,
+                            translations: vec![],
+                            romanizations: vec![],
+                            target_format: lyrics_helper_rs::converter::LyricFormat::Ttml,
+                            user_metadata_overrides: None,
+                        };
 
-                            match helper_clone.convert_lyrics(input, &options).await {
-                                Ok(conversion_result) => {
-                                    let parsed_data = conversion_result.source_data;
+                        let options =
+                            lyrics_helper_rs::converter::types::ConversionOptions::default();
 
-                                    let full_lyrics_result = FullLyricsResult {
-                                        raw: lyrics_helper_rs::model::track::RawLyrics {
-                                            content: ttml_content,
-                                            ..Default::default()
-                                        },
-                                        parsed: parsed_data,
-                                    };
+                        match helper_clone.lock().await.convert_lyrics(input, &options) {
+                            Ok(conversion_result) => {
+                                let parsed_data = conversion_result.source_data;
 
-                                    let result_to_send = AutoFetchResult::Success {
-                                        source: AutoSearchSource::LocalCache,
-                                        full_lyrics_result,
-                                    };
+                                let full_lyrics_result = FullLyricsResult {
+                                    raw: lyrics_helper_rs::model::track::RawLyrics {
+                                        content: ttml_content,
+                                        ..Default::default()
+                                    },
+                                    parsed: parsed_data,
+                                };
 
-                                    if result_tx.send(result_to_send).is_err() {
-                                        error!(
-                                            "[LocalCache Task] 发送本地缓存的成功结果到主线程失败。"
-                                        );
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("[LocalCache] 解析缓存的TTML文件时发生错误: {}", e);
+                                let result_to_send = AutoFetchResult::Success {
+                                    source: AutoSearchSource::LocalCache,
+                                    full_lyrics_result,
+                                };
+
+                                if result_tx.send(result_to_send).is_err() {
+                                    error!(
+                                        "[LocalCache Task] 发送本地缓存的成功结果到主线程失败。"
+                                    );
                                 }
                             }
-                        });
+                            Err(e) => {
+                                error!("[LocalCache] 解析缓存的TTML文件时发生错误: {}", e);
+                            }
+                        }
+                    });
 
-                        return;
-                    }
+                    return;
                 }
                 Err(e) => {
                     error!("[LocalCache] 读取缓存文件 {:?} 失败: {}", file_path, e);
@@ -156,33 +155,25 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
         })
         .unwrap_or_default();
 
-    let helper = match app.lyrics_helper.as_ref() {
-        Some(h) => Arc::clone(h),
-        None => {
-            warn!("[AutoFetch] LyricsHelper 尚未初始化，无法开始搜索。");
-            return;
-        }
-    };
+    let helper = Arc::clone(&app.lyrics_helper_state.helper);
 
     let app_settings = app.app_settings.lock().unwrap();
     let search_mode = if app_settings.use_provider_subset
         && !app_settings.auto_search_provider_subset.is_empty()
     {
         tracing::info!("[AutoFetch] 使用子集模式进行搜索。");
-        SearchMode::Subset(app_settings.auto_search_provider_subset.clone())
+        let provider_enums: Vec<lyrics_helper_rs::ProviderName> = app_settings
+            .auto_search_provider_subset
+            .iter()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        SearchMode::Subset(provider_enums)
     } else if app_settings.always_search_all_sources {
         tracing::info!("[AutoFetch] 使用并行模式进行全面搜索。");
         SearchMode::Parallel
     } else {
         tracing::info!("[AutoFetch] 使用顺序模式进行快速搜索。");
         SearchMode::Ordered
-    };
-
-    let perform_t2s_conversion = app_settings.enable_t2s_for_auto_search;
-    let t2s_converter: Option<_> = if perform_t2s_conversion {
-        app.t2s_converter.clone()
-    } else {
-        None
     };
 
     // 释放锁
@@ -193,27 +184,12 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     *app.fetcher.kugou_status.lock().unwrap() = AutoSearchStatus::Searching;
     *app.fetcher.netease_status.lock().unwrap() = AutoSearchStatus::Searching;
     *app.fetcher.amll_db_status.lock().unwrap() = AutoSearchStatus::Searching;
-    *app.fetcher.musixmatch_status.lock().unwrap() = AutoSearchStatus::Searching;
 
     let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
-        let (title_to_search, artists_to_search);
-
-        let mut temp_converted_artists: Vec<String> = Vec::new();
-        if perform_t2s_conversion && t2s_converter.is_some() {
-            let converter = t2s_converter.as_ref().unwrap();
-
-            title_to_search = converter.convert(&smtc_title);
-
-            for artist in &smtc_artists {
-                temp_converted_artists.push(converter.convert(artist));
-            }
-            artists_to_search = temp_converted_artists;
-        } else {
-            title_to_search = smtc_title.clone();
-            artists_to_search = smtc_artists.clone();
-        }
+        let title_to_search = smtc_title;
+        let artists_to_search = smtc_artists;
 
         debug!(
             "开始搜索歌词: title='{}', artists='{:?}', mode='{:?}'",
@@ -231,7 +207,12 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             album: None,
         };
 
-        match helper.search_lyrics(&track_to_search, search_mode).await {
+        match helper
+            .lock()
+            .await
+            .search_lyrics(&track_to_search, search_mode)
+            .await
+        {
             Ok(Some(full_lyrics_result)) => {
                 let source_name = full_lyrics_result.parsed.source_name.clone();
                 info!(
@@ -280,11 +261,7 @@ pub(super) fn trigger_manual_refetch_for_source(
         }
     };
 
-    let helper = if let Some(h) = app.lyrics_helper.as_ref() {
-        Arc::clone(h)
-    } else {
-        return;
-    };
+    let helper = Arc::clone(&app.lyrics_helper_state.helper);
 
     let smtc_title = if let Some(t) = track_info.title {
         t
@@ -301,7 +278,6 @@ pub(super) fn trigger_manual_refetch_for_source(
         AutoSearchSource::Kugou => Arc::clone(&app.fetcher.kugou_status),
         AutoSearchSource::Netease => Arc::clone(&app.fetcher.netease_status),
         AutoSearchSource::AmllDb => Arc::clone(&app.fetcher.amll_db_status),
-        AutoSearchSource::Musixmatch => Arc::clone(&app.fetcher.musixmatch_status),
         _ => return,
     };
     *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Searching;
@@ -320,10 +296,26 @@ pub(super) fn trigger_manual_refetch_for_source(
             album: None,
         };
 
-        let search_mode =
-            SearchMode::Specific(Into::<&'static str>::into(source_to_refetch).to_string());
+        let provider_enum = match source_to_refetch {
+            AutoSearchSource::QqMusic => lyrics_helper_rs::ProviderName::QQMusic,
+            AutoSearchSource::Netease => lyrics_helper_rs::ProviderName::Netease,
+            AutoSearchSource::Kugou => lyrics_helper_rs::ProviderName::Kugou,
+            AutoSearchSource::AmllDb => lyrics_helper_rs::ProviderName::AmllTtmlDatabase,
+            _ => {
+                *status_arc_to_update.lock().unwrap() =
+                    AutoSearchStatus::Error("不支持的重搜源".to_string());
+                return;
+            }
+        };
 
-        match helper.search_lyrics(&track_to_search, search_mode).await {
+        let search_mode = SearchMode::Specific(provider_enum);
+
+        match helper
+            .lock()
+            .await
+            .search_lyrics(&track_to_search, search_mode)
+            .await
+        {
             Ok(Some(result)) => {
                 let _ = result_tx.send(AutoFetchResult::Success {
                     source: source_to_refetch,
@@ -345,6 +337,5 @@ pub(super) fn clear_last_fetch_results(app: &mut UniLyricApp) {
     *app.fetcher.last_kugou_result.lock().unwrap() = None;
     *app.fetcher.last_netease_result.lock().unwrap() = None;
     *app.fetcher.last_amll_db_result.lock().unwrap() = None;
-    *app.fetcher.last_musixmatch_result.lock().unwrap() = None;
     app.fetcher.current_ui_populated = false;
 }

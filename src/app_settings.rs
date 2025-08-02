@@ -49,6 +49,7 @@ pub struct AppSettings {
     pub auto_search_source_order: Vec<AutoSearchSource>,
     pub always_search_all_sources: bool,
     pub last_selected_smtc_session_id: Option<String>,
+    pub selected_font_family: Option<String>,
 
     pub use_provider_subset: bool,
     pub auto_search_provider_subset: Vec<String>,
@@ -83,6 +84,7 @@ impl Default for AppSettings {
             auto_search_source_order: AutoSearchSource::default_order(),
             always_search_all_sources: false,
             last_selected_smtc_session_id: None,
+            selected_font_family: None,
             enable_online_lyric_stripping: true,
             enable_t2s_for_auto_search: true,
             last_known_amll_index_head: None,

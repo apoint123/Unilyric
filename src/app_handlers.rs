@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::amll_connector::types::ActorSettings;
 use crate::amll_connector::{AMLLConnectorConfig, ConnectorCommand};
 use crate::app_actions::{
@@ -7,9 +9,10 @@ use crate::app_actions::{
 use crate::app_definition::UniLyricApp;
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
-use crate::types::{ChineseConversionVariant, EditableMetadataEntry, LrcContentType};
+use crate::types::{EditableMetadataEntry, LrcContentType, ProviderState};
+use ferrous_opencc::config::BuiltinConfig;
 use rand::Rng;
-use smtc_suite::MediaCommand;
+use smtc_suite::{MediaCommand, TextConversionMode};
 use tracing::warn;
 use tracing::{debug, error, info};
 
@@ -29,111 +32,112 @@ impl UniLyricApp {
             return;
         }
 
-        if let Some(helper) = self.lyrics_helper.as_ref() {
-            let (tx, rx) = std::sync::mpsc::channel();
-            self.lyrics.conversion_result_rx = Some(rx);
-            self.lyrics.conversion_in_progress = true;
+        let helper = &self.lyrics_helper_state.helper;
 
-            let helper = helper.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.lyrics.conversion_result_rx = Some(rx);
+        self.lyrics.conversion_in_progress = true;
 
-            // 1. 准备主歌词文件
-            let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
-                self.lyrics.input_text.clone(),
-                self.lyrics.source_format,
+        let helper = helper.clone();
+
+        // 1. 准备主歌词文件
+        let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
+            self.lyrics.input_text.clone(),
+            self.lyrics.source_format,
+            None,
+            None,
+        );
+
+        // 2. 准备翻译文件列表
+        let mut translations = vec![];
+        if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
+            translations.push(lyrics_helper_rs::converter::types::InputFile::new(
+                self.lyrics.display_translation_lrc_output.clone(),
+                lyrics_helper_rs::converter::types::LyricFormat::Lrc,
+                Some("zh-Hans".to_string()),
                 None,
+            ));
+        }
+
+        // 3. 准备罗马音文件列表
+        let mut romanizations = vec![];
+        if !self
+            .lyrics
+            .display_romanization_lrc_output
+            .trim()
+            .is_empty()
+        {
+            romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
+                self.lyrics.display_romanization_lrc_output.clone(),
+                lyrics_helper_rs::converter::types::LyricFormat::Lrc,
+                Some("ja-Latn".to_string()),
                 None,
-            );
+            ));
+        }
 
-            // 2. 准备翻译文件列表
-            let mut translations = vec![];
-            if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
-                translations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                    self.lyrics.display_translation_lrc_output.clone(),
-                    lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                    Some("zh-Hans".to_string()),
-                    None,
-                ));
-            }
+        // 4. 准备用户手动输入的元数据
+        let mut metadata_overrides = std::collections::HashMap::new();
 
-            // 3. 准备罗马音文件列表
-            let mut romanizations = vec![];
-            if !self
-                .lyrics
-                .display_romanization_lrc_output
-                .trim()
-                .is_empty()
-            {
-                romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                    self.lyrics.display_romanization_lrc_output.clone(),
-                    lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                    Some("ja-Latn".to_string()),
-                    None,
-                ));
-            }
+        info!(
+            "[Convert] 元数据状态检查: metadata_is_user_edited={}, editable_metadata.len()={}",
+            self.lyrics.metadata_is_user_edited,
+            self.lyrics.editable_metadata.len()
+        );
 
-            // 4. 准备用户手动输入的元数据
-            let mut metadata_overrides = std::collections::HashMap::new();
+        // 只有在用户明确编辑了元数据的情况下，才使用覆盖
+        if self.lyrics.metadata_is_user_edited {
+            for entry in &self.lyrics.editable_metadata {
+                info!(
+                    "[Convert] 检查元数据条目: key='{}', value='{}', is_from_file={}, is_pinned={}",
+                    entry.key, entry.value, entry.is_from_file, entry.is_pinned
+                );
 
-            info!(
-                "[Convert] 元数据状态检查: metadata_is_user_edited={}, editable_metadata.len()={}",
-                self.lyrics.metadata_is_user_edited,
-                self.lyrics.editable_metadata.len()
-            );
+                if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
+                    // 将UI中的单个字符串值按分号分割回Vec<String>
+                    let values = entry
+                        .value
+                        .split(';')
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<String>>();
 
-            // 只有在用户明确编辑了元数据的情况下，才使用覆盖
-            if self.lyrics.metadata_is_user_edited {
-                for entry in &self.lyrics.editable_metadata {
-                    info!(
-                        "[Convert] 检查元数据条目: key='{}', value='{}', is_from_file={}, is_pinned={}",
-                        entry.key, entry.value, entry.is_from_file, entry.is_pinned
-                    );
-
-                    if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                        // 将UI中的单个字符串值按分号分割回Vec<String>
-                        let values = entry
-                            .value
-                            .split(';')
-                            .map(|s| s.trim().to_string())
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<String>>();
-
-                        if !values.is_empty() {
-                            info!(
-                                "[Convert] 添加元数据覆盖: key='{}', values={:?}",
-                                entry.key, values
-                            );
-                            metadata_overrides.insert(entry.key.clone(), values);
-                        }
+                    if !values.is_empty() {
+                        info!(
+                            "[Convert] 添加元数据覆盖: key='{}', values={:?}",
+                            entry.key, values
+                        );
+                        metadata_overrides.insert(entry.key.clone(), values);
                     }
                 }
             }
-
-            info!("[Convert] 最终元数据覆盖: {metadata_overrides:?}");
-
-            let input = lyrics_helper_rs::converter::types::ConversionInput {
-                main_lyric,
-                translations,
-                romanizations,
-                target_format: self.lyrics.target_format,
-                user_metadata_overrides: if metadata_overrides.is_empty() {
-                    None
-                } else {
-                    Some(metadata_overrides)
-                },
-            };
-
-            let options = lyrics_helper_rs::converter::types::ConversionOptions::default();
-
-            self.tokio_runtime.spawn(async move {
-                let result = helper.convert_lyrics(input, &options).await;
-                if tx.send(result).is_err() {
-                    warn!("[Convert Task] Failed to send conversion result. Receiver probably dropped.");
-                }
-            });
-        } else {
-            warn!("[Convert] LyricsHelper not available for conversion.");
-            self.lyrics.conversion_in_progress = false;
         }
+
+        info!("[Convert] 最终元数据覆盖: {metadata_overrides:?}");
+
+        let input = lyrics_helper_rs::converter::types::ConversionInput {
+            main_lyric,
+            translations,
+            romanizations,
+            target_format: self.lyrics.target_format,
+            user_metadata_overrides: if metadata_overrides.is_empty() {
+                None
+            } else {
+                Some(metadata_overrides)
+            },
+        };
+
+        let options = lyrics_helper_rs::converter::types::ConversionOptions::default();
+
+        self.tokio_runtime.spawn(async move {
+            let helper_clone = Arc::clone(&helper);
+
+            let result = helper_clone.lock().await.convert_lyrics(input, &options);
+            if tx.send(result).is_err() {
+                warn!(
+                    "[Convert Task] Failed to send conversion result. Receiver probably dropped."
+                );
+            }
+        });
     }
 
     // 用于发送事件的辅助函数
@@ -275,91 +279,95 @@ impl UniLyricApp {
                     return ActionResult::Warning("没有歌词内容可以转换".to_string());
                 }
 
-                if let Some(helper) = self.lyrics_helper.as_ref() {
-                    let (tx, rx) = std::sync::mpsc::channel();
-                    self.lyrics.conversion_result_rx = Some(rx);
-                    self.lyrics.conversion_in_progress = true;
+                let helper = &self.lyrics_helper_state.helper;
 
-                    let helper = helper.clone();
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.lyrics.conversion_result_rx = Some(rx);
+                self.lyrics.conversion_in_progress = true;
 
-                    // 准备输入数据（与普通转换相同）
-                    let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
-                        self.lyrics.input_text.clone(),
-                        self.lyrics.source_format,
+                let helper = helper.clone();
+
+                // 准备输入数据（与普通转换相同）
+                let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
+                    self.lyrics.input_text.clone(),
+                    self.lyrics.source_format,
+                    None,
+                    None,
+                );
+                let mut translations = vec![];
+                if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
+                    translations.push(lyrics_helper_rs::converter::types::InputFile::new(
+                        self.lyrics.display_translation_lrc_output.clone(),
+                        lyrics_helper_rs::converter::types::LyricFormat::Lrc,
+                        Some("zh-Hans".to_string()),
                         None,
+                    ));
+                }
+                let mut romanizations = vec![];
+                if !self
+                    .lyrics
+                    .display_romanization_lrc_output
+                    .trim()
+                    .is_empty()
+                {
+                    romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
+                        self.lyrics.display_romanization_lrc_output.clone(),
+                        lyrics_helper_rs::converter::types::LyricFormat::Lrc,
+                        Some("ja-Latn".to_string()),
                         None,
-                    );
-                    let mut translations = vec![];
-                    if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
-                        translations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                            self.lyrics.display_translation_lrc_output.clone(),
-                            lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                            Some("zh-Hans".to_string()),
-                            None,
-                        ));
-                    }
-                    let mut romanizations = vec![];
-                    if !self
-                        .lyrics
-                        .display_romanization_lrc_output
-                        .trim()
-                        .is_empty()
-                    {
-                        romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                            self.lyrics.display_romanization_lrc_output.clone(),
-                            lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                            Some("ja-Latn".to_string()),
-                            None,
-                        ));
-                    }
-                    let mut metadata_overrides = std::collections::HashMap::new();
+                    ));
+                }
+                let mut metadata_overrides = std::collections::HashMap::new();
 
-                    // 只有在用户明确编辑了元数据的情况下，才使用覆盖
-                    if self.lyrics.metadata_is_user_edited {
-                        for entry in &self.lyrics.editable_metadata {
-                            if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                                let values = entry
-                                    .value
-                                    .split(';')
-                                    .map(|s| s.trim().to_string())
-                                    .filter(|s| !s.is_empty())
-                                    .collect::<Vec<String>>();
+                // 只有在用户明确编辑了元数据的情况下，才使用覆盖
+                if self.lyrics.metadata_is_user_edited {
+                    for entry in &self.lyrics.editable_metadata {
+                        if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
+                            let values = entry
+                                .value
+                                .split(';')
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect::<Vec<String>>();
 
-                                if !values.is_empty() {
-                                    metadata_overrides.insert(entry.key.clone(), values);
-                                }
+                            if !values.is_empty() {
+                                metadata_overrides.insert(entry.key.clone(), values);
                             }
                         }
                     }
-                    let input = lyrics_helper_rs::converter::types::ConversionInput {
-                        main_lyric,
-                        translations,
-                        romanizations,
-                        target_format: self.lyrics.target_format,
-                        user_metadata_overrides: if metadata_overrides.is_empty() {
-                            None
-                        } else {
-                            Some(metadata_overrides)
-                        },
-                    };
+                }
+                let input = lyrics_helper_rs::converter::types::ConversionInput {
+                    main_lyric,
+                    translations,
+                    romanizations,
+                    target_format: self.lyrics.target_format,
+                    user_metadata_overrides: if metadata_overrides.is_empty() {
+                        None
+                    } else {
+                        Some(metadata_overrides)
+                    },
+                };
 
-                    // 使用中文转换选项
-                    let options = lyrics_helper_rs::converter::types::ConversionOptions {
-                        chinese_conversion: lyrics_helper_rs::converter::types::ChineseConversionOptions {
-                            config_name: Some(variant.to_filename().to_string()),
-                            mode: lyrics_helper_rs::converter::types::ChineseConversionMode::Replace,
+                let options = lyrics_helper_rs::converter::types::ConversionOptions {
+                    chinese_conversion:
+                        lyrics_helper_rs::converter::types::ChineseConversionOptions {
+                            config: Some(variant),
+                            mode:
+                                lyrics_helper_rs::converter::types::ChineseConversionMode::Replace,
                             ..Default::default()
                         },
-                        ..Default::default()
-                    };
+                    ..Default::default()
+                };
 
-                    self.tokio_runtime.spawn(async move {
-                        let result = helper.convert_lyrics(input, &options).await;
+                self.tokio_runtime.spawn(async move {
+                    let helper_clone = Arc::clone(&helper);
+
+                        let result = helper_clone.lock().await.convert_lyrics(input, &options);
                         if tx.send(result).is_err() {
                             warn!("[Convert Task] Failed to send conversion result. Receiver probably dropped.");
                         }
                     });
-                }
+
                 ActionResult::Success
             }
             LyricsAction::SourceFormatChanged(format) => {
@@ -411,13 +419,17 @@ impl UniLyricApp {
                     return ActionResult::Warning("搜索正在进行中".to_string());
                 }
 
-                let helper = match self.lyrics_helper.as_ref() {
-                    Some(h) => std::sync::Arc::clone(h),
-                    None => {
-                        warn!("[Search] LyricsHelper 未初始化，无法搜索。");
-                        return ActionResult::Error("LyricsHelper 未初始化".to_string());
+                match self.lyrics_helper_state.provider_state {
+                    ProviderState::Ready => {}
+                    ProviderState::Loading => {
+                        return ActionResult::Warning("功能正在加载，请稍候...".to_string());
                     }
-                };
+                    _ => {
+                        return ActionResult::Error("在线搜索功能不可用或加载失败。".to_string());
+                    }
+                }
+
+                let helper = Arc::clone(&self.lyrics_helper_state.helper);
 
                 self.lyrics.search_in_progress = true;
                 self.lyrics.search_results.clear(); // 清除旧结果
@@ -434,8 +446,14 @@ impl UniLyricApp {
                         album: None,
                     };
 
+                    let helper_clone = Arc::clone(&helper);
+
                     // 调用核心库的 search_track 函数
-                    let result = helper.search_track(&track_to_search).await;
+                    let result = helper_clone
+                        .lock()
+                        .await
+                        .search_track(&track_to_search)
+                        .await;
                     if tx.send(result).is_err() {
                         warn!("[Search Task] 发送搜索结果失败，UI可能已关闭。");
                     }
@@ -461,13 +479,17 @@ impl UniLyricApp {
                     return ActionResult::Warning("下载正在进行中".to_string());
                 }
 
-                let helper = match self.lyrics_helper.as_ref() {
-                    Some(h) => std::sync::Arc::clone(h),
-                    None => {
-                        warn!("[Download] LyricsHelper 未初始化，无法下载。");
-                        return ActionResult::Error("LyricsHelper 未初始化".to_string());
+                match self.lyrics_helper_state.provider_state {
+                    ProviderState::Ready => {}
+                    ProviderState::Loading => {
+                        return ActionResult::Warning("正在加载，请稍候...".to_string());
                     }
-                };
+                    _ => {
+                        return ActionResult::Error("下载功能不可用或加载失败。".to_string());
+                    }
+                }
+
+                let helper = Arc::clone(&self.lyrics_helper_state.helper);
 
                 self.lyrics.download_in_progress = true;
 
@@ -478,8 +500,13 @@ impl UniLyricApp {
                 let provider_id = search_result.provider_id.clone();
 
                 self.tokio_runtime.spawn(async move {
+                    let helper_clone = Arc::clone(&helper);
                     // 调用核心库的 get_full_lyrics 函数
-                    let result = helper.get_full_lyrics(&provider_name, &provider_id).await;
+                    let result = helper_clone
+                        .lock()
+                        .await
+                        .get_full_lyrics(&provider_name, &provider_id)
+                        .await;
                     if tx.send(result).is_err() {
                         warn!("[Download Task] 发送下载结果失败，UI可能已关闭。");
                     }
@@ -655,6 +682,52 @@ impl UniLyricApp {
                 }
                 ActionResult::Success
             }
+            LyricsAction::GenerateFromParsed(result) => {
+                if self.lyrics.conversion_in_progress {
+                    return ActionResult::Warning("转换正在进行中".to_string());
+                }
+
+                self.fetcher.current_ui_populated = true;
+                self.clear_lyrics_state_for_new_song_internal();
+
+                let parsed_data = result.parsed;
+                let raw_data = result.raw;
+
+                self.lyrics.input_text = raw_data.content;
+                self.lyrics.source_format = parsed_data.source_format;
+                self.fetcher.last_source_format = Some(parsed_data.source_format);
+                self.lyrics.metadata_source_is_download = true;
+
+                let (tx, rx) = std::sync::mpsc::channel();
+                self.lyrics.conversion_result_rx = Some(rx);
+                self.lyrics.conversion_in_progress = true;
+
+                let helper = Arc::clone(&self.lyrics_helper_state.helper);
+                let target_format = self.lyrics.target_format;
+
+                let user_metadata_overrides = None;
+                let options = lyrics_helper_rs::converter::types::ConversionOptions::default();
+
+                self.tokio_runtime.spawn(async move {
+                    let result = helper
+                        .lock()
+                        .await
+                        .generate_lyrics_from_parsed(
+                            parsed_data,
+                            target_format,
+                            options,
+                            user_metadata_overrides,
+                        )
+                        .await;
+
+                    let converted_result = result.map_err(|e| e.to_string());
+                    if tx.send(Ok(converted_result.unwrap())).is_err() {
+                        warn!("[Generate Task] 发送结果失败，UI可能已关闭。");
+                    }
+                });
+
+                ActionResult::Success
+            }
         }
     }
 
@@ -781,14 +854,13 @@ impl UniLyricApp {
                 command_tx.try_send(MediaCommand::Control(control_command))
             }
             PlayerAction::SelectSmtcSession(session_id) => {
-                let session_id_for_state: Option<String>;
-                if session_id.is_empty() {
+                let session_id_for_state: Option<String> = if session_id.is_empty() {
                     tracing::info!("[PlayerAction] 自动选择会话。");
-                    session_id_for_state = None;
+                    None
                 } else {
                     tracing::info!("[PlayerAction] 选择新的 SMTC 会话: {}", session_id);
-                    session_id_for_state = Some(session_id.clone());
-                }
+                    Some(session_id.clone())
+                };
 
                 self.player.last_requested_session_id = session_id_for_state.clone();
                 if let Ok(mut settings) = self.app_settings.lock() {
@@ -917,9 +989,25 @@ impl UniLyricApp {
                         websocket_url: app_settings_guard.amll_connector_websocket_url.clone(),
                     };
 
-                    let new_actor_settings = ActorSettings {
-                        enable_t2s_conversion: app_settings_guard.enable_t2s_for_auto_search,
+                    let new_actor_settings = ActorSettings {};
+
+                    let conversion_mode = if app_settings_guard.enable_t2s_for_auto_search {
+                        TextConversionMode::TraditionalToSimplified
+                    } else {
+                        TextConversionMode::Off
                     };
+
+                    if let Some(tx) = &self.player.command_tx {
+                        let command = MediaCommand::SetTextConversion(conversion_mode);
+                        if let Err(e) = tx.try_send(command) {
+                            error!("[Settings] 发送 SetTextConversion 命令失败: {}", e);
+                        } else {
+                            info!(
+                                "[Settings] 已发送 SetTextConversion 命令: {:?}",
+                                conversion_mode
+                            );
+                        }
+                    }
 
                     if let Some(tx) = &self.amll_connector.command_tx {
                         debug!(
@@ -983,128 +1071,6 @@ impl UniLyricApp {
         }
     }
 
-    /// 处理自动获取结果
-    fn handle_auto_fetch_result(&mut self, auto_fetch_result: crate::types::AutoFetchResult) {
-        use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus};
-        use tracing::{error, info};
-
-        match auto_fetch_result {
-            AutoFetchResult::Success {
-                source,
-                full_lyrics_result,
-            } => {
-                info!("[AutoFetch] 自动获取成功，来源: {source:?}");
-
-                // 更新结果缓存
-                let result_cache_opt = match source {
-                    AutoSearchSource::QqMusic => Some(&self.fetcher.last_qq_result),
-                    AutoSearchSource::Kugou => Some(&self.fetcher.last_kugou_result),
-                    AutoSearchSource::Netease => Some(&self.fetcher.last_netease_result),
-                    AutoSearchSource::AmllDb => Some(&self.fetcher.last_amll_db_result),
-                    AutoSearchSource::Musixmatch => Some(&self.fetcher.last_musixmatch_result),
-                    AutoSearchSource::LocalCache => None, // 本地缓存不需要缓存
-                };
-                if let Some(result_cache) = result_cache_opt {
-                    *result_cache.lock().unwrap() = Some(full_lyrics_result.clone());
-                }
-
-                // 更新状态
-                let source_format = full_lyrics_result.parsed.source_format;
-                let status_to_update = match source {
-                    AutoSearchSource::QqMusic => Some(&self.fetcher.qqmusic_status),
-                    AutoSearchSource::Kugou => Some(&self.fetcher.kugou_status),
-                    AutoSearchSource::Netease => Some(&self.fetcher.netease_status),
-                    AutoSearchSource::AmllDb => Some(&self.fetcher.amll_db_status),
-                    AutoSearchSource::Musixmatch => Some(&self.fetcher.musixmatch_status),
-                    AutoSearchSource::LocalCache => Some(&self.fetcher.local_cache_status),
-                };
-                if let Some(status_arc) = status_to_update {
-                    *status_arc.lock().unwrap() = AutoSearchStatus::Success(source_format);
-                }
-
-                // 如果UI还没有填充，则处理歌词
-                if !self.fetcher.current_ui_populated {
-                    self.fetcher.current_ui_populated = true;
-
-                    // 将其他搜索状态设为未找到
-                    let all_search_status_arcs = [
-                        &self.fetcher.local_cache_status,
-                        &self.fetcher.qqmusic_status,
-                        &self.fetcher.kugou_status,
-                        &self.fetcher.netease_status,
-                        &self.fetcher.amll_db_status,
-                        &self.fetcher.musixmatch_status,
-                    ];
-
-                    for status_arc in all_search_status_arcs {
-                        let mut guard = status_arc.lock().unwrap();
-                        if matches!(*guard, AutoSearchStatus::Searching) {
-                            *guard = AutoSearchStatus::NotFound;
-                        }
-                    }
-
-                    info!("[ProcessFetched] 处理来自 {source:?} 的歌词");
-
-                    self.clear_lyrics_state_for_new_song_internal();
-
-                    let parsed_data = full_lyrics_result.parsed;
-                    let raw_data = full_lyrics_result.raw;
-
-                    // 使用获取到的原始文本和格式填充状态
-                    self.lyrics.input_text = raw_data.content;
-                    self.lyrics.source_format = parsed_data.source_format;
-                    self.fetcher.last_source_format = Some(parsed_data.source_format);
-
-                    self.lyrics.metadata_source_is_download = true;
-
-                    // 触发应用的内部转换流水线
-                    self.trigger_convert();
-                }
-            }
-            AutoFetchResult::NotFound => {
-                info!("[AutoFetch] 自动获取歌词：所有在线源均未找到。");
-
-                // 更新所有搜索状态为未找到
-                let sources_to_update_on_not_found = [
-                    &self.fetcher.qqmusic_status,
-                    &self.fetcher.kugou_status,
-                    &self.fetcher.netease_status,
-                    &self.fetcher.amll_db_status,
-                    &self.fetcher.musixmatch_status,
-                ];
-                for status_arc in sources_to_update_on_not_found {
-                    let mut guard = status_arc.lock().unwrap();
-                    if matches!(*guard, AutoSearchStatus::Searching) {
-                        *guard = AutoSearchStatus::NotFound;
-                    }
-                }
-
-                // 如果UI还没有填充且AMLL连接器启用，发送空TTML
-                if !self.fetcher.current_ui_populated
-                    && self.amll_connector.config.lock().unwrap().enabled
-                    && let Some(tx) = &self.amll_connector.command_tx
-                {
-                    info!("[UniLyricApp] 未找到任何歌词，尝试发送空TTML给AMLL Player。");
-                    let empty_ttml =
-                        crate::amll_connector::protocol::ClientMessage::SetLyricFromTTML {
-                            data: "".into(),
-                        };
-                    if tx
-                        .try_send(crate::amll_connector::ConnectorCommand::SendClientMessage(
-                            empty_ttml,
-                        ))
-                        .is_err()
-                    {
-                        error!("[UniLyricApp] (未找到歌词) 发送空TTML失败。");
-                    }
-                }
-            }
-            AutoFetchResult::FetchError(err_msg) => {
-                error!("[AutoFetch] 自动获取歌词时发生错误: {err_msg}");
-            }
-        }
-    }
-
     /// 从解析后的数据（`self.lyrics.parsed_lyric_data`）同步UI相关的状态。
     /// 例如，更新元数据编辑器。
     pub fn sync_ui_from_parsed_data(&mut self) {
@@ -1146,7 +1112,7 @@ impl UniLyricApp {
     pub(super) fn draw_chinese_conversion_menu_item(
         &mut self,
         ui: &mut egui::Ui,
-        variant: ChineseConversionVariant,
+        variant: BuiltinConfig,
         label: &str,
         enabled: bool,
     ) {
@@ -1157,5 +1123,30 @@ impl UniLyricApp {
         {
             self.send_action(UserAction::Lyrics(LyricsAction::ConvertChinese(variant)));
         }
+    }
+
+    pub fn trigger_provider_loading(&mut self) {
+        if self.lyrics_helper_state.provider_state != ProviderState::Uninitialized {
+            return;
+        }
+
+        info!("[LyricsHelper] 正在加载提供商...");
+        self.lyrics_helper_state.provider_state = ProviderState::Loading;
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.lyrics_helper_state.provider_load_result_rx = Some(rx);
+
+        let helper_clone = Arc::clone(&self.lyrics_helper_state.helper);
+
+        self.tokio_runtime.spawn(async move {
+            let result = match helper_clone.lock().await.load_providers().await {
+                Ok(_) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            };
+
+            if tx.send(result).is_err() {
+                warn!("[LyricsHelper Task] 发送提供商加载结果失败，UI可能已关闭。");
+            }
+        });
     }
 }

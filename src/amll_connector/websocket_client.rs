@@ -306,7 +306,7 @@ async fn handle_connection(
                 } else {
                     tracing::error!("[WebSocket 客户端] 主发送通道 (outgoing_rx) 已关闭。");
                     ws_writer.close().await.ok();
-                    return LifecycleEndReason::StreamFailure("主发送通道已关闭".to_string());
+                    return LifecycleEndReason::CriticalChannelFailure("主发送通道已关闭".to_string());
                 }
             }
 
@@ -319,7 +319,7 @@ async fn handle_connection(
                 } else {
                     tracing::error!("[WebSocket 客户端] 内部 Pong 通道 (internal_pong_rx) 已关闭。");
                     ws_writer.close().await.ok();
-                    return LifecycleEndReason::StreamFailure("内部 Pong 通道已关闭".to_string());
+                    return LifecycleEndReason::CriticalChannelFailure("内部 Pong 通道已关闭".to_string());
                 }
             }
 

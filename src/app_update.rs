@@ -6,7 +6,7 @@ use crate::amll_connector::protocol::ClientMessage;
 use crate::amll_connector::protocol_strings::NullString;
 use crate::app::TtmlDbUploadUserAction;
 use crate::app_definition::UniLyricApp;
-use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel};
+use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel, ProviderState};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use smtc_suite::MediaUpdate;
 
@@ -55,6 +55,16 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
             }
             ConnectorUpdate::SmtcUpdate(media_update) => match media_update {
                 MediaUpdate::TrackChanged(new_info) => {
+                    if new_info
+                        .title
+                        .as_deref()
+                        .unwrap_or_default()
+                        .trim()
+                        .is_empty()
+                    {
+                        continue;
+                    }
+
                     let is_new_song = app.player.current_now_playing.title != new_info.title
                         || app.player.current_now_playing.artist != new_info.artist;
 
@@ -134,7 +144,6 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     AutoSearchSource::Kugou => Some(&app.fetcher.last_kugou_result),
                     AutoSearchSource::Netease => Some(&app.fetcher.last_netease_result),
                     AutoSearchSource::AmllDb => Some(&app.fetcher.last_amll_db_result),
-                    AutoSearchSource::Musixmatch => Some(&app.fetcher.last_musixmatch_result),
                     AutoSearchSource::LocalCache => {
                         // 本地缓存没有“重载”逻辑，所以我们不需要缓存它
                         // 直接跳过缓存操作
@@ -151,21 +160,17 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     AutoSearchSource::Kugou => Some(&app.fetcher.kugou_status),
                     AutoSearchSource::Netease => Some(&app.fetcher.netease_status),
                     AutoSearchSource::AmllDb => Some(&app.fetcher.amll_db_status),
-                    AutoSearchSource::Musixmatch => Some(&app.fetcher.musixmatch_status),
                     AutoSearchSource::LocalCache => Some(&app.fetcher.local_cache_status),
                 };
                 if let Some(status_arc) = status_to_update {
                     *status_arc.lock().unwrap() = AutoSearchStatus::Success(source_format);
                 }
 
-                app.send_action(crate::app_actions::UserAction::Lyrics(
-                    crate::app_actions::LyricsAction::AutoFetchCompleted(
-                        crate::types::AutoFetchResult::Success {
-                            source,
-                            full_lyrics_result,
-                        },
-                    ),
-                ));
+                if !app.fetcher.current_ui_populated {
+                    app.send_action(crate::app_actions::UserAction::Lyrics(
+                        crate::app_actions::LyricsAction::GenerateFromParsed(full_lyrics_result),
+                    ));
+                }
 
                 let all_search_status_arcs = [
                     &app.fetcher.local_cache_status,
@@ -173,7 +178,6 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     &app.fetcher.kugou_status,
                     &app.fetcher.netease_status,
                     &app.fetcher.amll_db_status,
-                    &app.fetcher.musixmatch_status,
                 ];
 
                 for status_arc in all_search_status_arcs {
@@ -191,7 +195,6 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     &app.fetcher.kugou_status,
                     &app.fetcher.netease_status,
                     &app.fetcher.amll_db_status,
-                    &app.fetcher.musixmatch_status,
                 ];
                 for status_arc in sources_to_update_on_not_found {
                     let mut guard = status_arc.lock().unwrap();
@@ -500,8 +503,7 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
     }
 }
 
-/// 检查并处理来自异步歌词转换任务的结果。
-/// 此函数应在每帧的 update 循环中调用。
+/// 处理来自歌词转换任务的结果。
 pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
     if app.lyrics.conversion_result_rx.is_some()
         && let Ok(result) = app.lyrics.conversion_result_rx.as_ref().unwrap().try_recv()
@@ -540,5 +542,24 @@ pub(super) fn handle_download_results(app: &mut UniLyricApp) {
         app.send_action(crate::app_actions::UserAction::Lyrics(
             crate::app_actions::LyricsAction::DownloadCompleted(converted_result),
         ));
+    }
+}
+
+/// 并处理来自提供商加载任务的结果。
+pub(super) fn handle_provider_load_results(app: &mut UniLyricApp) {
+    if let Some(rx) = &app.lyrics_helper_state.provider_load_result_rx
+        && let Ok(result) = rx.try_recv()
+    {
+        match result {
+            Ok(_) => {
+                info!("[LyricsHelper] 提供商加载成功，下载功能已就绪。");
+                app.lyrics_helper_state.provider_state = ProviderState::Ready;
+            }
+            Err(e) => {
+                error!("[LyricsHelper] 提供商加载失败: {}", e);
+                app.lyrics_helper_state.provider_state = ProviderState::Failed(e);
+            }
+        }
+        app.lyrics_helper_state.provider_load_result_rx = None;
     }
 }

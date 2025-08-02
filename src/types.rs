@@ -49,7 +49,6 @@ pub enum AutoSearchSource {
     Kugou,
     Netease,
     AmllDb,
-    Musixmatch,
 }
 
 impl AutoSearchSource {
@@ -60,7 +59,6 @@ impl AutoSearchSource {
             AutoSearchSource::Kugou => "酷狗音乐",
             AutoSearchSource::Netease => "网易云音乐",
             AutoSearchSource::AmllDb => "AMLL-DB",
-            AutoSearchSource::Musixmatch => "Musixmatch",
         }
     }
 
@@ -71,7 +69,6 @@ impl AutoSearchSource {
             Self::Netease,
             Self::QqMusic,
             Self::Kugou,
-            Self::Musixmatch,
         ]
     }
 }
@@ -106,7 +103,6 @@ impl From<String> for AutoSearchSource {
             "kugou" => Self::Kugou,
             "netease" => Self::Netease,
             "amll-ttml-database" => Self::AmllDb,
-            "musixmatch" => Self::Musixmatch,
             _ => {
                 tracing::warn!("未知的提供商名称 '{s}'，无法转换为 AutoSearchSource");
                 Self::QqMusic
@@ -122,7 +118,6 @@ impl From<AutoSearchSource> for &'static str {
             AutoSearchSource::Kugou => "kugou",
             AutoSearchSource::Netease => "netease",
             AutoSearchSource::AmllDb => "amll-ttml-database",
-            AutoSearchSource::Musixmatch => "musixmatch",
             AutoSearchSource::LocalCache => "local",
         }
     }
@@ -194,46 +189,15 @@ pub struct LogEntry {
     pub target: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ChineseConversionVariant {
-    // 通用转换
-    S2T, // 简体到繁体
-    T2S, // 繁体到简体
-    // 地区性转换
-    S2TWP, // 简体到台湾正体 (含用语)
-    S2HK,  // 简体到香港繁体
-    TW2SP, // 繁体(台湾)到简体 (含用语)
-    TW2S,  // 繁体(台湾)到简体 (仅文字)
-    // 繁体互转
-    TW2T, // 台湾繁体到香港繁体 (t2tw.json 的逆操作)
-    HK2T, // 香港繁体到台湾繁体
-    // 其他转换
-    S2TW, // 简体到台湾繁体 (仅文字)
-    T2TW, // 繁体到台湾繁体 (异体字)
-    T2HK, // 繁体到香港繁体 (异体字)
-    HK2S, // 香港繁体到简体
-    // 日语汉字
-    JP2T, // 日语新字体到繁体旧字体
-    T2JP, // 繁体旧字体到日语新字体
-}
-
-impl ChineseConversionVariant {
-    pub fn to_filename(&self) -> &'static str {
-        match self {
-            Self::S2T => "s2t.json",
-            Self::T2S => "t2s.json",
-            Self::S2TWP => "s2twp.json",
-            Self::S2HK => "s2hk.json",
-            Self::TW2SP => "tw2sp.json",
-            Self::TW2S => "tw2s.json",
-            Self::TW2T => "tw2t.json",
-            Self::HK2T => "hk2t.json",
-            Self::S2TW => "s2tw.json",
-            Self::T2TW => "t2tw.json",
-            Self::T2HK => "t2hk.json",
-            Self::HK2S => "hk2s.json",
-            Self::JP2T => "jp2t.json",
-            Self::T2JP => "t2jp.json",
-        }
-    }
+/// 歌词提供商的加载状态
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderState {
+    /// 尚未初始化
+    Uninitialized,
+    /// 正在加载中
+    Loading,
+    /// 已就绪
+    Ready,
+    /// 加载失败
+    Failed(String),
 }
