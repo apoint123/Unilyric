@@ -50,9 +50,9 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
                         tracing::info!("已加载罗马音LRC文件: {path:?}");
                     }
                 }
-                app.send_action(crate::app_actions::UserAction::Lyrics(
+                app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::Convert,
-                ));
+                )));
             }
             Err(e) => {
                 tracing::error!("读取LRC文件 {path:?} 失败: {e}");
@@ -63,9 +63,9 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
 
 /// 从路径加载文件并触发转换。
 pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
-    app.send_action(crate::app_actions::UserAction::Lyrics(
+    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
         crate::app_actions::LyricsAction::ClearAllData,
-    ));
+    )));
     app.lyrics.last_opened_file_path = Some(path.clone());
 
     if let Ok(content) = fs::read_to_string(&path) {
@@ -76,9 +76,9 @@ pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
         {
             app.lyrics.source_format = format;
         }
-        app.send_action(crate::app_actions::UserAction::Lyrics(
+        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::Convert,
-        ));
+        )));
 
         // sync_ui_from_parsed_data 会在转换完成后自动调用
     } else {

@@ -9,7 +9,7 @@ use smtc_suite::SmtcControlCommand;
 #[derive(Debug, Clone)]
 pub enum UserAction {
     File(FileAction),
-    Lyrics(LyricsAction),
+    Lyrics(Box<LyricsAction>),
     Player(PlayerAction),
     UI(UIAction),
     Settings(SettingsAction),
@@ -36,18 +36,17 @@ pub enum LyricsAction {
     DownloadCompleted(Result<FullLyricsResult, String>), // 下载完成
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
-    MetadataChanged,                                   // 元数据被用户编辑
-    AddMetadata,                                       // 添加新的元数据条目
-    DeleteMetadata(usize),                             // 删除指定索引的元数据条目
-    UpdateMetadataKey(usize, String),                  // 更新指定索引的元数据键
-    UpdateMetadataValue(usize, String),                // 更新指定索引的元数据值
-    ToggleMetadataPinned(usize),                       // 切换指定索引的元数据固定状态
-    AutoFetchCompleted(crate::types::AutoFetchResult), // 自动获取完成
-    LrcInputChanged(String, LrcContentType),           // 当LRC文本框内容改变时
-    MainInputChanged(String),                          // 当主输入文本框内容改变时
+    MetadataChanged,                         // 元数据被用户编辑
+    AddMetadata,                             // 添加新的元数据条目
+    DeleteMetadata(usize),                   // 删除指定索引的元数据条目
+    UpdateMetadataKey(usize, String),        // 更新指定索引的元数据键
+    UpdateMetadataValue(usize, String),      // 更新指定索引的元数据值
+    ToggleMetadataPinned(usize),             // 切换指定索引的元数据固定状态
+    LrcInputChanged(String, LrcContentType), // 当LRC文本框内容改变时
+    MainInputChanged(String),                // 当主输入文本框内容改变时
     ClearAllData,
     LoadFetchedResult(FullLyricsResult),
-    GenerateFromParsed(FullLyricsResult),
+    ApplyFetchedLyrics(Box<lyrics_helper_rs::model::track::LyricsAndMetadata>), // 应用获取到的歌词
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +57,8 @@ pub enum PlayerAction {
     SelectSmtcSession(String),
     /// 保存当前歌词到本地缓存。
     SaveToLocalCache,
+    /// 更新封面数据。
+    UpdateCover(Option<Vec<u8>>),
 }
 
 #[derive(Debug, Clone)]
@@ -83,7 +84,7 @@ pub enum UIAction {
 
 #[derive(Debug, Clone)]
 pub enum SettingsAction {
-    Save(AppSettings),
+    Save(Box<AppSettings>),
     Cancel,
     Reset,
 }

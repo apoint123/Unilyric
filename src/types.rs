@@ -1,6 +1,6 @@
 use chrono::{DateTime, Local};
 use lyrics_helper_rs::converter::types::{LyricFormat, LyricLine};
-use lyrics_helper_rs::model::track::FullLyricsResult;
+use lyrics_helper_rs::model::track::LyricsAndMetadata;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,15 +28,21 @@ pub enum LrcContentType {
 
 #[derive(Debug, Clone)]
 pub enum DisplayLrcLine {
-    Parsed(LyricLine),
+    Parsed(Box<LyricLine>),
     Raw { original_text: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum AutoFetchResult {
-    Success {
+    LyricsReady {
         source: AutoSearchSource,
-        full_lyrics_result: FullLyricsResult,
+        lyrics_and_metadata: Box<LyricsAndMetadata>,
+        output_text: String,
+    },
+    CoverUpdate(Option<Vec<u8>>),
+    LyricsSuccess {
+        source: AutoSearchSource,
+        lyrics_and_metadata: Box<LyricsAndMetadata>,
     },
     NotFound,
     FetchError(String),

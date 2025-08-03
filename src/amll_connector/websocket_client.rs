@@ -421,8 +421,8 @@ pub async fn run_websocket_client(
             | LifecycleEndReason::StreamFailure(_)
             | LifecycleEndReason::PongTimeout
             | LifecycleEndReason::ServerClosed) => {
-                let error_message = match reason.clone() {
-                    LifecycleEndReason::InitialConnectFailed(msg) => msg,
+                let error_message = match &reason {
+                    LifecycleEndReason::InitialConnectFailed(msg) => msg.clone(),
                     LifecycleEndReason::StreamFailure(msg) => format!("连接流错误: {msg}"),
                     LifecycleEndReason::PongTimeout => "心跳响应超时".to_string(),
                     LifecycleEndReason::ServerClosed => "服务器关闭了连接".to_string(),

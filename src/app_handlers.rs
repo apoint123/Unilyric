@@ -183,7 +183,7 @@ impl UniLyricApp {
     /// 单个事件处理逻辑
     fn handle_single_action(&mut self, action: UserAction) -> ActionResult {
         match action {
-            UserAction::Lyrics(lyrics_action) => self.handle_lyrics_action(lyrics_action),
+            UserAction::Lyrics(lyrics_action) => self.handle_lyrics_action(*lyrics_action),
             UserAction::File(file_action) => self.handle_file_action(file_action),
             UserAction::UI(ui_action) => self.handle_ui_action(ui_action),
             UserAction::Player(player_action) => self.handle_player_action(player_action),
@@ -444,6 +444,7 @@ impl UniLyricApp {
                         title: Some(&query),
                         artists: None, // 简化
                         album: None,
+                        duration: None,
                     };
 
                     let helper_clone = Arc::clone(&helper);
@@ -610,25 +611,6 @@ impl UniLyricApp {
                     ActionResult::Error("无效的元数据索引".to_string())
                 }
             }
-            LyricsAction::AutoFetchCompleted(auto_fetch_result) => {
-                // 这是“自动加载”的逻辑
-                if let crate::types::AutoFetchResult::Success {
-                    source,
-                    full_lyrics_result,
-                } = auto_fetch_result
-                {
-                    if !self.fetcher.current_ui_populated {
-                        info!("[AutoFetch] UI未被填充，正在自动加载来自 {source:?} 的歌词。");
-
-                        self.send_action(UserAction::Lyrics(LyricsAction::LoadFetchedResult(
-                            full_lyrics_result,
-                        )));
-                    } else {
-                        info!("[AutoFetch] UI已被填充，跳过对 {source:?} 结果的自动加载。");
-                    }
-                }
-                ActionResult::Success
-            }
             LyricsAction::LoadFetchedResult(result) => {
                 // 手动加载的逻辑，无条件执行
                 info!("[ProcessFetched] 用户或系统请求加载一个歌词结果。");
@@ -655,7 +637,7 @@ impl UniLyricApp {
                             parsed
                                 .lines
                                 .into_iter()
-                                .map(crate::types::DisplayLrcLine::Parsed)
+                                .map(|line| crate::types::DisplayLrcLine::Parsed(Box::new(line)))
                                 .collect(),
                         ),
                         Err(e) => {
@@ -682,7 +664,7 @@ impl UniLyricApp {
                 }
                 ActionResult::Success
             }
-            LyricsAction::GenerateFromParsed(result) => {
+            LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata) => {
                 if self.lyrics.conversion_in_progress {
                     return ActionResult::Warning("转换正在进行中".to_string());
                 }
@@ -690,8 +672,8 @@ impl UniLyricApp {
                 self.fetcher.current_ui_populated = true;
                 self.clear_lyrics_state_for_new_song_internal();
 
-                let parsed_data = result.parsed;
-                let raw_data = result.raw;
+                let parsed_data = lyrics_and_metadata.lyrics.parsed;
+                let raw_data = lyrics_and_metadata.lyrics.raw;
 
                 self.lyrics.input_text = raw_data.content;
                 self.lyrics.source_format = parsed_data.source_format;
@@ -731,7 +713,7 @@ impl UniLyricApp {
         }
     }
 
-    fn clear_lyrics_state_for_new_song_internal(&mut self) {
+    pub(super) fn clear_lyrics_state_for_new_song_internal(&mut self) {
         info!("[State] 正在为新歌曲清理歌词状态。");
         self.lyrics.input_text.clear();
         self.lyrics.output_text.clear();
@@ -874,6 +856,23 @@ impl UniLyricApp {
             PlayerAction::SaveToLocalCache => {
                 return self.save_lyrics_to_local_cache();
             }
+            PlayerAction::UpdateCover(cover_data) => {
+                self.player.current_now_playing.cover_data = cover_data.clone();
+
+                if let Some(cover_bytes) = cover_data
+                    && let Some(command_tx) = &self.amll_connector.command_tx
+                {
+                    let send_result = command_tx.try_send(
+                        crate::amll_connector::types::ConnectorCommand::SendCover(cover_bytes),
+                    );
+                    if let Err(e) = send_result {
+                        warn!("[PlayerAction] 发送封面到 WebSocket 失败: {}", e);
+                    }
+                }
+
+                self.egui_ctx.request_repaint();
+                return ActionResult::Success;
+            }
         };
 
         if let Err(e) = send_result {
@@ -981,7 +980,7 @@ impl UniLyricApp {
                 Ok(_) => {
                     let new_settings_clone = settings.clone();
                     let mut app_settings_guard = self.app_settings.lock().unwrap();
-                    *app_settings_guard = new_settings_clone;
+                    *app_settings_guard = *new_settings_clone;
                     self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
 
                     let new_mc_config_from_settings = AMLLConnectorConfig {
@@ -1121,7 +1120,9 @@ impl UniLyricApp {
             .on_disabled_hover_text("请先加载主歌词")
             .clicked()
         {
-            self.send_action(UserAction::Lyrics(LyricsAction::ConvertChinese(variant)));
+            self.send_action(UserAction::Lyrics(Box::new(LyricsAction::ConvertChinese(
+                variant,
+            ))));
         }
     }
 

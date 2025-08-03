@@ -53,6 +53,7 @@ pub struct AppSettings {
 
     pub use_provider_subset: bool,
     pub auto_search_provider_subset: Vec<String>,
+    pub prioritize_amll_db: bool,
 
     pub enable_online_lyric_stripping: bool,
     pub enable_t2s_for_auto_search: bool,
@@ -93,6 +94,7 @@ impl Default for AppSettings {
             send_audio_data_to_player: true,
             use_provider_subset: false,
             auto_search_provider_subset: vec![],
+            prioritize_amll_db: true,
 
             websocket_server_settings: WebsocketServerSettings::default(),
             last_source_format: LyricFormat::Ass,

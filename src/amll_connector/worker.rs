@@ -9,6 +9,8 @@ use tokio::sync::{
     oneshot,
 };
 
+use crate::amll_connector::types::{ActorSettings, UiUpdate};
+
 use super::{
     protocol::{Artist, ClientMessage},
     translation::convert_to_protocol_lyrics,
@@ -18,6 +20,13 @@ use super::{
 
 const CHANNEL_BUFFER_SIZE: usize = 32;
 const WEBSOCKET_SHUTDOWN_TIMEOUT_MS: u64 = 100;
+
+struct ActorState {
+    config: AMLLConnectorConfig,
+    actor_settings: ActorSettings,
+    websocket_client: Option<WebSocketClientState>,
+    last_track_info: Option<smtc_suite::NowPlayingInfo>,
+}
 
 /// WebSocket 客户端的运行时状态
 /// 这三个字段总是同时为 Some 或 None，表示客户端是否正在运行
@@ -121,19 +130,6 @@ async fn handle_smtc_send_error<T>(
     }
 }
 
-fn handle_update_send_error<T>(
-    result: Result<(), std::sync::mpsc::SendError<T>>,
-    update_type: &str,
-) {
-    if let Err(e) = result {
-        tracing::warn!(
-            "[AMLL Actor] 发送 {} 更新到 UI 线程失败: {}，UI 可能已关闭",
-            update_type,
-            e
-        );
-    }
-}
-
 fn send_music_info_to_ws(client: &WebSocketClientState, info: &smtc_suite::NowPlayingInfo) {
     let artists_vec = info.artist.as_ref().map_or_else(Vec::new, |name| {
         vec![Artist {
@@ -190,25 +186,28 @@ fn send_progress_to_ws(client: &WebSocketClientState, info: &smtc_suite::NowPlay
 
 pub async fn amll_connector_actor(
     mut command_rx: TokioReceiver<ConnectorCommand>,
-    update_tx: StdSender<ConnectorUpdate>,
+    update_tx: StdSender<UiUpdate>,
     initial_config: AMLLConnectorConfig,
     smtc_command_tx: TokioSender<MediaCommand>,
     mut smtc_update_rx: TokioReceiver<MediaUpdate>,
-    egui_ctx: egui::Context,
 ) {
     tracing::debug!("[AMLL Actor] Actor 任务已启动。");
-    let mut config = initial_config;
-    let mut websocket_client: Option<WebSocketClientState> = None;
-    let mut last_sent_title: Option<String> = None;
-    let mut cached_original_info: Option<smtc_suite::NowPlayingInfo> = None;
-    let mut cached_converted_info: Option<smtc_suite::NowPlayingInfo> = None;
+
+    let mut state = ActorState {
+        config: initial_config,
+        actor_settings: ActorSettings {},
+        websocket_client: None,
+        last_track_info: None,
+    };
+
     let (ws_status_tx, mut ws_status_rx) = tokio_channel(CHANNEL_BUFFER_SIZE);
     let (media_cmd_tx, mut media_cmd_rx) = tokio_channel(CHANNEL_BUFFER_SIZE);
 
-    if config.enabled {
-        match start_websocket_client_task(&config, ws_status_tx.clone(), media_cmd_tx.clone()) {
+    if state.config.enabled {
+        match start_websocket_client_task(&state.config, ws_status_tx.clone(), media_cmd_tx.clone())
+        {
             Ok((outgoing_tx, client_handle, shutdown_signal_tx)) => {
-                websocket_client = Some(WebSocketClientState::new(
+                state.websocket_client = Some(WebSocketClientState::new(
                     outgoing_tx,
                     shutdown_signal_tx,
                     client_handle,
@@ -217,9 +216,13 @@ pub async fn amll_connector_actor(
             }
             Err(e) => {
                 tracing::error!("[AMLL Actor] 初始化 WebSocket 客户端失败: {}", e);
-                let _ = update_tx.send(ConnectorUpdate::WebsocketStatusChanged(
-                    WebsocketStatus::断开,
-                ));
+
+                let update = UiUpdate {
+                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                    repaint_needed: true,
+                };
+
+                let _ = update_tx.send(update);
             }
         }
     }
@@ -229,263 +232,259 @@ pub async fn amll_connector_actor(
     loop {
         tokio::select! {
             Some(command) = command_rx.recv() => {
-                match command {
-                    ConnectorCommand::Shutdown => {
-                        tracing::debug!("[AMLL Actor] 已收到 Shutdown 命令。");
-
-                        if let Some(client) = websocket_client.take() {
-                            client.shutdown().await;
-                        }
-                        break;
-                    },
-                    ConnectorCommand::UpdateConfig(new_config) => {
-                        let old_config = config.clone();
-                        config = new_config;
-                        let should_be_running = config.enabled;
-                        let is_running = websocket_client
-                            .as_ref()
-                            .is_some_and(|client| client.is_running());
-                        let url_changed = old_config.websocket_url != config.websocket_url;
-
-                        if should_be_running && (!is_running || url_changed) {
-                            tracing::info!("[AMLL Actor] 配置已更改，正在启动/重启...");
-
-                            if let Some(old_client) = websocket_client.take()
-                                && let Ok(handle) = old_client.send_shutdown_signal() {
-                                    handle.abort();
-                                }
-
-                            match start_websocket_client_task(&config, ws_status_tx.clone(), media_cmd_tx.clone()) {
-                                Ok((outgoing_tx, client_handle, shutdown_signal_tx)) => {
-                                    websocket_client = Some(WebSocketClientState::new(
-                                        outgoing_tx,
-                                        shutdown_signal_tx,
-                                        client_handle,
-                                    ));
-                                    tracing::debug!("[AMLL Actor] WebSocket 客户端已成功启动");
-                                }
-                                Err(e) => {
-                                    tracing::error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
-                                    let _ = update_tx.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开));
-                                }
-                            }
-                        } else if !should_be_running && is_running {
-                            tracing::debug!("[AMLL Actor] 配置已禁用，正在停止客户端...");
-                            if let Some(client) = websocket_client.take()
-                                && let Ok(handle) = client.send_shutdown_signal() {
-                                    handle.abort();
-                                }
-                        }
-                    },
-                    ConnectorCommand::UpdateActorSettings(new_settings) => {
-                        tracing::debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
-                    },
-                    ConnectorCommand::DisconnectWebsocket => {
-                        tracing::debug!("[AMLL Actor] 收到 Disconnect 命令，正在关闭 WebSocket 客户端...");
-                        if let Some(client) = websocket_client.take()
-                            && let Ok(handle) = client.send_shutdown_signal() {
-                                handle.abort();
-                            }
-                        handle_update_send_error(
-                            update_tx.send(ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开)),
-                            "WebSocket断开状态"
-                        );
-                    },
-                    ConnectorCommand::SendLyric(parsed_data) => {
-                        if let Some(client) = &websocket_client {
-                            let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
-                            let body = ClientMessage::SetLyric { data: protocol_lyrics };
-                            handle_websocket_send_error(client.outgoing_tx().try_send(body), "SetLyric");
-                        } else {
-                            tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SendLyric 命令");
-                        }
-                    },
-                    ConnectorCommand::SendClientMessage(message) => {
-                        if let Some(client) = &websocket_client {
-                            handle_websocket_send_error(client.outgoing_tx().try_send(message), "ClientMessage");
-                        } else {
-                            tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SendClientMessage 命令");
-                        }
-                    },
+                if matches!(command, ConnectorCommand::Shutdown) {
+                    if let Some(client) = state.websocket_client.take() {
+                        client.shutdown().await;
+                    }
+                    break;
                 }
+                handle_app_command(command, &mut state, &ws_status_tx, &media_cmd_tx, &update_tx).await;
             },
 
             Some(status) = ws_status_rx.recv() => {
-                tracing::debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
-                let enable_high_freq = matches!(status, WebsocketStatus::已连接);
-                let command = MediaCommand::SetHighFrequencyProgressUpdates(enable_high_freq);
-                handle_smtc_send_error(smtc_command_tx.send(command).await, "高频更新开关").await;
-                handle_update_send_error(
-                    update_tx.send(ConnectorUpdate::WebsocketStatusChanged(status)),
-                    "WebSocket状态"
-                );
-                egui_ctx.request_repaint();
+                handle_websocket_status(status, &update_tx, &smtc_command_tx).await;
             },
 
             Some(media_cmd) = media_cmd_rx.recv() => {
-                tracing::info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
-                let command_to_send = MediaCommand::Control(media_cmd);
-                handle_smtc_send_error(
-                    smtc_command_tx.send(command_to_send).await,
-                    "来自WebSocket的控制命令"
-                ).await;
-                egui_ctx.request_repaint();
+                handle_player_control_command(media_cmd, &smtc_command_tx).await;
             },
 
             Some(update) = smtc_update_rx.recv() => {
-                let update_to_send_to_ui: Option<MediaUpdate> = None;
-                let track_info_for_ws: Option<smtc_suite::NowPlayingInfo> = None;
-
-                match update {
-                    MediaUpdate::TrackChanged(new_info) => {
-                        let is_new_song = match &cached_original_info {
-                            Some(cached) => cached.title != new_info.title || cached.artist != new_info.artist,
-                            None => true,
-                        };
-
-                        if is_new_song {
-                            tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
-                            cached_original_info = Some(new_info.clone());
-
-                            let converted_info = new_info;
-
-                            if let Some(client) = &websocket_client {
-                                send_music_info_to_ws(client, &converted_info);
-                                if let Some(ref cover_data) = converted_info.cover_data {
-                                    send_cover_to_ws(client, cover_data);
-                                }
-                            }
-
-                            egui_ctx.request_repaint();
-
-                            cached_converted_info = Some(converted_info.clone());
-                            update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(converted_info))).ok();
-
-                        } else if let (Some(cached_orig), Some(cached_conv)) = (&mut cached_original_info, &mut cached_converted_info) {
-                            let mut needs_repaint = false;
-
-                            if new_info.cover_data.is_some() && new_info.cover_data != cached_orig.cover_data {
-                                tracing::debug!("[AMLL Actor] 检测到封面更新。");
-                                cached_orig.cover_data = new_info.cover_data.clone();
-                                cached_conv.cover_data = new_info.cover_data.clone();
-                                if let Some(client) = &websocket_client {
-                                    send_cover_to_ws(client, new_info.cover_data.as_ref().unwrap());
-                                }
-                                needs_repaint = true;
-                            }
-
-                            let old_is_playing = cached_conv.is_playing;
-
-                            cached_orig.update_with(&new_info);
-                            cached_conv.update_with(&new_info);
-
-                            if old_is_playing != cached_conv.is_playing {
-                                needs_repaint = true;
-                            }
-
-                            if needs_repaint {
-                                egui_ctx.request_repaint();
-                            }
-
-                            if let Some(client) = &websocket_client {
-                                send_play_state_to_ws(client, cached_conv);
-                                send_progress_to_ws(client, cached_conv);
-                            }
-
-                            update_tx.send(ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(cached_conv.clone()))).ok();
-                        }
-                    }
-                    other_update => {
-                        if matches!(other_update, MediaUpdate::SessionsChanged(_) | MediaUpdate::SelectedSessionVanished(_)) {
-                            cached_original_info = None;
-                            cached_converted_info = None;
-                        }
-                        update_tx.send(ConnectorUpdate::SmtcUpdate(other_update)).ok();
-                        egui_ctx.request_repaint();
-                    }
-                }
-
-                if let Some(final_update) = update_to_send_to_ui {
-                    handle_update_send_error(
-                        update_tx.send(ConnectorUpdate::SmtcUpdate(final_update)),
-                        "SMTC更新"
-                    );
-                }
-
-                if let Some(ref track_info) = track_info_for_ws {
-                    let is_new_song = track_info.title.as_deref() != last_sent_title.as_deref();
-                    if is_new_song {
-                        last_sent_title = track_info.title.clone();
-                    }
-                    if let Some(track_info) = track_info_for_ws {
-                        let is_new_song_for_ws = track_info.title.as_deref() != last_sent_title.as_deref();
-                        if is_new_song_for_ws {
-                            last_sent_title = track_info.title.clone();
-                        }
-                        if let Some(client) = &websocket_client {
-                            let tx = client.outgoing_tx();
-                            if is_new_song_for_ws {
-                                let artists_vec = track_info.artist.as_ref().map_or_else(Vec::new, |name| {
-                                    vec![Artist { id: Default::default(), name: name.as_str().into() }]
-                                });
-                                let set_music_info_body = ClientMessage::SetMusicInfo {
-                                    music_id: Default::default(),
-                                    music_name: track_info.title.clone().map_or(Default::default(), |s| s.as_str().into()),
-                                    album_id: Default::default(),
-                                    album_name: track_info.album_title.clone().map_or(Default::default(), |s| s.as_str().into()),
-                                    artists: artists_vec,
-                                    duration: track_info.duration_ms.unwrap_or(0),
-                                };
-                                handle_websocket_send_error(tx.try_send(set_music_info_body), "SetMusicInfo");
-
-                                if let Some(ref cover_data) = track_info.cover_data {
-                                    if !cover_data.is_empty() {
-                                        let cover_message = ClientMessage::SetMusicAlbumCoverImageData {
-                                            data: cover_data.to_vec()
-                                        };
-                                        handle_websocket_send_error(tx.try_send(cover_message), "SetMusicAlbumCoverImageData");
-                                    } else {
-                                        tracing::trace!("[AMLL Actor] 新歌封面数据为空，跳过发送。");
-                                    }
-                                } else {
-                                    tracing::trace!("[AMLL Actor] 新歌无封面数据，跳过发送。");
-                                }
-                            }
-
-                            if let Some(is_playing) = track_info.is_playing {
-                                let play_state_message = if is_playing {
-                                    ClientMessage::OnResumed
-                                } else {
-                                    ClientMessage::OnPaused
-                                };
-                                handle_websocket_send_error(tx.try_send(play_state_message), "播放状态");
-                            }
-
-                            if let Some(progress) = track_info.position_ms {
-                                let progress_message = ClientMessage::OnPlayProgress { progress };
-                                handle_websocket_send_error(tx.try_send(progress_message), "OnPlayProgress");
-                            }
-                        }
-                    }
-                }
+                handle_smtc_update(update, &mut state, &update_tx);
             },
         }
     }
-    tracing::trace!("[AMLL Actor] 主事件循环已结束，Actor 任务即将完成。");
 }
+
+fn handle_new_song(new_info: &smtc_suite::NowPlayingInfo, state: &ActorState) {
+    tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
+    if let Some(client) = &state.websocket_client {
+        send_music_info_to_ws(client, new_info);
+        if let Some(ref cover_data) = new_info.cover_data {
+            send_cover_to_ws(client, cover_data);
+        }
+    }
+}
+
+fn handle_progress_update(new_info: &smtc_suite::NowPlayingInfo, state: &ActorState) -> bool {
+    let mut repaint_needed = false;
+    let last_info = state.last_track_info.as_ref();
+
+    if let Some(client) = &state.websocket_client {
+        let cover_changed = new_info.cover_data.is_some()
+            && new_info.cover_data != last_info.and_then(|i| i.cover_data.as_ref()).cloned();
+        if cover_changed {
+            if let Some(ref cover_data) = new_info.cover_data {
+                send_cover_to_ws(client, cover_data);
+            }
+            repaint_needed = true;
+        }
+
+        let playing_state_changed = new_info.is_playing != last_info.and_then(|i| i.is_playing);
+        if playing_state_changed {
+            send_play_state_to_ws(client, new_info);
+            repaint_needed = true;
+        }
+
+        send_progress_to_ws(client, new_info);
+    }
+
+    repaint_needed
+}
+
+fn handle_smtc_update(
+    update: MediaUpdate,
+    state: &mut ActorState,
+    update_tx: &StdSender<UiUpdate>,
+) -> bool {
+    let mut repaint_needed = false;
+
+    let payload = match update {
+        MediaUpdate::TrackChanged(new_info) => {
+            let is_new_song = match &state.last_track_info {
+                Some(cached) => cached.title != new_info.title || cached.artist != new_info.artist,
+                None => true,
+            };
+
+            if is_new_song {
+                handle_new_song(&new_info, state);
+                repaint_needed = true;
+            } else {
+                repaint_needed = handle_progress_update(&new_info, state);
+            }
+            state.last_track_info = Some(new_info.clone());
+            ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(new_info))
+        }
+        other_update => {
+            if matches!(
+                other_update,
+                MediaUpdate::SessionsChanged(_) | MediaUpdate::SelectedSessionVanished(_)
+            ) {
+                state.last_track_info = None;
+                repaint_needed = true;
+            }
+            ConnectorUpdate::SmtcUpdate(other_update)
+        }
+    };
+
+    let ui_update = UiUpdate {
+        payload,
+        repaint_needed,
+    };
+    let _ = update_tx.send(ui_update);
+
+    repaint_needed
+}
+
+async fn handle_app_command(
+    command: ConnectorCommand,
+    state: &mut ActorState,
+    ws_status_tx: &TokioSender<WebsocketStatus>,
+    media_cmd_tx: &TokioSender<SmtcControlCommand>,
+    update_tx: &StdSender<UiUpdate>,
+) {
+    match command {
+        ConnectorCommand::Shutdown => {}
+        ConnectorCommand::UpdateConfig(new_config) => {
+            let old_config = state.config.clone();
+            state.config = new_config;
+            let should_be_running = state.config.enabled;
+            let is_running = state
+                .websocket_client
+                .as_ref()
+                .is_some_and(|client| client.is_running());
+            let url_changed = old_config.websocket_url != state.config.websocket_url;
+
+            if should_be_running && (!is_running || url_changed) {
+                tracing::info!("[AMLL Actor] 配置已更改，正在启动/重启...");
+                if let Some(old_client) = state.websocket_client.take() {
+                    old_client.shutdown().await;
+                }
+                match start_websocket_client_task(
+                    &state.config,
+                    ws_status_tx.clone(),
+                    media_cmd_tx.clone(),
+                ) {
+                    Ok((outgoing_tx, client_handle, shutdown_signal_tx)) => {
+                        state.websocket_client = Some(WebSocketClientState::new(
+                            outgoing_tx,
+                            shutdown_signal_tx,
+                            client_handle,
+                        ));
+                        tracing::debug!("[AMLL Actor] WebSocket 客户端已成功启动");
+                    }
+                    Err(e) => {
+                        tracing::error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
+                        let ui_update = UiUpdate {
+                            payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                            repaint_needed: true,
+                        };
+                        let _ = update_tx.send(ui_update);
+                    }
+                }
+            } else if !should_be_running && is_running {
+                tracing::debug!("[AMLL Actor] 配置已禁用，正在停止客户端...");
+                if let Some(client) = state.websocket_client.take() {
+                    client.shutdown().await;
+                }
+            }
+        }
+        ConnectorCommand::UpdateActorSettings(new_settings) => {
+            tracing::debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
+            state.actor_settings = new_settings;
+        }
+        ConnectorCommand::DisconnectWebsocket => {
+            tracing::debug!("[AMLL Actor] 收到 Disconnect 命令，正在关闭 WebSocket 客户端...");
+            if let Some(client) = state.websocket_client.take() {
+                client.shutdown().await;
+            }
+
+            let update = UiUpdate {
+                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                repaint_needed: true,
+            };
+
+            if update_tx.send(update).is_err() {
+                tracing::warn!(
+                    "[AMLL Actor] 发送 WebSocket 断开状态更新到 UI 线程失败，UI 可能已关闭"
+                );
+            }
+        }
+        ConnectorCommand::SendLyric(parsed_data) => {
+            if let Some(client) = &state.websocket_client {
+                let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
+                let body = ClientMessage::SetLyric {
+                    data: protocol_lyrics,
+                };
+                handle_websocket_send_error(client.outgoing_tx().try_send(body), "SetLyric");
+            } else {
+                tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SendLyric 命令");
+            }
+        }
+        ConnectorCommand::SendClientMessage(message) => {
+            if let Some(client) = &state.websocket_client {
+                handle_websocket_send_error(
+                    client.outgoing_tx().try_send(message),
+                    "ClientMessage",
+                );
+            } else {
+                tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SendClientMessage 命令");
+            }
+        }
+        ConnectorCommand::SendCover(cover_data) => {
+            if let Some(client) = &state.websocket_client {
+                tracing::info!(
+                    "[AMLL Actor] 发送封面到 WebSocket，大小: {} bytes",
+                    cover_data.len()
+                );
+                send_cover_to_ws(client, &cover_data);
+            } else {
+                tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SendCover 命令");
+            }
+        }
+    }
+}
+
+async fn handle_websocket_status(
+    status: WebsocketStatus,
+    update_tx: &StdSender<UiUpdate>,
+    smtc_command_tx: &TokioSender<MediaCommand>,
+) {
+    tracing::debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
+    let enable_high_freq = matches!(status, WebsocketStatus::已连接);
+    let command = MediaCommand::SetHighFrequencyProgressUpdates(enable_high_freq);
+    handle_smtc_send_error(smtc_command_tx.send(command).await, "高频更新开关").await;
+    let ui_update = UiUpdate {
+        payload: ConnectorUpdate::WebsocketStatusChanged(status),
+        repaint_needed: true,
+    };
+    let _ = update_tx.send(ui_update);
+}
+
+async fn handle_player_control_command(
+    media_cmd: SmtcControlCommand,
+    smtc_command_tx: &TokioSender<MediaCommand>,
+) {
+    tracing::info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
+    let command_to_send = MediaCommand::Control(media_cmd);
+    handle_smtc_send_error(
+        smtc_command_tx.send(command_to_send).await,
+        "来自WebSocket的控制命令",
+    )
+    .await;
+}
+
+type WebSocketClientTask = (
+    TokioSender<ClientMessage>,
+    tokio::task::JoinHandle<()>,
+    oneshot::Sender<()>,
+);
 
 fn start_websocket_client_task(
     config: &AMLLConnectorConfig,
     status_tx: TokioSender<WebsocketStatus>,
     media_cmd_tx: TokioSender<SmtcControlCommand>,
-) -> Result<
-    (
-        TokioSender<ClientMessage>,
-        tokio::task::JoinHandle<()>,
-        oneshot::Sender<()>,
-    ),
-    Box<dyn std::error::Error + Send + Sync>,
-> {
+) -> Result<WebSocketClientTask, Box<dyn std::error::Error + Send + Sync>> {
     if config.websocket_url.is_empty() {
         return Err("WebSocket URL 不能为空".into());
     }

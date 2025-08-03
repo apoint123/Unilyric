@@ -260,10 +260,9 @@ impl UniLyricApp {
 
             // 如果选择的源格式发生变化
             if temp_source_format != self.lyrics.source_format {
-                // 只发送事件，不直接修改状态
-                self.send_action(crate::app_actions::UserAction::Lyrics(
+                self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::SourceFormatChanged(temp_source_format),
-                ));
+                )));
                 _source_format_changed_this_frame = true; // 保留标记用于UI逻辑
             }
 
@@ -289,10 +288,9 @@ impl UniLyricApp {
 
             // 如果选择的目标格式发生变化
             if temp_target_format != self.lyrics.target_format {
-                // 只发送事件，不直接修改状态
-                self.send_action(crate::app_actions::UserAction::Lyrics(
+                self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::TargetFormatChanged(temp_target_format),
-                ));
+                )));
                 _target_format_changed_this_frame = true; // 保留标记用于UI逻辑
             }
 
@@ -603,6 +601,11 @@ impl UniLyricApp {
                 ui.strong("自动歌词搜索设置:");
 
                 ui.checkbox(
+                    &mut self.ui.temp_edit_settings.prioritize_amll_db,
+                    "优先搜索 AMLL TTML 数据库 (推荐)",
+                );
+
+                ui.checkbox(
                     &mut self.ui.temp_edit_settings.enable_t2s_for_auto_search,
                     "将繁体 SMTC 信息转为简体再搜索 (推荐)",
                 );
@@ -670,9 +673,9 @@ impl UniLyricApp {
                         .clicked()
                     {
                         self.send_action(crate::app_actions::UserAction::Settings(
-                            crate::app_actions::SettingsAction::Save(
+                            crate::app_actions::SettingsAction::Save(Box::new(
                                 self.ui.temp_edit_settings.clone(),
-                            ),
+                            )),
                         ));
                     }
                     if bottom_buttons_ui.button("取消").clicked() {
@@ -714,9 +717,9 @@ impl UniLyricApp {
                     // "固定" 复选框，用于标记该元数据是否在加载新文件时保留
                     let mut is_pinned = entry.is_pinned;
                     if row_ui.checkbox(&mut is_pinned, "").changed() {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(
+                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::ToggleMetadataPinned(index),
-                        ));
+                        )));
                     }
                     row_ui
                         .label("固定")
@@ -735,9 +738,9 @@ impl UniLyricApp {
                         )
                         .changed()
                     {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(
+                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::UpdateMetadataKey(index, key),
-                        ));
+                        )));
                     }
 
                     row_ui.add_space(5.0);
@@ -752,16 +755,16 @@ impl UniLyricApp {
                         )
                         .changed()
                     {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(
+                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::UpdateMetadataValue(index, value),
-                        ));
+                        )));
                     }
 
                     // 删除按钮
                     if row_ui.button("🗑").on_hover_text("删除此条元数据").clicked() {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(
+                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::DeleteMetadata(index),
-                        ));
+                        )));
                     }
                 });
                 scroll_ui.separator(); // 每行后的分割线
@@ -769,9 +772,9 @@ impl UniLyricApp {
 
             // "添加新元数据" 按钮
             if scroll_ui.button("添加新元数据").clicked() {
-                local_actions.push(crate::app_actions::UserAction::Lyrics(
+                local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::AddMetadata,
-                ));
+                )));
             }
 
             local_actions
@@ -873,9 +876,9 @@ impl UniLyricApp {
                     )
                     .clicked()
                 {
-                    self.send_action(crate::app_actions::UserAction::Lyrics(
+                    self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                         crate::app_actions::LyricsAction::ClearAllData,
-                    ));
+                    )));
                 }
                 btn_ui.add_space(BUTTON_STRIP_SPACING);
                 if btn_ui
@@ -892,9 +895,9 @@ impl UniLyricApp {
                     if let Ok(mut clipboard) = arboard::Clipboard::new() {
                         if let Ok(text) = clipboard.get_text() {
                             self.lyrics.input_text = text.clone();
-                            self.send_action(crate::app_actions::UserAction::Lyrics(
+                            self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                                 crate::app_actions::LyricsAction::MainInputChanged(text),
-                            ));
+                            )));
                         } else {
                             tracing::error!("无法从剪贴板获取文本");
                         }
@@ -940,11 +943,11 @@ impl UniLyricApp {
             };
 
             if response.changed() && !self.lyrics.conversion_in_progress {
-                self.send_action(crate::app_actions::UserAction::Lyrics(
+                self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::MainInputChanged(
                         self.lyrics.input_text.clone(),
                     ),
-                ));
+                )));
             }
         });
     }
@@ -989,12 +992,12 @@ impl UniLyricApp {
                         .clicked()
                     {
                         // 发送清除翻译LRC的事件
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
+                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::LrcInputChanged(
                                 String::new(),
                                 crate::types::LrcContentType::Translation,
                             ),
-                        ));
+                        )));
                     }
                     right_aligned_buttons_ui.add_space(BUTTON_STRIP_SPACING);
                     if right_aligned_buttons_ui
@@ -1056,12 +1059,12 @@ impl UniLyricApp {
 
         if text_edited_this_frame {
             // 只发送带有新文本内容的事件
-            self.send_action(crate::app_actions::UserAction::Lyrics(
+            self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                 crate::app_actions::LyricsAction::LrcInputChanged(
                     self.lyrics.display_translation_lrc_output.clone(),
                     crate::types::LrcContentType::Translation,
                 ),
-            ));
+            )));
         }
     }
 
@@ -1113,12 +1116,12 @@ impl UniLyricApp {
                         .clicked()
                     {
                         // 发送清除罗马音LRC的事件
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
+                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::LrcInputChanged(
                                 String::new(),
                                 crate::types::LrcContentType::Romanization,
                             ),
-                        ));
+                        )));
                     }
                     right_aligned_buttons_ui.add_space(BUTTON_STRIP_SPACING);
                     if right_aligned_buttons_ui
@@ -1180,12 +1183,12 @@ impl UniLyricApp {
 
         if text_edited_this_frame {
             // 只发送带有新文本内容的事件
-            self.send_action(crate::app_actions::UserAction::Lyrics(
+            self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                 crate::app_actions::LyricsAction::LrcInputChanged(
                     self.lyrics.display_romanization_lrc_output.clone(),
                     crate::types::LrcContentType::Romanization,
                 ),
-            ));
+            )));
         }
     }
 
@@ -1622,7 +1625,9 @@ impl UniLyricApp {
         }
 
         if let Some((_source, result)) = action_load_lyrics {
-            self.send_action(UserAction::Lyrics(LyricsAction::LoadFetchedResult(result)));
+            self.send_action(UserAction::Lyrics(Box::new(
+                LyricsAction::LoadFetchedResult(result),
+            )));
         }
         if let Some(source) = action_refetch {
             crate::app_fetch_core::trigger_manual_refetch_for_source(self, source);
@@ -1655,18 +1660,18 @@ impl UniLyricApp {
                             .desired_width(h_ui.available_width() - 50.0),
                     );
                     if response.lost_focus() && h_ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
+                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::Search,
-                        ));
+                        )));
                     }
 
                     if h_ui
                         .add_enabled(!self.lyrics.search_in_progress, egui::Button::new("搜索"))
                         .clicked()
                     {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(
+                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::Search,
-                        ));
+                        )));
                     }
                 });
 
@@ -1692,7 +1697,12 @@ impl UniLyricApp {
                                 let full_label = format!(
                                     "{} - {} ({})",
                                     result.title,
-                                    result.artists.join("/"),
+                                    result
+                                        .artists
+                                        .iter()
+                                        .map(|a| a.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("/"),
                                     result.provider_name
                                 );
 
@@ -1708,7 +1718,9 @@ impl UniLyricApp {
                                     .clicked()
                                 {
                                     self.send_action(crate::app_actions::UserAction::Lyrics(
-                                        crate::app_actions::LyricsAction::Download(result.clone()),
+                                        Box::new(crate::app_actions::LyricsAction::Download(
+                                            result.clone(),
+                                        )),
                                     ));
                                 }
                             }

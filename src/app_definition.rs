@@ -19,9 +19,10 @@ use tokio::{
     task::JoinHandle,
 };
 
+use crate::amll_connector::types::UiUpdate;
 use crate::types::ProviderState;
 use crate::{
-    amll_connector::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
+    amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
     app::TtmlDbUploadUserAction,
     app_actions::UserAction,
     app_settings::AppSettings,
@@ -177,13 +178,13 @@ pub(super) struct AmllConnectorState {
     pub actor_handle: Option<JoinHandle<()>>,
     pub status: Arc<StdMutex<WebsocketStatus>>,
     pub config: Arc<StdMutex<AMLLConnectorConfig>>,
-    pub update_rx: std::sync::mpsc::Receiver<ConnectorUpdate>,
+    pub update_rx: std::sync::mpsc::Receiver<UiUpdate>,
 }
 
 impl AmllConnectorState {
     fn new(
         command_tx: TokioSender<ConnectorCommand>,
-        update_rx: StdReceiver<ConnectorUpdate>,
+        update_rx: StdReceiver<UiUpdate>,
         actor_handle: tokio::task::JoinHandle<()>,
         config: AMLLConnectorConfig,
     ) -> Self {
@@ -200,6 +201,7 @@ impl AmllConnectorState {
 pub(super) struct AutoFetchState {
     pub(super) result_rx: StdReceiver<AutoFetchResult>,
     pub(super) result_tx: StdSender<AutoFetchResult>,
+
     pub(super) current_ui_populated: bool,
     pub(super) last_source_format: Option<LyricFormat>,
     pub(super) last_source_for_stripping_check: Option<crate::types::AutoSearchSource>,
@@ -286,6 +288,7 @@ pub(super) struct UniLyricApp {
     pub(super) ui_log_receiver: StdReceiver<LogEntry>,
 
     // --- 事件系统 ---
+    pub(super) egui_ctx: egui::Context,
     pub(super) actions_this_frame: Vec<UserAction>,
 
     // --- 标记 ---
@@ -306,7 +309,7 @@ impl UniLyricApp {
 
         let (auto_fetch_tx, auto_fetch_rx) = std_channel::<AutoFetchResult>();
         let (upload_action_tx, upload_action_rx) = std_channel::<TtmlDbUploadUserAction>();
-        let (amll_update_tx, amll_update_rx) = std_channel::<ConnectorUpdate>();
+        let (amll_update_tx, amll_update_rx) = std_channel::<UiUpdate>();
         let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
 
         let lyric_state = LyricState::new(&settings);
@@ -327,7 +330,6 @@ impl UniLyricApp {
                 mc_config.clone(),
                 smtc_controller.command_tx.clone(),
                 smtc_update_rx,
-                egui_ctx.clone(),
             ));
 
         let amll_connector_state = AmllConnectorState::new(
@@ -369,6 +371,7 @@ impl UniLyricApp {
             app_settings: Arc::new(StdMutex::new(settings)),
             tokio_runtime,
             ui_log_receiver,
+            egui_ctx,
             actions_this_frame: Vec::new(),
             shutdown_initiated: false,
         };
@@ -486,29 +489,15 @@ impl UniLyricApp {
         }
     }
 
-    pub(super) fn shutdown_amll_actor(&mut self) {
-        tracing::trace!("[Shutdown] `shutdown_amll_actor` 已被调用。");
-
+    pub(super) fn send_shutdown_signals(&mut self) {
         if let Some(tx) = &self.player.command_tx {
-            tracing::trace!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite 服务...");
-            if tx.try_send(MediaCommand::Shutdown).is_err() {
-                tracing::warn!(
-                    "[Shutdown] 发送 Shutdown 命令到 smtc-suite 失败 (服务可能已关闭)。"
-                );
-            }
+            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite ...");
+            let _ = tx.try_send(MediaCommand::Shutdown);
         }
 
         if let Some(tx) = &self.amll_connector.command_tx {
-            tracing::trace!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
-            if tx.try_send(ConnectorCommand::Shutdown).is_err() {
-                tracing::warn!("[Shutdown] 发送 Shutdown 命令到 actor 失败 (可能已关闭)。");
-            }
+            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
+            let _ = tx.try_send(ConnectorCommand::Shutdown);
         }
-        if let Some(handle) = self.amll_connector.actor_handle.take() {
-            tracing::trace!("[Shutdown] 正在中止 actor 的主任务句柄...");
-            handle.abort();
-        }
-
-        tracing::trace!("[Shutdown] `shutdown_amll_actor` 执行完毕。");
     }
 }

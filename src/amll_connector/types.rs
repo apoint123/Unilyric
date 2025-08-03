@@ -54,6 +54,7 @@ pub enum ConnectorCommand {
     UpdateActorSettings(ActorSettings),
     SendLyric(ParsedSourceData),
     SendClientMessage(ClientMessage),
+    SendCover(Vec<u8>),
     Shutdown,
     DisconnectWebsocket,
 }
@@ -63,4 +64,11 @@ pub enum ConnectorCommand {
 pub enum ConnectorUpdate {
     WebsocketStatusChanged(WebsocketStatus),
     SmtcUpdate(MediaUpdate),
+}
+
+/// 发送给 UI 的更新包
+#[derive(Debug, Clone)]
+pub struct UiUpdate {
+    pub payload: ConnectorUpdate,
+    pub repaint_needed: bool,
 }

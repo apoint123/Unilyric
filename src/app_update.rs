@@ -46,11 +46,10 @@ pub(super) fn process_log_messages(app: &mut UniLyricApp) {
 }
 
 pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
-    while let Ok(update) = app.amll_connector.update_rx.try_recv() {
-        match update {
+    while let Ok(ui_update) = app.amll_connector.update_rx.try_recv() {
+        match ui_update.payload {
             ConnectorUpdate::WebsocketStatusChanged(status) => {
                 tracing::info!("[App Update] 收到 AMLL Connector 状态更新: {:?}", status);
-
                 *app.amll_connector.status.lock().unwrap() = status;
             }
             ConnectorUpdate::SmtcUpdate(media_update) => match media_update {
@@ -124,8 +123,18 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                 MediaUpdate::Error(e) => {
                     tracing::error!("[SMTC Update] smtc-suite 报告了一个错误: {e}");
                 }
-                _ => {}
+                MediaUpdate::TrackChangedForced(_now_playing_info) => {}
+                MediaUpdate::AudioData(_items) => {}
+                MediaUpdate::Diagnostic(_diagnostic_info) => {}
+                MediaUpdate::VolumeChanged {
+                    session_id: _,
+                    volume: _,
+                    is_muted: _,
+                } => {}
             },
+        }
+        if ui_update.repaint_needed {
+            app.egui_ctx.request_repaint();
         }
     }
 }
@@ -133,28 +142,25 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
 pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     match app.fetcher.result_rx.try_recv() {
         Ok(auto_fetch_result) => match auto_fetch_result {
-            AutoFetchResult::Success {
+            AutoFetchResult::LyricsReady {
                 source,
-                full_lyrics_result,
+                lyrics_and_metadata,
+                output_text,
             } => {
-                info!("[AutoFetch] 自动获取成功，来源: {source:?}");
-                // 总是更新结果缓存和状态，无论是自动搜索还是手动重搜
+                info!("[AutoFetch] 歌词已就绪，来源: {:?}，直接更新UI。", source);
+
                 let result_cache_opt = match source {
                     AutoSearchSource::QqMusic => Some(&app.fetcher.last_qq_result),
                     AutoSearchSource::Kugou => Some(&app.fetcher.last_kugou_result),
                     AutoSearchSource::Netease => Some(&app.fetcher.last_netease_result),
                     AutoSearchSource::AmllDb => Some(&app.fetcher.last_amll_db_result),
-                    AutoSearchSource::LocalCache => {
-                        // 本地缓存没有“重载”逻辑，所以我们不需要缓存它
-                        // 直接跳过缓存操作
-                        None
-                    }
+                    AutoSearchSource::LocalCache => None,
                 };
                 if let Some(result_cache) = result_cache_opt {
-                    *result_cache.lock().unwrap() = Some(full_lyrics_result.clone());
+                    *result_cache.lock().unwrap() = Some(lyrics_and_metadata.lyrics.clone());
                 }
 
-                let source_format = full_lyrics_result.parsed.source_format;
+                let source_format = lyrics_and_metadata.lyrics.parsed.source_format;
                 let status_to_update = match source {
                     AutoSearchSource::QqMusic => Some(&app.fetcher.qqmusic_status),
                     AutoSearchSource::Kugou => Some(&app.fetcher.kugou_status),
@@ -167,9 +173,35 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 }
 
                 if !app.fetcher.current_ui_populated {
-                    app.send_action(crate::app_actions::UserAction::Lyrics(
-                        crate::app_actions::LyricsAction::GenerateFromParsed(full_lyrics_result),
-                    ));
+                    app.clear_lyrics_state_for_new_song_internal();
+
+                    app.lyrics.input_text = lyrics_and_metadata.lyrics.raw.content.clone();
+                    app.lyrics.output_text = output_text;
+                    app.lyrics.parsed_lyric_data = Some(lyrics_and_metadata.lyrics.parsed.clone());
+                    app.lyrics.metadata_source_is_download = true;
+                    app.fetcher.last_source_format = Some(source_format);
+                    app.fetcher.current_ui_populated = true;
+
+                    app.sync_ui_from_parsed_data();
+                }
+
+                if app.amll_connector.config.lock().unwrap().enabled {
+                    if let Some(tx) = &app.amll_connector.command_tx {
+                        info!("[AMLL] 自动获取完成，正在发送 TTML 歌词到 Player。");
+                        let data_to_send = lyrics_and_metadata.lyrics.parsed.clone();
+                        if tx
+                            .try_send(crate::amll_connector::ConnectorCommand::SendLyric(
+                                data_to_send,
+                            ))
+                            .is_err()
+                        {
+                            tracing::error!(
+                                "[AMLL] (自动获取完成时) 发送 TTML 歌词失败 (通道已满或关闭)。"
+                            );
+                        }
+                    } else {
+                        tracing::warn!("[AMLL] AMLL Connector 已启用但 command_tx 不可用。");
+                    }
                 }
 
                 let all_search_status_arcs = [
@@ -186,6 +218,76 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                         *guard = AutoSearchStatus::NotFound;
                     }
                 }
+            }
+
+            AutoFetchResult::LyricsSuccess {
+                source,
+                lyrics_and_metadata,
+            } => {
+                let result_cache_opt = match source {
+                    AutoSearchSource::QqMusic => Some(&app.fetcher.last_qq_result),
+                    AutoSearchSource::Kugou => Some(&app.fetcher.last_kugou_result),
+                    AutoSearchSource::Netease => Some(&app.fetcher.last_netease_result),
+                    AutoSearchSource::AmllDb => Some(&app.fetcher.last_amll_db_result),
+                    AutoSearchSource::LocalCache => None,
+                };
+                if let Some(result_cache) = result_cache_opt {
+                    *result_cache.lock().unwrap() = Some(lyrics_and_metadata.lyrics.clone());
+                }
+
+                let source_format = lyrics_and_metadata.lyrics.parsed.source_format;
+                let status_to_update = match source {
+                    AutoSearchSource::QqMusic => Some(&app.fetcher.qqmusic_status),
+                    AutoSearchSource::Kugou => Some(&app.fetcher.kugou_status),
+                    AutoSearchSource::Netease => Some(&app.fetcher.netease_status),
+                    AutoSearchSource::AmllDb => Some(&app.fetcher.amll_db_status),
+                    AutoSearchSource::LocalCache => Some(&app.fetcher.local_cache_status),
+                };
+                if let Some(status_arc) = status_to_update {
+                    *status_arc.lock().unwrap() = AutoSearchStatus::Success(source_format);
+                }
+
+                if !app.fetcher.current_ui_populated {
+                    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
+                        crate::app_actions::LyricsAction::ApplyFetchedLyrics(
+                            lyrics_and_metadata.clone(),
+                        ),
+                    )));
+                }
+
+                let all_search_status_arcs = [
+                    &app.fetcher.local_cache_status,
+                    &app.fetcher.qqmusic_status,
+                    &app.fetcher.kugou_status,
+                    &app.fetcher.netease_status,
+                    &app.fetcher.amll_db_status,
+                ];
+
+                for status_arc in all_search_status_arcs {
+                    let mut guard = status_arc.lock().unwrap();
+                    if matches!(*guard, AutoSearchStatus::Searching) {
+                        *guard = AutoSearchStatus::NotFound;
+                    }
+                }
+            }
+
+            AutoFetchResult::CoverUpdate(final_cover_data) => {
+                app.player.current_now_playing.cover_data = final_cover_data.clone();
+
+                if let Some(cover_bytes) = final_cover_data
+                    && let Some(command_tx) = &app.amll_connector.command_tx
+                {
+                    let send_result = command_tx.try_send(
+                        crate::amll_connector::types::ConnectorCommand::SendCover(cover_bytes),
+                    );
+                    if let Err(e) = send_result {
+                        warn!("[AutoFetch] 发送封面到 WebSocket 失败: {}", e);
+                    } else {
+                        info!("[AutoFetch] 已发送封面到 WebSocket");
+                    }
+                }
+
+                app.egui_ctx.request_repaint();
             }
 
             AutoFetchResult::NotFound => {
@@ -468,14 +570,14 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
                 crate::io::load_file_and_convert(app, path.clone());
             } else if let Some(bytes) = &file.bytes {
                 if let Ok(text_content) = String::from_utf8(bytes.to_vec()) {
-                    app.send_action(crate::app_actions::UserAction::Lyrics(
+                    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                         crate::app_actions::LyricsAction::ClearAllData,
-                    ));
+                    )));
                     app.lyrics.input_text = text_content;
                     app.lyrics.metadata_source_is_download = false;
-                    app.send_action(crate::app_actions::UserAction::Lyrics(
+                    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                         crate::app_actions::LyricsAction::Convert,
-                    ));
+                    )));
                 } else {
                     warn!("[Unilyric] 拖放的字节数据不是有效的UTF-8文本。");
                 }
@@ -511,9 +613,9 @@ pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
         app.lyrics.conversion_result_rx.take();
 
         let converted_result = result.map_err(|e| e.to_string());
-        app.send_action(crate::app_actions::UserAction::Lyrics(
+        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::ConvertCompleted(converted_result),
-        ));
+        )));
     }
 }
 
@@ -525,9 +627,9 @@ pub(super) fn handle_search_results(app: &mut UniLyricApp) {
         app.lyrics.search_result_rx = None;
 
         let converted_result = result.map_err(|e| e.to_string());
-        app.send_action(crate::app_actions::UserAction::Lyrics(
+        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::SearchCompleted(converted_result),
-        ));
+        )));
     }
 }
 
@@ -539,9 +641,9 @@ pub(super) fn handle_download_results(app: &mut UniLyricApp) {
         app.lyrics.download_result_rx = None;
 
         let converted_result = result.map_err(|e| e.to_string());
-        app.send_action(crate::app_actions::UserAction::Lyrics(
+        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::DownloadCompleted(converted_result),
-        ));
+        )));
     }
 }
 

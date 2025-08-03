@@ -54,3 +54,5 @@ smtc-suite = { git = "https://github.com/apoint123/smtc-suite.git" }
 binrw = "0.15.0"
 bytes = "1.10.1"
 fontdb = "0.23.0"
+image = { version = "0.25", features = ["jpeg", "png"] }
+image_hasher = "3.0.0"

@@ -58,9 +58,9 @@ impl eframe::App for UniLyricApp {
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.shutdown_initiated {
             self.shutdown_initiated = true;
-            tracing::trace!("[UniLyricApp 更新循环] 检测到窗口关闭请求。正在启动关闭序列...");
+            tracing::debug!("[Shutdown] 检测到窗口关闭请求，发送关闭信号...");
 
-            self.shutdown_amll_actor();
+            self.send_shutdown_signals();
         }
     }
 }
