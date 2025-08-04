@@ -75,6 +75,13 @@ pub enum ClientMessage {
     OnPaused,
     #[brw(magic(8u16))]
     OnResumed,
+    #[brw(magic(9u16))]
+    OnAudioData {
+        #[bw(try_calc = u32::try_from(data.len()))]
+        size: u32,
+        #[br(count = size)]
+        data: Vec<u8>,
+    },
     #[brw(magic(10u16))]
     SetLyric {
         #[bw(try_calc = u32::try_from(data.len()))]

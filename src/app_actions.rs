@@ -1,4 +1,5 @@
 use crate::app_settings::AppSettings;
+use crate::error::AppResult;
 use crate::types::LrcContentType;
 use lyrics_helper_rs::SearchResult;
 use lyrics_helper_rs::converter::LyricFormat;
@@ -28,12 +29,12 @@ pub enum FileAction {
 #[derive(Debug, Clone)]
 pub enum LyricsAction {
     Convert,
-    ConvertCompleted(Result<lyrics_helper_rs::converter::types::FullConversionResult, String>), // 转换完成
+    ConvertCompleted(AppResult<lyrics_helper_rs::converter::types::FullConversionResult>),
     ConvertChinese(ferrous_opencc::config::BuiltinConfig),
     Search,
-    SearchCompleted(Result<Vec<SearchResult>, String>), // 搜索完成
+    SearchCompleted(AppResult<Vec<SearchResult>>),
     Download(SearchResult),
-    DownloadCompleted(Result<FullLyricsResult, String>), // 下载完成
+    DownloadCompleted(AppResult<FullLyricsResult>),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
     MetadataChanged,                         // 元数据被用户编辑
@@ -59,6 +60,8 @@ pub enum PlayerAction {
     SaveToLocalCache,
     /// 更新封面数据。
     UpdateCover(Option<Vec<u8>>),
+    /// 控制 smtc-suite 的音频捕获功能
+    ToggleAudioCapture(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -80,6 +83,7 @@ pub enum UIAction {
     ShowPanel(PanelType),
     HidePanel(PanelType),
     ClearLogs,
+    StopOtherSearches,
 }
 
 #[derive(Debug, Clone)]

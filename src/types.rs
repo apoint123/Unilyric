@@ -3,6 +3,8 @@ use lyrics_helper_rs::converter::types::{LyricFormat, LyricLine};
 use lyrics_helper_rs::model::track::LyricsAndMetadata;
 use serde::{Deserialize, Serialize};
 
+use crate::error::AppError;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditableMetadataEntry {
     pub key: String,
@@ -45,7 +47,7 @@ pub enum AutoFetchResult {
         lyrics_and_metadata: Box<LyricsAndMetadata>,
     },
     NotFound,
-    FetchError(String),
+    FetchError(AppError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

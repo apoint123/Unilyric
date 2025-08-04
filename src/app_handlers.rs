@@ -9,7 +9,8 @@ use crate::app_actions::{
 use crate::app_definition::UniLyricApp;
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
-use crate::types::{EditableMetadataEntry, LrcContentType, ProviderState};
+use crate::error::{AppError, AppResult};
+use crate::types::{AutoSearchStatus, EditableMetadataEntry, LrcContentType, ProviderState};
 use ferrous_opencc::config::BuiltinConfig;
 use rand::Rng;
 use smtc_suite::{MediaCommand, TextConversionMode};
@@ -20,25 +21,79 @@ use tracing::{debug, error, info};
 pub enum ActionResult {
     Success,
     Warning(String),
-    Error(String),
+    Error(AppError),
 }
 
 impl UniLyricApp {
-    pub fn trigger_convert(&mut self) {
-        info!("[Convert] New conversion handler starting.");
+    fn write_lyrics_file(&self, path: &std::path::Path, content: &str) -> AppResult<()> {
+        std::fs::write(path, content).map_err(AppError::from)
+    }
 
-        if self.lyrics.conversion_in_progress {
-            warn!("[Convert] Conversion already in progress, skipping new request.");
-            return;
+    fn validate_media_info(&self) -> AppResult<()> {
+        if self.player.current_now_playing.title.is_none() {
+            return Err(AppError::Custom("媒体标题为空".to_string()));
         }
 
-        let helper = &self.lyrics_helper_state.helper;
+        Ok(())
+    }
+
+    fn write_cache_index_entry(
+        &mut self,
+        index_path: &std::path::Path,
+        entry: crate::types::LocalLyricCacheEntry,
+    ) -> AppResult<()> {
+        use std::io::Write;
+
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(index_path)
+            .map_err(AppError::from)?;
+
+        let mut writer = std::io::BufWriter::new(file);
+        let json_line = serde_json::to_string(&entry).map_err(AppError::from)?;
+
+        writeln!(writer, "{json_line}").map_err(AppError::from)?;
+
+        self.local_cache.index.lock().unwrap().push(entry);
+
+        Ok(())
+    }
+
+    fn generate_safe_filename(&self, title: &str, artists: &[String]) -> String {
+        let mut filename = format!("{} - {}", artists.join(", "), title);
+        filename = filename
+            .chars()
+            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == ',' || *c == '-')
+            .collect();
+        format!(
+            "{}_{}.ttml",
+            filename,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        )
+    }
+
+    pub fn trigger_convert(&mut self) {
+        self.dispatch_conversion_task(Default::default());
+    }
+
+    fn dispatch_conversion_task(
+        &mut self,
+        options: lyrics_helper_rs::converter::types::ConversionOptions,
+    ) {
+        if self.lyrics.conversion_in_progress {
+            warn!("[Convert] 转换已在进行中，跳过新的请求。");
+            return;
+        }
+        info!("[Convert] 派发新的转换任务，选项: {:?}", options);
 
         let (tx, rx) = std::sync::mpsc::channel();
         self.lyrics.conversion_result_rx = Some(rx);
         self.lyrics.conversion_in_progress = true;
-
-        let helper = helper.clone();
+        let helper = self.lyrics_helper_state.helper.clone();
 
         // 1. 准备主歌词文件
         let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
@@ -49,93 +104,71 @@ impl UniLyricApp {
         );
 
         // 2. 准备翻译文件列表
-        let mut translations = vec![];
-        if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
-            translations.push(lyrics_helper_rs::converter::types::InputFile::new(
+        let translations = if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
+            vec![lyrics_helper_rs::converter::types::InputFile::new(
                 self.lyrics.display_translation_lrc_output.clone(),
                 lyrics_helper_rs::converter::types::LyricFormat::Lrc,
                 Some("zh-Hans".to_string()),
                 None,
-            ));
-        }
+            )]
+        } else {
+            vec![]
+        };
 
         // 3. 准备罗马音文件列表
-        let mut romanizations = vec![];
-        if !self
+        let romanizations = if !self
             .lyrics
             .display_romanization_lrc_output
             .trim()
             .is_empty()
         {
-            romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
+            vec![lyrics_helper_rs::converter::types::InputFile::new(
                 self.lyrics.display_romanization_lrc_output.clone(),
                 lyrics_helper_rs::converter::types::LyricFormat::Lrc,
                 Some("ja-Latn".to_string()),
                 None,
-            ));
-        }
+            )]
+        } else {
+            vec![]
+        };
 
         // 4. 准备用户手动输入的元数据
-        let mut metadata_overrides = std::collections::HashMap::new();
-
-        info!(
-            "[Convert] 元数据状态检查: metadata_is_user_edited={}, editable_metadata.len()={}",
-            self.lyrics.metadata_is_user_edited,
-            self.lyrics.editable_metadata.len()
-        );
-
-        // 只有在用户明确编辑了元数据的情况下，才使用覆盖
-        if self.lyrics.metadata_is_user_edited {
+        let metadata_overrides = if self.lyrics.metadata_is_user_edited {
+            let mut overrides = std::collections::HashMap::new();
             for entry in &self.lyrics.editable_metadata {
-                info!(
-                    "[Convert] 检查元数据条目: key='{}', value='{}', is_from_file={}, is_pinned={}",
-                    entry.key, entry.value, entry.is_from_file, entry.is_pinned
-                );
-
                 if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                    // 将UI中的单个字符串值按分号分割回Vec<String>
                     let values = entry
                         .value
                         .split(';')
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .collect::<Vec<String>>();
-
                     if !values.is_empty() {
-                        info!(
-                            "[Convert] 添加元数据覆盖: key='{}', values={:?}",
-                            entry.key, values
-                        );
-                        metadata_overrides.insert(entry.key.clone(), values);
+                        overrides.insert(entry.key.clone(), values);
                     }
                 }
             }
-        }
-
-        info!("[Convert] 最终元数据覆盖: {metadata_overrides:?}");
+            if overrides.is_empty() {
+                None
+            } else {
+                Some(overrides)
+            }
+        } else {
+            None
+        };
 
         let input = lyrics_helper_rs::converter::types::ConversionInput {
             main_lyric,
             translations,
             romanizations,
             target_format: self.lyrics.target_format,
-            user_metadata_overrides: if metadata_overrides.is_empty() {
-                None
-            } else {
-                Some(metadata_overrides)
-            },
+            user_metadata_overrides: metadata_overrides,
         };
 
-        let options = lyrics_helper_rs::converter::types::ConversionOptions::default();
-
         self.tokio_runtime.spawn(async move {
-            let helper_clone = Arc::clone(&helper);
-
-            let result = helper_clone.lock().await.convert_lyrics(input, &options);
+            let result = helper.lock().await.convert_lyrics(input, &options);
             if tx.send(result).is_err() {
-                warn!(
-                    "[Convert Task] Failed to send conversion result. Receiver probably dropped."
-                );
+                warn!("[Convert Task] 发送转换结果失败，接收端可能已关闭。");
             }
         });
     }
@@ -159,7 +192,7 @@ impl UniLyricApp {
             match result {
                 ActionResult::Error(msg) => {
                     self.ui.toasts.add(egui_toast::Toast {
-                        text: msg.into(),
+                        text: msg.to_string().into(),
                         kind: egui_toast::ToastKind::Error,
                         options: egui_toast::ToastOptions::default().duration_in_seconds(5.0),
                         style: Default::default(),
@@ -259,94 +292,18 @@ impl UniLyricApp {
                     Err(e) => {
                         error!("[Convert Result] 转换任务返回了一个错误: {e}");
                         self.lyrics.output_text.clear();
-                        ActionResult::Error(format!("转换失败: {e}"))
+                        ActionResult::Error(AppError::Custom("转换失败: {e}".to_string()))
                     }
                 }
             }
             LyricsAction::ConvertChinese(variant) => {
-                info!("[Convert] Starting Chinese conversion with variant: {variant:?}");
+                info!("[Convert] 请求简繁转换，变体: {variant:?}");
 
-                if self.lyrics.conversion_in_progress {
-                    warn!("[Convert] Conversion already in progress, skipping new request.");
-                    return ActionResult::Warning("转换正在进行中".to_string());
-                }
-
-                // 确保有内容可以转换
                 if self.lyrics.input_text.trim().is_empty()
                     && self.lyrics.parsed_lyric_data.is_none()
                 {
-                    warn!("[Convert] No lyrics content to perform Chinese conversion on.");
                     return ActionResult::Warning("没有歌词内容可以转换".to_string());
                 }
-
-                let helper = &self.lyrics_helper_state.helper;
-
-                let (tx, rx) = std::sync::mpsc::channel();
-                self.lyrics.conversion_result_rx = Some(rx);
-                self.lyrics.conversion_in_progress = true;
-
-                let helper = helper.clone();
-
-                // 准备输入数据（与普通转换相同）
-                let main_lyric = lyrics_helper_rs::converter::types::InputFile::new(
-                    self.lyrics.input_text.clone(),
-                    self.lyrics.source_format,
-                    None,
-                    None,
-                );
-                let mut translations = vec![];
-                if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
-                    translations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                        self.lyrics.display_translation_lrc_output.clone(),
-                        lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                        Some("zh-Hans".to_string()),
-                        None,
-                    ));
-                }
-                let mut romanizations = vec![];
-                if !self
-                    .lyrics
-                    .display_romanization_lrc_output
-                    .trim()
-                    .is_empty()
-                {
-                    romanizations.push(lyrics_helper_rs::converter::types::InputFile::new(
-                        self.lyrics.display_romanization_lrc_output.clone(),
-                        lyrics_helper_rs::converter::types::LyricFormat::Lrc,
-                        Some("ja-Latn".to_string()),
-                        None,
-                    ));
-                }
-                let mut metadata_overrides = std::collections::HashMap::new();
-
-                // 只有在用户明确编辑了元数据的情况下，才使用覆盖
-                if self.lyrics.metadata_is_user_edited {
-                    for entry in &self.lyrics.editable_metadata {
-                        if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                            let values = entry
-                                .value
-                                .split(';')
-                                .map(|s| s.trim().to_string())
-                                .filter(|s| !s.is_empty())
-                                .collect::<Vec<String>>();
-
-                            if !values.is_empty() {
-                                metadata_overrides.insert(entry.key.clone(), values);
-                            }
-                        }
-                    }
-                }
-                let input = lyrics_helper_rs::converter::types::ConversionInput {
-                    main_lyric,
-                    translations,
-                    romanizations,
-                    target_format: self.lyrics.target_format,
-                    user_metadata_overrides: if metadata_overrides.is_empty() {
-                        None
-                    } else {
-                        Some(metadata_overrides)
-                    },
-                };
 
                 let options = lyrics_helper_rs::converter::types::ConversionOptions {
                     chinese_conversion:
@@ -358,16 +315,7 @@ impl UniLyricApp {
                         },
                     ..Default::default()
                 };
-
-                self.tokio_runtime.spawn(async move {
-                    let helper_clone = Arc::clone(&helper);
-
-                        let result = helper_clone.lock().await.convert_lyrics(input, &options);
-                        if tx.send(result).is_err() {
-                            warn!("[Convert Task] Failed to send conversion result. Receiver probably dropped.");
-                        }
-                    });
-
+                self.dispatch_conversion_task(options);
                 ActionResult::Success
             }
             LyricsAction::SourceFormatChanged(format) => {
@@ -425,7 +373,9 @@ impl UniLyricApp {
                         return ActionResult::Warning("功能正在加载，请稍候...".to_string());
                     }
                     _ => {
-                        return ActionResult::Error("在线搜索功能不可用或加载失败。".to_string());
+                        return ActionResult::Error(AppError::Custom(
+                            "在线搜索功能不可用或加载失败。".to_string(),
+                        ));
                     }
                 }
 
@@ -449,12 +399,10 @@ impl UniLyricApp {
 
                     let helper_clone = Arc::clone(&helper);
 
-                    // 调用核心库的 search_track 函数
-                    let result = helper_clone
-                        .lock()
-                        .await
-                        .search_track(&track_to_search)
-                        .await;
+                    let result = {
+                        let helper_guard = helper_clone.lock().await;
+                        helper_guard.search_track(track_to_search).await
+                    };
                     if tx.send(result).is_err() {
                         warn!("[Search Task] 发送搜索结果失败，UI可能已关闭。");
                     }
@@ -471,7 +419,7 @@ impl UniLyricApp {
                     }
                     Err(e) => {
                         error!("[Search] 搜索任务失败: {e}");
-                        ActionResult::Error(format!("搜索失败: {e}"))
+                        ActionResult::Error(AppError::Custom(format!("搜索失败: {e}")))
                     }
                 }
             }
@@ -486,7 +434,9 @@ impl UniLyricApp {
                         return ActionResult::Warning("正在加载，请稍候...".to_string());
                     }
                     _ => {
-                        return ActionResult::Error("下载功能不可用或加载失败。".to_string());
+                        return ActionResult::Error(AppError::Custom(
+                            "下载功能不可用或加载失败。".to_string(),
+                        ));
                     }
                 }
 
@@ -502,12 +452,19 @@ impl UniLyricApp {
 
                 self.tokio_runtime.spawn(async move {
                     let helper_clone = Arc::clone(&helper);
-                    // 调用核心库的 get_full_lyrics 函数
-                    let result = helper_clone
-                        .lock()
-                        .await
-                        .get_full_lyrics(&provider_name, &provider_id)
-                        .await;
+
+                    let result = {
+                        let future_result = {
+                            let helper_guard = helper_clone.lock().await;
+                            helper_guard.get_full_lyrics(&provider_name, &provider_id)
+                        };
+
+                        match future_result {
+                            Ok(future) => future.await,
+                            Err(e) => Err(e),
+                        }
+                    };
+
                     if tx.send(result).is_err() {
                         warn!("[Download Task] 发送下载结果失败，UI可能已关闭。");
                     }
@@ -541,7 +498,7 @@ impl UniLyricApp {
                     }
                     Err(e) => {
                         error!("[Download] 下载任务失败: {e}");
-                        ActionResult::Error(format!("下载失败: {e}"))
+                        ActionResult::Error(AppError::Custom(format!("下载失败: {e}")))
                     }
                 }
             }
@@ -576,7 +533,7 @@ impl UniLyricApp {
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
-                    ActionResult::Error("无效的元数据索引".to_string())
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
             LyricsAction::UpdateMetadataKey(index, new_key) => {
@@ -587,7 +544,7 @@ impl UniLyricApp {
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
-                    ActionResult::Error("无效的元数据索引".to_string())
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
             LyricsAction::UpdateMetadataValue(index, new_value) => {
@@ -598,7 +555,7 @@ impl UniLyricApp {
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
-                    ActionResult::Error("无效的元数据索引".to_string())
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
             LyricsAction::ToggleMetadataPinned(index) => {
@@ -608,7 +565,7 @@ impl UniLyricApp {
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
-                    ActionResult::Error("无效的元数据索引".to_string())
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
             LyricsAction::LoadFetchedResult(result) => {
@@ -819,6 +776,10 @@ impl UniLyricApp {
                 self.ui.log_display_buffer.clear();
                 ActionResult::Success
             }
+            UIAction::StopOtherSearches => {
+                self.set_searching_providers_to_not_found();
+                ActionResult::Success
+            }
         }
     }
 
@@ -854,7 +815,10 @@ impl UniLyricApp {
                 command_tx.try_send(MediaCommand::SelectSession(session_id))
             }
             PlayerAction::SaveToLocalCache => {
-                return self.save_lyrics_to_local_cache();
+                return match self.save_lyrics_to_local_cache() {
+                    Ok(()) => ActionResult::Success,
+                    Err(e) => ActionResult::Error(e),
+                };
             }
             PlayerAction::UpdateCover(cover_data) => {
                 self.player.current_now_playing.cover_data = cover_data.clone();
@@ -873,35 +837,42 @@ impl UniLyricApp {
                 self.egui_ctx.request_repaint();
                 return ActionResult::Success;
             }
+            PlayerAction::ToggleAudioCapture(enable) => {
+                let smtc_command = if enable {
+                    MediaCommand::StartAudioCapture
+                } else {
+                    MediaCommand::StopAudioCapture
+                };
+                tracing::info!("[PlayerAction] 发送音频捕获命令: {:?}", smtc_command);
+                command_tx.try_send(smtc_command)
+            }
         };
 
         if let Err(e) = send_result {
             error!("[PlayerAction] 发送命令到 smtc-suite 失败: {}", e);
-            return ActionResult::Error("向媒体服务发送命令失败".to_string());
+            return ActionResult::Error(AppError::Custom("发送命令失败".to_string()));
         }
 
         ActionResult::Success
     }
 
-    fn save_lyrics_to_local_cache(&mut self) -> ActionResult {
-        let (media_info, cache_dir, index_path) = match (
-            self.player.current_now_playing.clone(),
-            self.local_cache.dir_path.as_ref(),
-            self.local_cache.index_path.as_ref(),
-        ) {
-            // 确保标题存在
-            (info, Some(dir), Some(path)) if info.title.is_some() => (info, dir, path),
-            _ => {
-                tracing::warn!("[LocalCache] 缺少SMTC信息或缓存路径，无法保存。");
-                self.ui.toasts.add(egui_toast::Toast {
-                    text: "缺少SMTC信息，无法保存到缓存".into(),
-                    kind: egui_toast::ToastKind::Warning,
-                    options: egui_toast::ToastOptions::default().duration_in_seconds(3.0),
-                    style: Default::default(),
-                });
-                return ActionResult::Warning("缺少SMTC信息或缓存路径".to_string());
-            }
-        };
+    fn save_lyrics_to_local_cache(&mut self) -> AppResult<()> {
+        self.validate_media_info()?;
+
+        let cache_dir = self
+            .local_cache
+            .dir_path
+            .as_ref()
+            .ok_or_else(|| AppError::Custom("缺少缓存目录路径".to_string()))?
+            .clone();
+        let index_path = self
+            .local_cache
+            .index_path
+            .as_ref()
+            .ok_or_else(|| AppError::Custom("缺少缓存索引路径".to_string()))?
+            .clone();
+
+        let media_info = self.player.current_now_playing.clone();
 
         let title = media_info.title.as_deref().unwrap_or("unknown_title");
         let artists: Vec<String> = media_info
@@ -913,26 +884,15 @@ impl UniLyricApp {
             })
             .unwrap_or_default();
 
-        let mut filename = format!("{} - {}", artists.join(", "), title);
-        filename = filename
-            .chars()
-            .filter(|c| c.is_alphanumeric() || *c == ' ' || *c == ',' || *c == '-')
-            .collect();
-        let final_filename = format!(
-            "{}_{}.ttml",
-            filename,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
+        let final_filename = self.generate_safe_filename(title, &artists);
 
         let file_path = cache_dir.join(&final_filename);
 
-        if let Err(e) = std::fs::write(&file_path, &self.lyrics.output_text) {
-            tracing::error!("[LocalCache] 写入歌词文件 {file_path:?} 失败: {e}");
-            return ActionResult::Error(format!("写入歌词文件失败: {e}"));
-        }
+        self.write_lyrics_file(&file_path, &self.lyrics.output_text)
+            .map_err(|e| {
+                tracing::error!("[LocalCache] 写入歌词文件 {file_path:?} 失败: {e}");
+                AppError::Custom(format!("写入歌词文件失败: {e}"))
+            })?;
 
         let entry = crate::types::LocalLyricCacheEntry {
             smtc_title: title.to_string(),
@@ -941,56 +901,46 @@ impl UniLyricApp {
             original_source_format: self.fetcher.last_source_format.map(|f| f.to_string()),
         };
 
-        match std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(index_path)
-        {
-            Ok(file) => {
-                use std::io::Write;
-                let mut writer = std::io::BufWriter::new(file);
-                if let Ok(json_line) = serde_json::to_string(&entry) {
-                    if writeln!(writer, "{json_line}").is_ok() {
-                        self.local_cache.index.lock().unwrap().push(entry);
-                        tracing::info!("[LocalCache] 成功保存歌词到本地缓存: {file_path:?}");
-                        self.ui.toasts.add(egui_toast::Toast {
-                            text: "已保存到本地缓存".into(),
-                            kind: egui_toast::ToastKind::Success,
-                            options: egui_toast::ToastOptions::default().duration_in_seconds(2.0),
-                            style: Default::default(),
-                        });
-                        ActionResult::Success
-                    } else {
-                        ActionResult::Error("写入缓存索引失败".to_string())
-                    }
-                } else {
-                    ActionResult::Error("序列化缓存条目失败".to_string())
-                }
-            }
-            Err(e) => {
-                tracing::error!("[LocalCache] 打开或写入索引文件 {index_path:?} 失败: {e}");
-                ActionResult::Error(format!("打开或写入索引文件失败: {e}"))
-            }
-        }
+        self.write_cache_index_entry(&index_path, entry)?;
+
+        tracing::info!("[LocalCache] 成功保存歌词到本地缓存: {file_path:?}");
+        self.ui.toasts.add(egui_toast::Toast {
+            text: "已保存到本地缓存".into(),
+            kind: egui_toast::ToastKind::Success,
+            options: egui_toast::ToastOptions::default().duration_in_seconds(2.0),
+            style: Default::default(),
+        });
+
+        Ok(())
     }
 
     fn handle_settings_action(&mut self, action: SettingsAction) -> ActionResult {
         match action {
             SettingsAction::Save(settings) => match settings.save() {
                 Ok(_) => {
-                    let new_settings_clone = settings.clone();
-                    let mut app_settings_guard = self.app_settings.lock().unwrap();
-                    *app_settings_guard = *new_settings_clone;
-                    self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
+                    let old_audio_capture_setting =
+                        self.app_settings.lock().unwrap().send_audio_data_to_player;
+
+                    {
+                        let mut app_settings_guard = self.app_settings.lock().unwrap();
+                        *app_settings_guard = *settings.clone();
+                        self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
+                    }
+
+                    if settings.send_audio_data_to_player != old_audio_capture_setting {
+                        self.send_action(UserAction::Player(PlayerAction::ToggleAudioCapture(
+                            settings.send_audio_data_to_player,
+                        )));
+                    }
 
                     let new_mc_config_from_settings = AMLLConnectorConfig {
-                        enabled: app_settings_guard.amll_connector_enabled,
-                        websocket_url: app_settings_guard.amll_connector_websocket_url.clone(),
+                        enabled: settings.amll_connector_enabled,
+                        websocket_url: settings.amll_connector_websocket_url.clone(),
                     };
 
                     let new_actor_settings = ActorSettings {};
 
-                    let conversion_mode = if app_settings_guard.enable_t2s_for_auto_search {
+                    let conversion_mode = if settings.enable_t2s_for_auto_search {
                         TextConversionMode::TraditionalToSimplified
                     } else {
                         TextConversionMode::Off
@@ -1022,20 +972,10 @@ impl UniLyricApp {
                         }
                     }
 
-                    drop(app_settings_guard);
-
-                    let mut current_mc_config_guard = self.amll_connector.config.lock().unwrap();
-                    let old_mc_config = current_mc_config_guard.clone();
-                    *current_mc_config_guard = new_mc_config_from_settings.clone();
-                    drop(current_mc_config_guard);
-
-                    info!(
-                        "[Settings] 设置已保存。新 AMLL Connector配置: {new_mc_config_from_settings:?}"
-                    );
-
+                    let old_mc_config = self.amll_connector.config.lock().unwrap().clone();
                     if new_mc_config_from_settings.enabled
-                        && let Some(tx) = &self.amll_connector.command_tx
                         && old_mc_config != new_mc_config_from_settings
+                        && let Some(tx) = &self.amll_connector.command_tx
                     {
                         debug!("[Settings] 发送 UpdateConfig 命令给AMLL Connector worker。");
                         if tx
@@ -1050,13 +990,15 @@ impl UniLyricApp {
                         }
                     }
 
+                    *self.amll_connector.config.lock().unwrap() = new_mc_config_from_settings;
+
                     self.ui.show_settings_window = false;
                     ActionResult::Success
                 }
                 Err(e) => {
                     error!("[Settings] 保存应用设置失败: {e}");
                     self.ui.show_settings_window = false;
-                    ActionResult::Error(format!("保存设置失败: {e}"))
+                    ActionResult::Error(AppError::Custom(format!("保存设置失败: {e}")))
                 }
             },
             SettingsAction::Cancel => {
@@ -1149,5 +1091,22 @@ impl UniLyricApp {
                 warn!("[LyricsHelper Task] 发送提供商加载结果失败，UI可能已关闭。");
             }
         });
+    }
+
+    pub(super) fn set_searching_providers_to_not_found(&mut self) {
+        let all_search_status_arcs = [
+            &self.fetcher.local_cache_status,
+            &self.fetcher.qqmusic_status,
+            &self.fetcher.kugou_status,
+            &self.fetcher.netease_status,
+            &self.fetcher.amll_db_status,
+        ];
+
+        for status_arc in all_search_status_arcs {
+            let mut guard = status_arc.lock().unwrap();
+            if matches!(*guard, AutoSearchStatus::Searching) {
+                *guard = AutoSearchStatus::NotFound;
+            }
+        }
     }
 }

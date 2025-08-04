@@ -35,6 +35,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "tracing",
  "tracing-appender",
  "tracing-log",
@@ -2993,7 +2994,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "lyrics_helper_rs"
 version = "0.1.1"
-source = "git+https://github.com/apoint123/lyrics_helper_rs.git#f69b4ec945198944bdd92d389607b34d7fcf6b78"
+source = "git+https://github.com/apoint123/lyrics_helper_rs.git#b0f25b70e15a95dd0da32560bb031ef482b6e1b5"
 dependencies = [
  "aes",
  "anyhow",

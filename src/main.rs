@@ -9,6 +9,7 @@ mod app_handlers;
 mod app_settings;
 mod app_ui;
 mod app_update;
+mod error;
 mod io;
 mod types;
 mod utils;

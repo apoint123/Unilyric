@@ -195,170 +195,36 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             duration: smtc_duration,
         };
 
-        if app_settings.prioritize_amll_db {
-            info!("[AutoFetch] 搜索 AMLL TTML 数据库...");
-            let amll_mode = SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
-
-            let db_search_result = {
-                helper
-                    .lock()
-                    .await
-                    .search_lyrics(&track_to_search, amll_mode)
-                    .await
-            };
-
-            if let Ok(Some(lyrics_and_metadata)) = db_search_result {
-                let output_text_result = {
-                    let helper_guard = helper.lock().await;
-                    helper_guard
-                        .generate_lyrics_from_parsed(
-                            lyrics_and_metadata.lyrics.parsed.clone(),
-                            target_format,
-                            Default::default(),
-                            None,
-                        )
-                        .await
-                };
-
-                let output_text = match output_text_result {
-                    Ok(res) => res.output_lyrics,
-                    Err(e) => {
-                        error!("[AutoFetch] AMLL DB 歌词转换失败: {}", e);
-                        String::new()
-                    }
-                };
-
-                let lyrics_result = AutoFetchResult::LyricsReady {
-                    source: AutoSearchSource::AmllDb,
-                    lyrics_and_metadata: Box::new(lyrics_and_metadata.clone()),
-                    output_text,
-                };
-
-                if result_tx.send(lyrics_result).is_err() {
-                    error!("[AutoFetch Task] 发送 AMLL DB 的 LyricsReady 结果到主线程失败。");
-                    return;
-                }
-
-                let cover_search_mode = {
-                    let mut providers_for_cover = lyrics_helper_rs::ProviderName::all();
-                    providers_for_cover
-                        .retain(|p| !matches!(p, lyrics_helper_rs::ProviderName::AmllTtmlDatabase));
-
-                    if app_settings.use_provider_subset {
-                        let user_subset: Vec<_> = app_settings
-                            .auto_search_provider_subset
-                            .iter()
-                            .filter_map(|s| s.parse().ok())
-                            .collect();
-                        let final_subset = providers_for_cover
-                            .into_iter()
-                            .filter(|p| user_subset.contains(p))
-                            .collect();
-                        SearchMode::Subset(final_subset)
-                    } else {
-                        SearchMode::Subset(providers_for_cover)
-                    }
-                };
-
-                let final_cover_data = {
-                    let helper_guard = helper.lock().await;
-                    let cover_search_result = helper_guard
-                        .search_lyrics_comprehensive(&track_to_search, cover_search_mode)
-                        .await
-                        .map(|opt| {
-                            opt.map(|result| result.all_search_candidates)
-                                .unwrap_or_default()
-                        });
-
-                    match cover_search_result {
-                        Ok(candidates) if !candidates.is_empty() => {
-                            let provider_cover = helper_guard.get_best_cover(&candidates).await;
-                            match (provider_cover, smtc_cover_data.clone()) {
-                                (Some(provider_bytes), Some(smtc_bytes)) => {
-                                    if are_images_similar(&provider_bytes, &smtc_bytes) {
-                                        info!("AMLL DB: 封面验证成功，使用提供商的高清封面。");
-                                        Some(provider_bytes)
-                                    } else {
-                                        warn!(
-                                            "AMLL DB: 封面验证失败（不匹配），回退使用SMTC缩略图。"
-                                        );
-                                        Some(smtc_bytes)
-                                    }
-                                }
-                                (Some(provider_bytes), None) => {
-                                    info!("AMLL DB: SMTC未提供封面数据，使用提供商封面。");
-                                    Some(provider_bytes)
-                                }
-                                (None, Some(smtc_bytes)) => {
-                                    info!("AMLL DB: 获取提供商封面失败，使用SMTC缩略图。");
-                                    Some(smtc_bytes)
-                                }
-                                (None, None) => {
-                                    info!("AMLL DB: 无可用封面数据。");
-                                    None
-                                }
-                            }
-                        }
-                        Ok(_) => {
-                            info!("[AutoFetch] 其他源也未找到封面候选项，仅使用 SMTC 封面。");
-                            smtc_cover_data.clone()
-                        }
-                        Err(e) => {
-                            error!("[AutoFetch] 搜索其他源封面时出错: {}", e);
-                            smtc_cover_data.clone()
-                        }
-                    }
-                };
-
-                let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
-
-                if result_tx.send(cover_result).is_err() {
-                    error!("[AutoFetch Task] 发送 AMLL DB 封面更新结果到主线程失败。");
-                }
-
-                return;
-            }
-        }
-
         let search_mode = {
-            let mut providers_to_search_next = lyrics_helper_rs::ProviderName::all();
-            if app_settings.prioritize_amll_db {
-                providers_to_search_next
-                    .retain(|p| !matches!(p, lyrics_helper_rs::ProviderName::AmllTtmlDatabase));
-            }
-
+            let mut providers = lyrics_helper_rs::ProviderName::all();
             if app_settings.use_provider_subset {
                 let user_subset: Vec<_> = app_settings
                     .auto_search_provider_subset
                     .iter()
                     .filter_map(|s| s.parse().ok())
                     .collect();
-                let final_subset = providers_to_search_next
-                    .into_iter()
-                    .filter(|p| user_subset.contains(p))
-                    .collect();
-                SearchMode::Subset(final_subset)
-            } else if app_settings.always_search_all_sources {
-                SearchMode::Subset(providers_to_search_next)
-            } else {
-                SearchMode::Ordered
+                providers.retain(|p| user_subset.contains(p));
             }
+            SearchMode::Subset(providers)
         };
 
         debug!(
-            "开始常规搜索: title='{}', artists='{:?}', mode='{:?}'",
+            "开始搜索: title='{}', artists='{:?}', mode='{:?}'",
             smtc_title, smtc_artists, search_mode
         );
 
-        let regular_search_result = {
-            helper
-                .lock()
-                .await
-                .search_lyrics_comprehensive(&track_to_search, search_mode)
-                .await
+        let search_result = {
+            let search_future_result = {
+                let helper_guard = helper.lock().await;
+                helper_guard.search_lyrics_comprehensive(track_to_search, search_mode)
+            };
+            match search_future_result {
+                Ok(future) => future.await,
+                Err(e) => Err(e),
+            }
         };
 
-        match regular_search_result {
+        match search_result {
             Ok(Some(comprehensive_result)) => {
                 let source: AutoSearchSource = comprehensive_result
                     .primary_lyric_result
@@ -366,7 +232,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     .provider_name
                     .clone()
                     .into();
-                info!("常规搜索成功，来源: {:?}。正在进行前置转换...", source);
+                info!("搜索成功，来源: {:?}。正在进行前置转换...", source);
 
                 let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
 
@@ -385,7 +251,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 let output_text = match output_text_result {
                     Ok(res) => res.output_lyrics,
                     Err(e) => {
-                        error!("[AutoFetch] 常规搜索结果前置转换失败: {}", e);
+                        error!("[AutoFetch] 搜索结果前置转换失败: {}", e);
                         String::new()
                     }
                 };
@@ -401,35 +267,13 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     return;
                 }
 
-                let provider_cover = {
-                    let helper_guard = helper.lock().await;
-                    helper_guard
-                        .get_best_cover(&comprehensive_result.all_search_candidates)
-                        .await
-                };
-
-                let final_cover_data = match (provider_cover, smtc_cover_data) {
-                    (Some(provider_bytes), Some(smtc_bytes)) => {
-                        if are_images_similar(&provider_bytes, &smtc_bytes) {
-                            Some(provider_bytes)
-                        } else {
-                            warn!("封面验证失败（不匹配），回退使用SMTC缩略图。");
-                            Some(smtc_bytes)
-                        }
-                    }
-                    (Some(provider_bytes), None) => {
-                        info!("SMTC未提供封面数据，使用提供商封面。");
-                        Some(provider_bytes)
-                    }
-                    (None, Some(smtc_bytes)) => {
-                        info!("获取提供商封面失败，使用SMTC缩略图。");
-                        Some(smtc_bytes)
-                    }
-                    (None, None) => {
-                        info!("无可用封面数据。");
-                        None
-                    }
-                };
+                let final_cover_data = fetch_and_validate_cover(
+                    helper.clone(),
+                    &comprehensive_result.all_search_candidates,
+                    smtc_cover_data,
+                    "搜索",
+                )
+                .await;
 
                 let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
 
@@ -446,7 +290,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             Err(e) => {
                 error!("搜索歌词时发生错误: {}", e);
                 if result_tx
-                    .send(AutoFetchResult::FetchError(e.to_string()))
+                    .send(AutoFetchResult::FetchError(e.into()))
                     .is_err()
                 {
                     error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
@@ -522,13 +366,19 @@ pub(super) fn trigger_manual_refetch_for_source(
 
         let search_mode = SearchMode::Specific(provider_enum);
 
-        let comprehensive_search_result = helper
-            .lock()
-            .await
-            .search_lyrics_comprehensive(&track_to_search, search_mode)
-            .await;
+        let search_result = {
+            let search_future_result = {
+                let helper_guard = helper.lock().await;
+                helper_guard.search_lyrics_comprehensive(track_to_search, search_mode)
+            };
 
-        match comprehensive_search_result {
+            match search_future_result {
+                Ok(future) => future.await,
+                Err(e) => Err(e),
+            }
+        };
+
+        match search_result {
             Ok(Some(comprehensive_result)) => {
                 info!(
                     "[ManualRefetch] 在 {:?} 中成功找到歌词，正在进行转换...",
@@ -568,36 +418,13 @@ pub(super) fn trigger_manual_refetch_for_source(
                     return;
                 }
 
-                let provider_cover = {
-                    let helper_guard = helper.lock().await;
-                    helper_guard
-                        .get_best_cover(&comprehensive_result.all_search_candidates)
-                        .await
-                };
-
-                let final_cover_data = match (provider_cover, smtc_cover_data) {
-                    (Some(provider_bytes), Some(smtc_bytes)) => {
-                        if are_images_similar(&provider_bytes, &smtc_bytes) {
-                            info!("手动重搜: 封面验证成功，使用提供商的高清封面。");
-                            Some(provider_bytes)
-                        } else {
-                            warn!("手动重搜: 封面验证失败（不匹配），回退使用SMTC缩略图。");
-                            Some(smtc_bytes)
-                        }
-                    }
-                    (Some(provider_bytes), None) => {
-                        info!("手动重搜: SMTC未提供封面数据，使用提供商封面。");
-                        Some(provider_bytes)
-                    }
-                    (None, Some(smtc_bytes)) => {
-                        info!("手动重搜: 获取提供商封面失败，使用SMTC缩略图。");
-                        Some(smtc_bytes)
-                    }
-                    (None, None) => {
-                        info!("手动重搜: 无可用封面数据。");
-                        None
-                    }
-                };
+                let final_cover_data = fetch_and_validate_cover(
+                    helper.clone(),
+                    &comprehensive_result.all_search_candidates,
+                    smtc_cover_data,
+                    "手动重搜",
+                )
+                .await;
 
                 let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
 
@@ -649,6 +476,46 @@ fn are_images_similar(image_data1: &[u8], image_data2: &[u8]) -> bool {
         Err(e) => {
             warn!("图片相似度对比失败: {}，使用 SMTC 封面", e);
             false
+        }
+    }
+}
+
+/// 从搜索候选中获取最佳封面，并与SMTC封面进行验证和比较。
+async fn fetch_and_validate_cover(
+    helper: std::sync::Arc<tokio::sync::Mutex<lyrics_helper_rs::LyricsHelper>>,
+    candidates: &[lyrics_helper_rs::model::track::SearchResult],
+    smtc_cover_data: Option<Vec<u8>>,
+    log_prefix: &str,
+) -> Option<Vec<u8>> {
+    let provider_cover = {
+        let helper_guard = helper.lock().await;
+        helper_guard.get_best_cover(candidates).await
+    };
+
+    match (provider_cover, smtc_cover_data) {
+        (Some(provider_bytes), Some(smtc_bytes)) => {
+            if are_images_similar(&provider_bytes, &smtc_bytes) {
+                info!("{}: 封面验证成功，使用提供商的高清封面。", log_prefix);
+                Some(provider_bytes)
+            } else {
+                warn!(
+                    "{}: 封面验证失败（不匹配），回退使用SMTC缩略图。",
+                    log_prefix
+                );
+                Some(smtc_bytes)
+            }
+        }
+        (Some(provider_bytes), None) => {
+            info!("{}: SMTC未提供封面数据，使用提供商封面。", log_prefix);
+            Some(provider_bytes)
+        }
+        (None, Some(smtc_bytes)) => {
+            info!("{}: 获取提供商封面失败，使用SMTC缩略图。", log_prefix);
+            Some(smtc_bytes)
+        }
+        (None, None) => {
+            info!("{}: 无可用封面数据。", log_prefix);
+            None
         }
     }
 }

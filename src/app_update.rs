@@ -6,6 +6,7 @@ use crate::amll_connector::protocol::ClientMessage;
 use crate::amll_connector::protocol_strings::NullString;
 use crate::app::TtmlDbUploadUserAction;
 use crate::app_definition::UniLyricApp;
+use crate::error::AppError;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel, ProviderState};
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use smtc_suite::MediaUpdate;
@@ -140,8 +141,8 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
 }
 
 pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
-    match app.fetcher.result_rx.try_recv() {
-        Ok(auto_fetch_result) => match auto_fetch_result {
+    while let Ok(auto_fetch_result) = app.fetcher.result_rx.try_recv() {
+        match auto_fetch_result {
             AutoFetchResult::LyricsReady {
                 source,
                 lyrics_and_metadata,
@@ -204,20 +205,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     }
                 }
 
-                let all_search_status_arcs = [
-                    &app.fetcher.local_cache_status,
-                    &app.fetcher.qqmusic_status,
-                    &app.fetcher.kugou_status,
-                    &app.fetcher.netease_status,
-                    &app.fetcher.amll_db_status,
-                ];
-
-                for status_arc in all_search_status_arcs {
-                    let mut guard = status_arc.lock().unwrap();
-                    if matches!(*guard, AutoSearchStatus::Searching) {
-                        *guard = AutoSearchStatus::NotFound;
-                    }
-                }
+                app.set_searching_providers_to_not_found();
             }
 
             AutoFetchResult::LyricsSuccess {
@@ -255,20 +243,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     )));
                 }
 
-                let all_search_status_arcs = [
-                    &app.fetcher.local_cache_status,
-                    &app.fetcher.qqmusic_status,
-                    &app.fetcher.kugou_status,
-                    &app.fetcher.netease_status,
-                    &app.fetcher.amll_db_status,
-                ];
-
-                for status_arc in all_search_status_arcs {
-                    let mut guard = status_arc.lock().unwrap();
-                    if matches!(*guard, AutoSearchStatus::Searching) {
-                        *guard = AutoSearchStatus::NotFound;
-                    }
-                }
+                app.set_searching_providers_to_not_found();
             }
 
             AutoFetchResult::CoverUpdate(final_cover_data) => {
@@ -292,18 +267,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
 
             AutoFetchResult::NotFound => {
                 info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
-                let sources_to_update_on_not_found = [
-                    &app.fetcher.qqmusic_status,
-                    &app.fetcher.kugou_status,
-                    &app.fetcher.netease_status,
-                    &app.fetcher.amll_db_status,
-                ];
-                for status_arc in sources_to_update_on_not_found {
-                    let mut guard = status_arc.lock().unwrap();
-                    if matches!(*guard, AutoSearchStatus::Searching) {
-                        *guard = AutoSearchStatus::NotFound;
-                    }
-                }
+                app.set_searching_providers_to_not_found();
                 if !app.fetcher.current_ui_populated
                     && app.amll_connector.config.lock().unwrap().enabled
                     && let Some(tx) = &app.amll_connector.command_tx
@@ -321,13 +285,10 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     }
                 }
             }
-            AutoFetchResult::FetchError(err_msg) => {
-                error!("[UniLyricApp] 自动获取歌词时发生错误: {err_msg}");
+            AutoFetchResult::FetchError(err) => {
+                error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err.to_string());
+                app.set_searching_providers_to_not_found();
             }
-        },
-        Err(std::sync::mpsc::TryRecvError::Empty) => {}
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            error!("[UniLyricApp] 自动获取结果通道已断开!");
         }
     }
 }
@@ -612,7 +573,7 @@ pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
     {
         app.lyrics.conversion_result_rx.take();
 
-        let converted_result = result.map_err(|e| e.to_string());
+        let converted_result = result.map_err(AppError::from);
         app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::ConvertCompleted(converted_result),
         )));
@@ -621,18 +582,15 @@ pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
 
 /// 处理来自异步歌词搜索任务的结果。
 pub(super) fn handle_search_results(app: &mut UniLyricApp) {
-    if let Some(rx) = &app.lyrics.search_result_rx
-        && let Ok(result) = rx.try_recv()
-    {
-        app.lyrics.search_result_rx = None;
-
-        let converted_result = result.map_err(|e| e.to_string());
-        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-            crate::app_actions::LyricsAction::SearchCompleted(converted_result),
-        )));
+    if let Some(rx) = app.lyrics.search_result_rx.take() {
+        while let Ok(result) = rx.try_recv() {
+            let converted_result = result.map_err(AppError::from);
+            app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
+                crate::app_actions::LyricsAction::SearchCompleted(converted_result),
+            )));
+        }
     }
 }
-
 /// 处理来自异步歌词下载任务的结果。
 pub(super) fn handle_download_results(app: &mut UniLyricApp) {
     if let Some(rx) = &app.lyrics.download_result_rx
@@ -640,7 +598,7 @@ pub(super) fn handle_download_results(app: &mut UniLyricApp) {
     {
         app.lyrics.download_result_rx = None;
 
-        let converted_result = result.map_err(|e| e.to_string());
+        let converted_result = result.map_err(AppError::from);
         app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::DownloadCompleted(converted_result),
         )));

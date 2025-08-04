@@ -1,4 +1,7 @@
-use std::{sync::mpsc::Sender as StdSender, time::Duration};
+use std::{
+    sync::mpsc::Sender as StdSender,
+    time::{Duration, Instant},
+};
 
 use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
 use tokio::sync::{
@@ -26,6 +29,7 @@ struct ActorState {
     actor_settings: ActorSettings,
     websocket_client: Option<WebSocketClientState>,
     last_track_info: Option<smtc_suite::NowPlayingInfo>,
+    last_audio_sent_time: Option<Instant>,
 }
 
 /// WebSocket 客户端的运行时状态
@@ -198,6 +202,7 @@ pub async fn amll_connector_actor(
         actor_settings: ActorSettings {},
         websocket_client: None,
         last_track_info: None,
+        last_audio_sent_time: None,
     };
 
     let (ws_status_tx, mut ws_status_rx) = tokio_channel(CHANNEL_BUFFER_SIZE);
@@ -297,6 +302,30 @@ fn handle_smtc_update(
     state: &mut ActorState,
     update_tx: &StdSender<UiUpdate>,
 ) -> bool {
+    if let MediaUpdate::AudioData(bytes) = update {
+        const AUDIO_SEND_INTERVAL: Duration = Duration::from_millis(10);
+
+        if let Some(last_sent) = state.last_audio_sent_time
+            && last_sent.elapsed() < AUDIO_SEND_INTERVAL
+        {
+            return false;
+        }
+
+        if let Some(client) = &state.websocket_client {
+            let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
+
+            let msg = ClientMessage::OnAudioData {
+                data: i16_byte_data,
+            };
+
+            handle_websocket_send_error(client.outgoing_tx().try_send(msg), "OnAudioData");
+
+            state.last_audio_sent_time = Some(Instant::now());
+        }
+
+        return false;
+    }
+
     let mut repaint_needed = false;
 
     let payload = match update {
@@ -509,4 +538,21 @@ fn start_websocket_client_task(
     });
 
     Ok((ws_outgoing_tx, handle, shutdown_tx))
+}
+
+fn convert_f32_bytes_to_i16_bytes(f32_bytes: &[u8]) -> Vec<u8> {
+    let spectrum_f32: Vec<f32> = f32_bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap_or_default()))
+        .collect();
+
+    let mut i16_byte_vec = Vec::with_capacity(spectrum_f32.len() * 2);
+
+    for &sample_f32 in &spectrum_f32 {
+        let i16_sample = (sample_f32.clamp(-1.0, 1.0) * 32767.0) as i16;
+
+        i16_byte_vec.extend_from_slice(&i16_sample.to_le_bytes());
+    }
+
+    i16_byte_vec
 }

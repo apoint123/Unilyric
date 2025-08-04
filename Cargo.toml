@@ -56,3 +56,4 @@ bytes = "1.10.1"
 fontdb = "0.23.0"
 image = { version = "0.25", features = ["jpeg", "png"] }
 image_hasher = "3.0.0"
+tokio-util = "0.7.16"
