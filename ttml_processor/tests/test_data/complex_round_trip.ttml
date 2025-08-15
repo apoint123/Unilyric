@@ -1,0 +1,38 @@
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="ja">
+    <head>
+        <metadata>
+            <ttm:agent type="person" xml:id="v1">
+                <ttm:name type="full">主唱</ttm:name>
+            </ttm:agent>
+            <ttm:agent type="person" xml:id="v2">
+                <ttm:name type="full">伴唱</ttm:name>
+            </ttm:agent>
+        </metadata>
+    </head>
+    <body>
+        <div begin="10.0s" end="25.0s">
+            <p begin="10.0s" end="15.0s" ttm:agent="v1">
+                <span begin="10.0s" end="11.5s">メイン</span>
+                <span begin="11.5s" end="12.5s">ボーカル</span>
+                <span ttm:role="x-translation" xml:lang="zh-Hans">主要声乐</span>
+                <span ttm:role="x-roman" xml:lang="ja-Latn">mein bōkaru</span>
+                <span ttm:role="x-bg" begin="13.0s" end="14.5s">
+                    <span begin="13.0s" end="14.5s">(背景)</span>
+                    <span ttm:role="x-translation" xml:lang="zh-Hans">(背景人声)</span>
+                    <span ttm:role="x-roman" xml:lang="ja-Latn">(haikei)</span>
+                </span>
+            </p>
+            <p begin="20.0s" end="25.0s" ttm:agent="v2">
+                <span begin="20.0s" end="21.5s">セカンド</span>
+                <span begin="21.5s" end="22.5s">パート</span>
+                <span ttm:role="x-translation" xml:lang="zh-Hans">第二部分</span>
+                <span ttm:role="x-roman" xml:lang="ja-Latn">sekando pāto</span>
+                <span ttm:role="x-bg" begin="23.0s" end="24.5s">
+                    <span begin="23.0s" end="24.5s">(バック)</span>
+                    <span ttm:role="x-translation" xml:lang="zh-Hans">(和声)</span>
+                    <span ttm:role="x-roman" xml:lang="ja-Latn">(bakku)</span>
+                </span>
+            </p>
+        </div>
+    </body>
+</tt>

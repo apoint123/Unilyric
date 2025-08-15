@@ -1,0 +1,31 @@
+---
+source: ttml_processor/tests/ttml_generation_integration_tests.rs
+expression: ttml_output
+---
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Word">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <translations>
+          <translation xml:lang="zh-Hans">
+            <text for="L1">
+              <span begin="1.000" end="1.500">钟声响起</span>
+              <span begin="1.500" end="2.000">归家</span>
+            </text>
+          </translation>
+        </translations>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body dur="2.000">
+    <div begin="1.000" end="2.000">
+      <p begin="1.000" end="2.000" itunes:key="L1" ttm:agent="v1">
+        <span begin="1.000" end="2.000">鐘聲響起歸家</span>
+      </p>
+    </div>
+  </body>
+</tt>

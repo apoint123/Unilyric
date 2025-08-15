@@ -1,0 +1,1050 @@
+---
+source: ttml_processor/tests/ttml_parser_integration_tests.rs
+expression: generated_ttml_output
+---
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:amll="http://www.example.com/ns/amll"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Word">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <amll:meta key="musicName" value="インドア系ならトラックメイカー"/>
+      <amll:meta key="musicName" value="内向都是作曲家"/>
+      <amll:meta key="artists" value="Yunomi"/>
+      <amll:meta key="artists" value="nicamoq"/>
+      <amll:meta key="album" value="インドア系ならトラックメイカー"/>
+      <amll:meta key="album" value="内向都是作曲家"/>
+      <amll:meta key="isrc" value="HKC372450422"/>
+      <amll:meta key="isrc" value="JPV751700074"/>
+      <amll:meta key="appleMusicId" value="1739070869"/>
+      <amll:meta key="ncmMusicId" value="424262056"/>
+      <amll:meta key="spotifyId" value="3SAgoXsKEGMlIGNtOvs0vV"/>
+      <amll:meta key="qqMusicId" value="002DuMJE0E9YSa"/>
+      <amll:meta key="ttmlAuthorGithub" value="108002475"/>
+      <amll:meta key="ttmlAuthorGithubLogin" value="apoint123"/>
+    </metadata>
+  </head>
+  <body dur="3:00.430">
+    <div begin="15.670" end="3:00.430">
+      <p begin="15.670" end="17.300" itunes:key="L1" ttm:agent="v1">
+        <span begin="15.670" end="15.790">マ</span>
+        <span begin="15.790" end="15.910">イ</span>
+        <span begin="15.910" end="16.059">ハ</span>
+        <span begin="16.059" end="16.210">ウ</span>
+        <span begin="16.210" end="16.360">ス </span>
+        <span begin="16.360" end="16.610">is </span>
+        <span begin="16.610" end="16.840">段</span>
+        <span begin="16.840" end="17.000">ボ</span>
+        <span begin="17.000" end="17.100">ー</span>
+        <span begin="17.100" end="17.300">ル</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">我的房子是纸房子</span>
+        <span ttm:role="x-roman">Mai hausu is danbōru</span>
+      </p>
+      <p begin="17.300" end="19.170" itunes:key="L2" ttm:agent="v1">
+        <span begin="17.300" end="17.520">New</span>
+        <span begin="17.520" end="17.650">ハ</span>
+        <span begin="17.650" end="17.780">ウ</span>
+        <span begin="17.780" end="18.010">ス </span>
+        <span begin="18.010" end="18.150">エ</span>
+        <span begin="18.150" end="18.260">レ</span>
+        <span begin="18.260" end="18.380">ク</span>
+        <span begin="18.380" end="18.540">ト</span>
+        <span begin="18.540" end="18.710">ロ</span>
+        <span begin="18.710" end="18.860">ハ</span>
+        <span begin="18.860" end="18.990">ウ</span>
+        <span begin="18.990" end="19.170">ス</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">新房子是 Electro House</span>
+        <span ttm:role="x-roman">NEW hausu erekutorohausu</span>
+      </p>
+      <p begin="19.170" end="21.000" itunes:key="L3" ttm:agent="v1">
+        <span begin="19.170" end="19.260">ト</span>
+        <span begin="19.260" end="19.350">ラ</span>
+        <span begin="19.350" end="19.440">ッ</span>
+        <span begin="19.440" end="19.530">ク</span>
+        <span begin="19.530" end="19.620">ド</span>
+        <span begin="19.620" end="19.710">ラ</span>
+        <span begin="19.710" end="19.800">イ</span>
+        <span begin="19.800" end="19.890">バ</span>
+        <span begin="19.890" end="20.110">ー </span>
+        <span begin="20.110" end="20.340">通</span>
+        <span begin="20.340" end="20.560">勤</span>
+        <span begin="20.560" end="20.700">ラ</span>
+        <span begin="20.700" end="20.800">ッ</span>
+        <span begin="20.800" end="20.900">シ</span>
+        <span begin="20.900" end="21.000">ュ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">卡车司机 上下班高峰期</span>
+        <span ttm:role="x-roman">torakku doraibā tsūkin rasshu</span>
+      </p>
+      <p begin="21.070" end="22.930" itunes:key="L4" ttm:agent="v1">
+        <span begin="21.070" end="21.270">ア</span>
+        <span begin="21.270" end="21.350">ッ</span>
+        <span begin="21.350" end="21.430">プ</span>
+        <span begin="21.430" end="21.530">な</span>
+        <span begin="21.530" end="21.620">ロ</span>
+        <span begin="21.620" end="21.710">ー</span>
+        <span begin="21.710" end="21.780">ド</span>
+        <span begin="21.780" end="21.990">は</span>
+        <span begin="21.990" end="22.130">テ</span>
+        <span begin="22.130" end="22.210">ン</span>
+        <span begin="22.210" end="22.280">シ</span>
+        <span begin="22.280" end="22.390">ョ</span>
+        <span begin="22.390" end="22.470">ン </span>
+        <span begin="22.470" end="22.690">ma</span>
+        <span begin="22.690" end="22.930">x</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">道路交通负荷紧张max</span>
+        <span ttm:role="x-roman">appu na rōdo wa tenshon MAX</span>
+      </p>
+      <p begin="22.930" end="24.590" itunes:key="L5" ttm:agent="v1">
+        <span begin="22.930" end="23.060">ハ</span>
+        <span begin="23.060" end="23.170">ウ</span>
+        <span begin="23.170" end="23.410">ス</span>
+        <span begin="23.410" end="23.520">ダ</span>
+        <span begin="23.520" end="23.640">ス</span>
+        <span begin="23.640" end="23.860">ト </span>
+        <span begin="23.860" end="23.970">ノ</span>
+        <span begin="23.970" end="24.080">ン</span>
+        <span begin="24.080" end="24.170">ふ</span>
+        <span begin="24.170" end="24.240">ぃ</span>
+        <span begin="24.240" end="24.300">っ</span>
+        <span begin="24.300" end="24.360">く</span>
+        <span begin="24.360" end="24.420">し</span>
+        <span begin="24.420" end="24.490">ょ</span>
+        <span begin="24.490" end="24.590">ん</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">房间里的灰尘 Non-fiction</span>
+        <span ttm:role="x-roman">hausu dasuto non fuikkushon</span>
+      </p>
+      <p begin="24.790" end="26.460" itunes:key="L6" ttm:agent="v1">
+        <span begin="24.790" end="24.960">花</span>
+        <span begin="24.960" end="25.230">粉</span>
+        <span begin="25.230" end="25.520">症</span>
+        <span begin="25.520" end="25.660">に</span>
+        <span begin="25.660" end="25.750">は</span>
+        <span begin="25.750" end="25.870">マ</span>
+        <span begin="25.870" end="25.990">ス</span>
+        <span begin="25.990" end="26.090">ク</span>
+        <span begin="26.090" end="26.230">メ</span>
+        <span begin="26.230" end="26.360">ロ</span>
+        <span begin="26.360" end="26.460">ン</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">花粉过敏就要吃香瓜</span>
+        <span ttm:role="x-roman">kafun shō ni wa masukumeron</span>
+      </p>
+      <p begin="26.670" end="28.290" itunes:key="L7" ttm:agent="v1">
+        <span begin="26.670" end="26.780">カ</span>
+        <span begin="26.780" end="26.890">ー</span>
+        <span begin="26.890" end="27.060">ソ</span>
+        <span begin="27.060" end="27.170">ル</span>
+        <span begin="27.170" end="27.390">待</span>
+        <span begin="27.390" end="27.470">っ</span>
+        <span begin="27.470" end="27.540">て</span>
+        <span begin="27.540" end="27.600">よ </span>
+        <span begin="27.600" end="27.760">ク</span>
+        <span begin="27.760" end="27.980">ラ</span>
+        <span begin="27.980" end="28.060">ク</span>
+        <span begin="28.060" end="28.140">シ</span>
+        <span begin="28.140" end="28.220">ョ</span>
+        <span begin="28.220" end="28.290">ン</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">等待光标的指示 电子喇叭</span>
+        <span ttm:role="x-roman">kāsoru matte yo kurakushon</span>
+      </p>
+      <p begin="28.290" end="30.440" itunes:key="L8" ttm:agent="v1">
+        <span begin="28.290" end="28.430">ほ</span>
+        <span begin="28.430" end="28.580">ら</span>
+        <span begin="28.580" end="28.720">ク</span>
+        <span begin="28.720" end="28.910">リ</span>
+        <span begin="28.910" end="29.030">ッ</span>
+        <span begin="29.030" end="29.170">ク </span>
+        <span begin="29.170" end="29.270">リ</span>
+        <span begin="29.270" end="29.370">リ</span>
+        <span begin="29.370" end="29.430">ッ</span>
+        <span begin="29.430" end="29.510">ク </span>
+        <span begin="29.510" end="29.600">ト</span>
+        <span begin="29.600" end="29.750">ラ</span>
+        <span begin="29.750" end="29.850">ッ</span>
+        <span begin="29.850" end="29.970">ク</span>
+        <span begin="29.970" end="30.080">メ</span>
+        <span begin="30.080" end="30.200">イ</span>
+        <span begin="30.200" end="30.330">カ</span>
+        <span begin="30.330" end="30.440">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">看我点击歌词 Track maker</span>
+        <span ttm:role="x-roman">hora kurikku ririkku torakkumeikā</span>
+      </p>
+      <p begin="30.440" end="32.330" itunes:key="L9" ttm:agent="v1">
+        <span begin="30.440" end="30.560">お</span>
+        <span begin="30.560" end="30.680">洒</span>
+        <span begin="30.680" end="30.790">落</span>
+        <span begin="30.790" end="30.900">の</span>
+        <span begin="30.900" end="31.100">極</span>
+        <span begin="31.100" end="31.250">地</span>
+        <span begin="31.250" end="31.390">だ </span>
+        <span begin="31.390" end="31.460">フ</span>
+        <span begin="31.460" end="31.530">ァ</span>
+        <span begin="31.530" end="31.600">ッ</span>
+        <span begin="31.600" end="31.670">シ</span>
+        <span begin="31.670" end="31.740">ョ</span>
+        <span begin="31.740" end="31.810">ン</span>
+        <span begin="31.810" end="31.900">セ</span>
+        <span begin="31.900" end="32.080">ン</span>
+        <span begin="32.080" end="32.210">タ</span>
+        <span begin="32.210" end="32.330">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的中心 Fashion center</span>
+        <span ttm:role="x-roman">oshare no kyokuchi da fasshon sentā</span>
+      </p>
+      <p begin="32.330" end="34.110" itunes:key="L10" ttm:agent="v1">
+        <span begin="32.330" end="32.549">両</span>
+        <span begin="32.549" end="32.630">手</span>
+        <span begin="32.630" end="32.750">を</span>
+        <span begin="32.750" end="33.000">掲</span>
+        <span begin="33.000" end="33.170">げ</span>
+        <span begin="33.170" end="33.310">て </span>
+        <span begin="33.310" end="33.380">ク</span>
+        <span begin="33.380" end="33.450">ラ</span>
+        <span begin="33.450" end="33.520">ッ</span>
+        <span begin="33.520" end="33.590">ピ</span>
+        <span begin="33.590" end="33.710">ョ</span>
+        <span begin="33.710" end="33.830">ヘ</span>
+        <span begin="33.830" end="33.940">ン</span>
+        <span begin="33.940" end="34.110">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="34.190" end="36.040" itunes:key="L11" ttm:agent="v1">
+        <span begin="34.190" end="34.260">ジ</span>
+        <span begin="34.260" end="34.330">ャ</span>
+        <span begin="34.330" end="34.400">ー</span>
+        <span begin="34.400" end="34.540">ジ</span>
+        <span begin="34.540" end="34.660">に</span>
+        <span begin="34.660" end="34.770">ワ</span>
+        <span begin="34.770" end="34.860">イ</span>
+        <span begin="34.860" end="34.950">シ</span>
+        <span begin="34.950" end="35.040">ャ</span>
+        <span begin="35.040" end="35.130">ツ </span>
+        <span begin="35.130" end="35.360">絶</span>
+        <span begin="35.360" end="35.600">対</span>
+        <span begin="35.600" end="35.710">ヘ</span>
+        <span begin="35.710" end="35.830">ン</span>
+        <span begin="35.830" end="36.040">だ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">运动衫搭白衬衫 绝对是不伦不类</span>
+        <span ttm:role="x-roman">jāji ni waishatsu zettai hen da</span>
+      </p>
+      <p begin="36.040" end="37.950" itunes:key="L12" ttm:agent="v1">
+        <span begin="36.040" end="36.290">M・</span>
+        <span begin="36.290" end="36.510">I・</span>
+        <span begin="36.510" end="36.760">D・</span>
+        <span begin="36.760" end="37.010">I </span>
+        <span begin="37.010" end="37.140">ト</span>
+        <span begin="37.140" end="37.250">ラ</span>
+        <span begin="37.250" end="37.360">ッ</span>
+        <span begin="37.360" end="37.470">ク</span>
+        <span begin="37.470" end="37.600">メ</span>
+        <span begin="37.600" end="37.710">イ</span>
+        <span begin="37.710" end="37.840">カ</span>
+        <span begin="37.840" end="37.950">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">MIDI Track maker</span>
+        <span ttm:role="x-roman">M. I. D. I torakkumeikā</span>
+      </p>
+      <p begin="37.950" end="39.820" itunes:key="L13" ttm:agent="v1">
+        <span begin="37.950" end="38.030">お</span>
+        <span begin="38.030" end="38.150">洒</span>
+        <span begin="38.150" end="38.270">落</span>
+        <span begin="38.270" end="38.380">の</span>
+        <span begin="38.380" end="38.600">聖</span>
+        <span begin="38.600" end="38.750">地</span>
+        <span begin="38.750" end="38.880">だ </span>
+        <span begin="38.880" end="38.960">フ</span>
+        <span begin="38.960" end="39.030">ァ</span>
+        <span begin="39.030" end="39.120">ッ</span>
+        <span begin="39.120" end="39.190">シ</span>
+        <span begin="39.190" end="39.250">ョ</span>
+        <span begin="39.250" end="39.310">ン</span>
+        <span begin="39.310" end="39.460">セ</span>
+        <span begin="39.460" end="39.560">ン</span>
+        <span begin="39.560" end="39.700">タ</span>
+        <span begin="39.700" end="39.820">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的圣地 Fashion center</span>
+        <span ttm:role="x-roman">oshare no seichi da fasshon sentā</span>
+      </p>
+      <p begin="39.820" end="41.650" itunes:key="L14" ttm:agent="v1">
+        <span begin="39.820" end="40.030">両</span>
+        <span begin="40.030" end="40.160">手</span>
+        <span begin="40.160" end="40.290">を</span>
+        <span begin="40.290" end="40.520">掲</span>
+        <span begin="40.520" end="40.640">げ</span>
+        <span begin="40.640" end="40.750">て </span>
+        <span begin="40.750" end="40.870">ク</span>
+        <span begin="40.870" end="41.000">ラ</span>
+        <span begin="41.000" end="41.100">ッ</span>
+        <span begin="41.100" end="41.190">ピ</span>
+        <span begin="41.190" end="41.270">ョ</span>
+        <span begin="41.270" end="41.350">ヘ</span>
+        <span begin="41.350" end="41.430">ン</span>
+        <span begin="41.430" end="41.650">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="41.650" end="43.540" itunes:key="L15" ttm:agent="v1">
+        <span begin="41.650" end="41.910">納</span>
+        <span begin="41.910" end="42.050">期</span>
+        <span begin="42.050" end="42.160">は</span>
+        <span begin="42.160" end="42.380">明</span>
+        <span begin="42.380" end="42.520">日</span>
+        <span begin="42.520" end="42.630">だ </span>
+        <span begin="42.630" end="42.870">絶</span>
+        <span begin="42.870" end="43.100">対</span>
+        <span begin="43.100" end="43.330">徹</span>
+        <span begin="43.330" end="43.540">夜</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">交稿期限是明天 绝对要熬夜了</span>
+        <span ttm:role="x-roman">nōki wa ashita da zettai tetsuya</span>
+      </p>
+      <p begin="43.540" end="45.450" itunes:key="L16" ttm:agent="v1">
+        <span begin="43.540" end="43.690">エ</span>
+        <span begin="43.690" end="43.820">ビ</span>
+        <span begin="43.820" end="43.930">デ</span>
+        <span begin="43.930" end="44.040">イ </span>
+        <span begin="44.040" end="44.170">エ</span>
+        <span begin="44.170" end="44.300">ビ</span>
+        <span begin="44.300" end="44.400">ナ</span>
+        <span begin="44.400" end="44.510">イ </span>
+        <span begin="44.510" end="44.610">ト</span>
+        <span begin="44.610" end="44.840">ラ</span>
+        <span begin="44.840" end="44.920">ッ</span>
+        <span begin="44.920" end="44.970">ク</span>
+        <span begin="44.970" end="45.080">メ</span>
+        <span begin="45.080" end="45.190">イ</span>
+        <span begin="45.190" end="45.340">カ</span>
+        <span begin="45.340" end="45.450">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Every day Every night Track maker</span>
+        <span ttm:role="x-roman">ebidei ebi nai torakkumeikā</span>
+      </p>
+      <p begin="48.260" end="49.210" itunes:key="L17" ttm:agent="v1">
+        <span begin="48.260" end="48.390">ト</span>
+        <span begin="48.390" end="48.590">ラ</span>
+        <span begin="48.590" end="48.660">ッ</span>
+        <span begin="48.660" end="48.730">ク</span>
+        <span begin="48.730" end="48.850">メ</span>
+        <span begin="48.850" end="48.950">イ</span>
+        <span begin="48.950" end="49.090">カ</span>
+        <span begin="49.090" end="49.210">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Track maker</span>
+        <span ttm:role="x-roman">torakkumeikā</span>
+      </p>
+      <p begin="52.000" end="52.910" itunes:key="L18" ttm:agent="v1">
+        <span begin="52.000" end="52.120">ク</span>
+        <span begin="52.120" end="52.310">ラ</span>
+        <span begin="52.310" end="52.370">ッ</span>
+        <span begin="52.370" end="52.430">ピ</span>
+        <span begin="52.430" end="52.480">ョ</span>
+        <span begin="52.480" end="52.580">ヘ</span>
+        <span begin="52.580" end="52.710">ン</span>
+        <span begin="52.710" end="52.910">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Clap your hands up</span>
+        <span ttm:role="x-roman">kurappyohenza</span>
+      </p>
+      <p begin="55.750" end="56.700" itunes:key="L19" ttm:agent="v1">
+        <span begin="55.750" end="55.890">ト</span>
+        <span begin="55.890" end="56.110">ラ</span>
+        <span begin="56.110" end="56.170">ッ</span>
+        <span begin="56.170" end="56.230">ク</span>
+        <span begin="56.230" end="56.350">メ</span>
+        <span begin="56.350" end="56.460">イ</span>
+        <span begin="56.460" end="56.590">カ</span>
+        <span begin="56.590" end="56.700">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Track maker</span>
+        <span ttm:role="x-roman">torakkumeikā</span>
+      </p>
+      <p begin="59.500" end="1:00.390" itunes:key="L20" ttm:agent="v1">
+        <span begin="59.500" end="59.640">ク</span>
+        <span begin="59.640" end="59.830">ラ</span>
+        <span begin="59.830" end="59.880">ッ</span>
+        <span begin="59.880" end="59.930">ピ</span>
+        <span begin="59.930" end="59.980">ョ</span>
+        <span begin="59.980" end="1:00.100">ヘ</span>
+        <span begin="1:00.100" end="1:00.210">ン</span>
+        <span begin="1:00.210" end="1:00.390">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Clap your hands up</span>
+        <span ttm:role="x-roman">kurappyohenza</span>
+      </p>
+      <p begin="1:00.440" end="1:02.240" itunes:key="L21" ttm:agent="v1">
+        <span begin="1:00.440" end="1:00.580">ロ</span>
+        <span begin="1:00.580" end="1:00.680">リ</span>
+        <span begin="1:00.680" end="1:00.910">顔</span>
+        <span begin="1:00.910" end="1:01.060">コ</span>
+        <span begin="1:01.060" end="1:01.150">ン</span>
+        <span begin="1:01.150" end="1:01.260">プ</span>
+        <span begin="1:01.260" end="1:01.370">な</span>
+        <span begin="1:01.370" end="1:01.520">つ</span>
+        <span begin="1:01.520" end="1:01.740">る</span>
+        <span begin="1:01.740" end="1:01.850">ぺ</span>
+        <span begin="1:01.850" end="1:02.090">た</span>
+        <span begin="1:02.090" end="1:02.170">っ</span>
+        <span begin="1:02.170" end="1:02.240">ぷ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">豆蔻年华的青春身姿</span>
+        <span ttm:role="x-roman">rori gao konpu na tsuru petappu</span>
+      </p>
+      <p begin="1:02.310" end="1:04.200" itunes:key="L22" ttm:agent="v1">
+        <span begin="1:02.310" end="1:02.550">ホ</span>
+        <span begin="1:02.550" end="1:02.630">ッ</span>
+        <span begin="1:02.630" end="1:02.700">プ</span>
+        <span begin="1:02.700" end="1:02.780">で</span>
+        <span begin="1:02.780" end="1:02.910">ス</span>
+        <span begin="1:02.910" end="1:03.160">テ</span>
+        <span begin="1:03.160" end="1:03.250">ッ</span>
+        <span begin="1:03.250" end="1:03.390">プ </span>
+        <span begin="1:03.390" end="1:03.500">ダ</span>
+        <span begin="1:03.500" end="1:03.620">ブ</span>
+        <span begin="1:03.620" end="1:03.720">ス</span>
+        <span begin="1:03.720" end="1:03.970">テ</span>
+        <span begin="1:03.970" end="1:04.090">ッ</span>
+        <span begin="1:04.090" end="1:04.200">プ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">跳动步伐 Dubstep</span>
+        <span ttm:role="x-roman">hoppu de suteppu dabusuteppu</span>
+      </p>
+      <p begin="1:04.200" end="1:06.000" itunes:key="L23" ttm:agent="v1">
+        <span begin="1:04.200" end="1:04.300">フ</span>
+        <span begin="1:04.300" end="1:04.430">ロ</span>
+        <span begin="1:04.430" end="1:04.550">ア</span>
+        <span begin="1:04.550" end="1:04.670">の</span>
+        <span begin="1:04.670" end="1:04.780">あ</span>
+        <span begin="1:04.780" end="1:04.879">い</span>
+        <span begin="1:04.879" end="1:05.019">つ</span>
+        <span begin="1:05.019" end="1:05.140">は</span>
+        <span begin="1:05.140" end="1:05.280">ロ</span>
+        <span begin="1:05.280" end="1:05.480">ボ</span>
+        <span begin="1:05.480" end="1:05.550">ッ</span>
+        <span begin="1:05.550" end="1:05.620">ト</span>
+        <span begin="1:05.620" end="1:05.770">ダ</span>
+        <span begin="1:05.770" end="1:05.840">ン</span>
+        <span begin="1:05.840" end="1:06.000">ス</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">地板上的她在跳机械舞</span>
+        <span ttm:role="x-roman">furoa no aitsu wa robotto dansu</span>
+      </p>
+      <p begin="1:06.070" end="1:07.880" itunes:key="L24" ttm:agent="v1">
+        <span begin="1:06.070" end="1:06.160">お</span>
+        <span begin="1:06.160" end="1:06.420">酒</span>
+        <span begin="1:06.420" end="1:06.540">も</span>
+        <span begin="1:06.540" end="1:06.860">入</span>
+        <span begin="1:06.860" end="1:06.930">っ</span>
+        <span begin="1:06.930" end="1:07.000">て</span>
+        <span begin="1:07.000" end="1:07.140">そ</span>
+        <span begin="1:07.140" end="1:07.250">こ</span>
+        <span begin="1:07.250" end="1:07.350">そ</span>
+        <span begin="1:07.350" end="1:07.470">こ</span>
+        <span begin="1:07.470" end="1:07.600">ナ</span>
+        <span begin="1:07.600" end="1:07.720">イ</span>
+        <span begin="1:07.720" end="1:07.880">ス</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">饮几口酒 还算不错</span>
+        <span ttm:role="x-roman">o sake mo haitte sokosoko naisu</span>
+      </p>
+      <p begin="1:07.930" end="1:09.720" itunes:key="L25" ttm:agent="v1">
+        <span begin="1:07.930" end="1:08.090">ネ</span>
+        <span begin="1:08.090" end="1:08.190">ク</span>
+        <span begin="1:08.190" end="1:08.320">タ</span>
+        <span begin="1:08.320" end="1:08.410">イ</span>
+        <span begin="1:08.410" end="1:08.610">緩</span>
+        <span begin="1:08.610" end="1:08.740">め</span>
+        <span begin="1:08.740" end="1:08.860">た</span>
+        <span begin="1:08.860" end="1:09.090">今</span>
+        <span begin="1:09.090" end="1:09.210">こ</span>
+        <span begin="1:09.210" end="1:09.330">そ</span>
+        <span begin="1:09.330" end="1:09.530">チ</span>
+        <span begin="1:09.530" end="1:09.590">ャ</span>
+        <span begin="1:09.590" end="1:09.660">ン</span>
+        <span begin="1:09.660" end="1:09.720">ス</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">松开领带 现在就是机会</span>
+        <span ttm:role="x-roman">nekutai yurume ta ima koso chansu</span>
+      </p>
+      <p begin="1:09.810" end="1:11.620" itunes:key="L26" ttm:agent="v1">
+        <span begin="1:09.810" end="1:10.050">黒</span>
+        <span begin="1:10.050" end="1:10.160">ぶ</span>
+        <span begin="1:10.160" end="1:10.270">ち</span>
+        <span begin="1:10.270" end="1:10.420">メ</span>
+        <span begin="1:10.420" end="1:10.530">ガ</span>
+        <span begin="1:10.530" end="1:10.670">ネ</span>
+        <span begin="1:10.670" end="1:10.770">に</span>
+        <span begin="1:10.770" end="1:11.000">細</span>
+        <span begin="1:11.000" end="1:11.100">身</span>
+        <span begin="1:11.100" end="1:11.220">の</span>
+        <span begin="1:11.220" end="1:11.360">パ</span>
+        <span begin="1:11.360" end="1:11.480">ン</span>
+        <span begin="1:11.480" end="1:11.620">ツ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">黑框眼镜和修身短裤</span>
+        <span ttm:role="x-roman">kuro buchi megane ni hosomi no pantsu</span>
+      </p>
+      <p begin="1:11.690" end="1:13.500" itunes:key="L27" ttm:agent="v1">
+        <span begin="1:11.690" end="1:11.789">ふ</span>
+        <span begin="1:11.789" end="1:11.920">た</span>
+        <span begin="1:11.920" end="1:12.039">り</span>
+        <span begin="1:12.039" end="1:12.160">を</span>
+        <span begin="1:12.160" end="1:12.270">揺</span>
+        <span begin="1:12.270" end="1:12.390">る</span>
+        <span begin="1:12.390" end="1:12.500">が</span>
+        <span begin="1:12.500" end="1:12.630">す</span>
+        <span begin="1:12.630" end="1:12.820">ワ</span>
+        <span begin="1:12.820" end="1:12.950">ブ</span>
+        <span begin="1:12.950" end="1:13.080">ル</span>
+        <span begin="1:13.080" end="1:13.250">ベ</span>
+        <span begin="1:13.250" end="1:13.340">ー</span>
+        <span begin="1:13.340" end="1:13.500">ス</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">两人尽情摇摆 伴随着wobble bass</span>
+        <span ttm:role="x-roman">futari o yurugasu waburubēsu</span>
+      </p>
+      <p begin="1:13.550" end="1:15.260" itunes:key="L28" ttm:agent="v1">
+        <span begin="1:13.550" end="1:13.789">今</span>
+        <span begin="1:13.789" end="1:13.930">夜</span>
+        <span begin="1:13.930" end="1:14.039">も</span>
+        <span begin="1:14.039" end="1:14.260">残</span>
+        <span begin="1:14.260" end="1:14.490">念 </span>
+        <span begin="1:14.490" end="1:14.690">玉</span>
+        <span begin="1:14.690" end="1:14.970">砕</span>
+        <span begin="1:14.970" end="1:15.130">で</span>
+        <span begin="1:15.130" end="1:15.260">す</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">今晚也可惜了 豁出去了</span>
+        <span ttm:role="x-roman">konya mo zannen gyokusai desu</span>
+      </p>
+      <p begin="1:15.430" end="1:17.280" itunes:key="L29" ttm:agent="v1">
+        <span begin="1:15.430" end="1:15.550">お</span>
+        <span begin="1:15.550" end="1:15.670">洒</span>
+        <span begin="1:15.670" end="1:15.800">落</span>
+        <span begin="1:15.800" end="1:15.890">の</span>
+        <span begin="1:15.890" end="1:16.160">極</span>
+        <span begin="1:16.160" end="1:16.270">地</span>
+        <span begin="1:16.270" end="1:16.380">だ </span>
+        <span begin="1:16.380" end="1:16.460">フ</span>
+        <span begin="1:16.460" end="1:16.530">ァ</span>
+        <span begin="1:16.530" end="1:16.600">ッ</span>
+        <span begin="1:16.600" end="1:16.680">シ</span>
+        <span begin="1:16.680" end="1:16.760">ョ</span>
+        <span begin="1:16.760" end="1:16.840">ン</span>
+        <span begin="1:16.840" end="1:16.970">セ</span>
+        <span begin="1:16.970" end="1:17.090">ン</span>
+        <span begin="1:17.090" end="1:17.260">タ</span>
+        <span begin="1:17.260" end="1:17.280">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的中心 Fashion center</span>
+        <span ttm:role="x-roman">oshare no kyokuchi da fasshon sentā</span>
+      </p>
+      <p begin="1:17.330" end="1:19.120" itunes:key="L30" ttm:agent="v1">
+        <span begin="1:17.330" end="1:17.539">両</span>
+        <span begin="1:17.539" end="1:17.670">手</span>
+        <span begin="1:17.670" end="1:17.789">を</span>
+        <span begin="1:17.789" end="1:18.010">掲</span>
+        <span begin="1:18.010" end="1:18.140">げ</span>
+        <span begin="1:18.140" end="1:18.260">て </span>
+        <span begin="1:18.260" end="1:18.370">ク</span>
+        <span begin="1:18.370" end="1:18.530">ラ</span>
+        <span begin="1:18.530" end="1:18.600">ッ</span>
+        <span begin="1:18.600" end="1:18.670">ピ</span>
+        <span begin="1:18.670" end="1:18.730">ョ</span>
+        <span begin="1:18.730" end="1:18.970">ヘ</span>
+        <span begin="1:18.970" end="1:19.060">ン</span>
+        <span begin="1:19.060" end="1:19.120">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="1:19.180" end="1:21.020" itunes:key="L31" ttm:agent="v1">
+        <span begin="1:19.180" end="1:19.260">ジ</span>
+        <span begin="1:19.260" end="1:19.330">ャ</span>
+        <span begin="1:19.330" end="1:19.410">ー</span>
+        <span begin="1:19.410" end="1:19.550">ジ</span>
+        <span begin="1:19.550" end="1:19.660">に</span>
+        <span begin="1:19.660" end="1:19.750">ジ</span>
+        <span begin="1:19.750" end="1:19.830">ャ</span>
+        <span begin="1:19.830" end="1:19.890">ー</span>
+        <span begin="1:19.890" end="1:20.030">ジ</span>
+        <span begin="1:20.030" end="1:20.270">は </span>
+        <span begin="1:20.270" end="1:20.380">ア</span>
+        <span begin="1:20.380" end="1:20.490">ウ</span>
+        <span begin="1:20.490" end="1:20.600">ト</span>
+        <span begin="1:20.600" end="1:20.710">ド</span>
+        <span begin="1:20.710" end="1:20.850">ア</span>
+        <span begin="1:20.850" end="1:21.020">派</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">运动衫 属于室外系</span>
+        <span ttm:role="x-roman">jāji ni jāji wa autodoa ha</span>
+      </p>
+      <p begin="1:21.070" end="1:22.920" itunes:key="L32" ttm:agent="v1">
+        <span begin="1:21.070" end="1:21.180">イ</span>
+        <span begin="1:21.180" end="1:21.289">ン</span>
+        <span begin="1:21.289" end="1:21.420">ド</span>
+        <span begin="1:21.420" end="1:21.539">ア</span>
+        <span begin="1:21.539" end="1:21.760">系</span>
+        <span begin="1:21.760" end="1:21.900">な</span>
+        <span begin="1:21.900" end="1:22.010">ら </span>
+        <span begin="1:22.010" end="1:22.130">ト</span>
+        <span begin="1:22.130" end="1:22.350">ラ</span>
+        <span begin="1:22.350" end="1:22.410">ッ</span>
+        <span begin="1:22.410" end="1:22.470">ク</span>
+        <span begin="1:22.470" end="1:22.590">メ</span>
+        <span begin="1:22.590" end="1:22.710">イ</span>
+        <span begin="1:22.710" end="1:22.830">カ</span>
+        <span begin="1:22.830" end="1:22.920">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">室内系 都是作曲家</span>
+        <span ttm:role="x-roman">indoa kei nara torakkumeikā</span>
+      </p>
+      <p begin="1:22.920" end="1:24.810" itunes:key="L33" ttm:agent="v1">
+        <span begin="1:22.920" end="1:23.039">お</span>
+        <span begin="1:23.039" end="1:23.180">洒</span>
+        <span begin="1:23.180" end="1:23.300">落</span>
+        <span begin="1:23.300" end="1:23.400">の</span>
+        <span begin="1:23.400" end="1:23.620">聖</span>
+        <span begin="1:23.620" end="1:23.750">地</span>
+        <span begin="1:23.750" end="1:23.890">だ </span>
+        <span begin="1:23.890" end="1:23.950">フ</span>
+        <span begin="1:23.950" end="1:24.010">ァ</span>
+        <span begin="1:24.010" end="1:24.080">ッ</span>
+        <span begin="1:24.080" end="1:24.170">シ</span>
+        <span begin="1:24.170" end="1:24.240">ョ</span>
+        <span begin="1:24.240" end="1:24.350">ン</span>
+        <span begin="1:24.350" end="1:24.480">セ</span>
+        <span begin="1:24.480" end="1:24.590">ン</span>
+        <span begin="1:24.590" end="1:24.710">タ</span>
+        <span begin="1:24.710" end="1:24.810">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的圣地 Fashion center</span>
+        <span ttm:role="x-roman">oshare no seichi da fasshon sentā</span>
+      </p>
+      <p begin="1:24.810" end="1:26.660" itunes:key="L34" ttm:agent="v1">
+        <span begin="1:24.810" end="1:25.039">両</span>
+        <span begin="1:25.039" end="1:25.150">手</span>
+        <span begin="1:25.150" end="1:25.270">を</span>
+        <span begin="1:25.270" end="1:25.490">掲</span>
+        <span begin="1:25.490" end="1:25.620">げ</span>
+        <span begin="1:25.620" end="1:25.740">て </span>
+        <span begin="1:25.740" end="1:25.850">ク</span>
+        <span begin="1:25.850" end="1:26.010">ラ</span>
+        <span begin="1:26.010" end="1:26.080">ッ</span>
+        <span begin="1:26.080" end="1:26.150">ピ</span>
+        <span begin="1:26.150" end="1:26.220">ョ</span>
+        <span begin="1:26.220" end="1:26.450">ヘ</span>
+        <span begin="1:26.450" end="1:26.539">ン</span>
+        <span begin="1:26.539" end="1:26.660">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="1:26.700" end="1:28.550" itunes:key="L35" ttm:agent="v1">
+        <span begin="1:26.700" end="1:26.820">ピ</span>
+        <span begin="1:26.820" end="1:26.930">ー</span>
+        <span begin="1:26.930" end="1:27.090">ク</span>
+        <span begin="1:27.090" end="1:27.160">を</span>
+        <span begin="1:27.160" end="1:27.400">抑</span>
+        <span begin="1:27.400" end="1:27.520">え</span>
+        <span begin="1:27.520" end="1:27.770">ろ </span>
+        <span begin="1:27.770" end="1:27.860">マ</span>
+        <span begin="1:27.860" end="1:27.950">キ</span>
+        <span begin="1:27.950" end="1:28.090">シ</span>
+        <span begin="1:28.090" end="1:28.210">マ</span>
+        <span begin="1:28.210" end="1:28.340">イ</span>
+        <span begin="1:28.340" end="1:28.450">ザ</span>
+        <span begin="1:28.450" end="1:28.550">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">抑制峰值 Maximizer</span>
+        <span ttm:role="x-roman">pīku o osaero makishimaizā</span>
+      </p>
+      <p begin="1:28.550" end="1:30.430" itunes:key="L36" ttm:agent="v1">
+        <span begin="1:28.550" end="1:28.750">眠</span>
+        <span begin="1:28.750" end="1:28.900">気</span>
+        <span begin="1:28.900" end="1:29.030">の</span>
+        <span begin="1:29.030" end="1:29.150">ピ</span>
+        <span begin="1:29.150" end="1:29.260">ー</span>
+        <span begin="1:29.260" end="1:29.390">ク</span>
+        <span begin="1:29.390" end="1:29.490">に </span>
+        <span begin="1:29.490" end="1:29.600">カ</span>
+        <span begin="1:29.600" end="1:29.680">フ</span>
+        <span begin="1:29.680" end="1:29.760">ェ</span>
+        <span begin="1:29.760" end="1:29.840">イ</span>
+        <span begin="1:29.840" end="1:29.910">ン</span>
+        <span begin="1:29.910" end="1:30.200">投</span>
+        <span begin="1:30.200" end="1:30.430">下</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">极度犯困的夜里 咖啡因投下</span>
+        <span ttm:role="x-roman">nemuke no pīku ni kafein tōka</span>
+      </p>
+      <p begin="1:43.550" end="1:47.470" itunes:key="L37" ttm:agent="v1">
+        <span begin="1:43.550" end="1:43.690">眠</span>
+        <span begin="1:43.690" end="1:43.930">気</span>
+        <span begin="1:43.930" end="1:44.039">の</span>
+        <span begin="1:44.039" end="1:44.170">ピ</span>
+        <span begin="1:44.170" end="1:44.280">ー</span>
+        <span begin="1:44.280" end="1:44.400">ク</span>
+        <span begin="1:44.400" end="1:44.500">に </span>
+        <span begin="1:44.500" end="1:44.670">カ</span>
+        <span begin="1:44.670" end="1:44.740">フ</span>
+        <span begin="1:44.740" end="1:44.820">ェ</span>
+        <span begin="1:44.820" end="1:44.910">イ</span>
+        <span begin="1:44.910" end="1:45.020">ン</span>
+        <span begin="1:45.020" end="1:45.330">投</span>
+        <span begin="1:45.330" end="1:47.470">下</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">极度犯困的夜里 咖啡因投下</span>
+        <span ttm:role="x-roman">nemuke no pīku ni kafein tōka</span>
+      </p>
+      <p begin="2:00.430" end="2:02.270" itunes:key="L38" ttm:agent="v1">
+        <span begin="2:00.430" end="2:00.550">お</span>
+        <span begin="2:00.550" end="2:00.670">洒</span>
+        <span begin="2:00.670" end="2:00.780">落</span>
+        <span begin="2:00.780" end="2:00.890">の</span>
+        <span begin="2:00.890" end="2:01.090">極</span>
+        <span begin="2:01.090" end="2:01.270">地</span>
+        <span begin="2:01.270" end="2:01.410">だ </span>
+        <span begin="2:01.410" end="2:01.480">フ</span>
+        <span begin="2:01.480" end="2:01.550">ァ</span>
+        <span begin="2:01.550" end="2:01.620">ッ</span>
+        <span begin="2:01.620" end="2:01.690">シ</span>
+        <span begin="2:01.690" end="2:01.760">ョ</span>
+        <span begin="2:01.760" end="2:01.830">ン</span>
+        <span begin="2:01.830" end="2:01.920">セ</span>
+        <span begin="2:01.920" end="2:02.080">ン</span>
+        <span begin="2:02.080" end="2:02.180">タ</span>
+        <span begin="2:02.180" end="2:02.270">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的中心 Fashion center</span>
+        <span ttm:role="x-roman">oshare no kyokuchi da fasshon sentā</span>
+      </p>
+      <p begin="2:02.330" end="2:04.170" itunes:key="L39" ttm:agent="v1">
+        <span begin="2:02.330" end="2:02.550">両</span>
+        <span begin="2:02.550" end="2:02.660">手</span>
+        <span begin="2:02.660" end="2:02.770">を</span>
+        <span begin="2:02.770" end="2:03.030">掲</span>
+        <span begin="2:03.030" end="2:03.160">げ</span>
+        <span begin="2:03.160" end="2:03.310">て </span>
+        <span begin="2:03.310" end="2:03.380">ク</span>
+        <span begin="2:03.380" end="2:03.450">ラ</span>
+        <span begin="2:03.450" end="2:03.520">ッ</span>
+        <span begin="2:03.520" end="2:03.590">ピ</span>
+        <span begin="2:03.590" end="2:03.710">ョ</span>
+        <span begin="2:03.710" end="2:03.830">ヘ</span>
+        <span begin="2:03.830" end="2:03.940">ン</span>
+        <span begin="2:03.940" end="2:04.170">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="2:04.170" end="2:06.070" itunes:key="L40" ttm:agent="v1">
+        <span begin="2:04.170" end="2:04.250">ジ</span>
+        <span begin="2:04.250" end="2:04.320">ャ</span>
+        <span begin="2:04.320" end="2:04.410">ー</span>
+        <span begin="2:04.410" end="2:04.550">ジ</span>
+        <span begin="2:04.550" end="2:04.660">に</span>
+        <span begin="2:04.660" end="2:04.750">ワ</span>
+        <span begin="2:04.750" end="2:04.840">イ</span>
+        <span begin="2:04.840" end="2:04.930">シ</span>
+        <span begin="2:04.930" end="2:05.020">ャ</span>
+        <span begin="2:05.020" end="2:05.140">ツ </span>
+        <span begin="2:05.140" end="2:05.340">絶</span>
+        <span begin="2:05.340" end="2:05.580">対</span>
+        <span begin="2:05.580" end="2:05.690">ヘ</span>
+        <span begin="2:05.690" end="2:05.810">ン</span>
+        <span begin="2:05.810" end="2:06.070">だ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">运动衫搭白衬衫 绝对是不伦不类</span>
+        <span ttm:role="x-roman">jāji ni waishatsu zettai hen da</span>
+      </p>
+      <p begin="2:06.070" end="2:07.880" itunes:key="L41" ttm:agent="v1">
+        <span begin="2:06.070" end="2:06.290">M・</span>
+        <span begin="2:06.290" end="2:06.520">I・</span>
+        <span begin="2:06.520" end="2:06.730">D・</span>
+        <span begin="2:06.730" end="2:06.980">I </span>
+        <span begin="2:06.980" end="2:07.110">ト</span>
+        <span begin="2:07.110" end="2:07.220">ラ</span>
+        <span begin="2:07.220" end="2:07.330">ッ</span>
+        <span begin="2:07.330" end="2:07.440">ク</span>
+        <span begin="2:07.440" end="2:07.570">メ</span>
+        <span begin="2:07.570" end="2:07.680">イ</span>
+        <span begin="2:07.680" end="2:07.790">カ</span>
+        <span begin="2:07.790" end="2:07.880">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">MIDI Track maker</span>
+        <span ttm:role="x-roman">M. I. D. I torakkumeikā</span>
+      </p>
+      <p begin="2:07.940" end="2:09.830" itunes:key="L42" ttm:agent="v1">
+        <span begin="2:07.940" end="2:08.020">お</span>
+        <span begin="2:08.020" end="2:08.139">洒</span>
+        <span begin="2:08.139" end="2:08.259">落</span>
+        <span begin="2:08.259" end="2:08.370">の</span>
+        <span begin="2:08.370" end="2:08.620">聖</span>
+        <span begin="2:08.620" end="2:08.740">地</span>
+        <span begin="2:08.740" end="2:08.870">だ </span>
+        <span begin="2:08.870" end="2:08.949">フ</span>
+        <span begin="2:08.949" end="2:09.020">ァ</span>
+        <span begin="2:09.020" end="2:09.110">ッ</span>
+        <span begin="2:09.110" end="2:09.180">シ</span>
+        <span begin="2:09.180" end="2:09.240">ョ</span>
+        <span begin="2:09.240" end="2:09.330">ン</span>
+        <span begin="2:09.330" end="2:09.449">セ</span>
+        <span begin="2:09.449" end="2:09.570">ン</span>
+        <span begin="2:09.570" end="2:09.699">タ</span>
+        <span begin="2:09.699" end="2:09.830">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的圣地 Fashion center</span>
+        <span ttm:role="x-roman">oshare no seichi da fasshon sentā</span>
+      </p>
+      <p begin="2:09.830" end="2:11.680" itunes:key="L43" ttm:agent="v1">
+        <span begin="2:09.830" end="2:10.039">両</span>
+        <span begin="2:10.039" end="2:10.160">手</span>
+        <span begin="2:10.160" end="2:10.270">を</span>
+        <span begin="2:10.270" end="2:10.520">掲</span>
+        <span begin="2:10.520" end="2:10.650">げ</span>
+        <span begin="2:10.650" end="2:10.759">て </span>
+        <span begin="2:10.759" end="2:10.880">ク</span>
+        <span begin="2:10.880" end="2:11.000">ラ</span>
+        <span begin="2:11.000" end="2:11.100">ッ</span>
+        <span begin="2:11.100" end="2:11.200">ピ</span>
+        <span begin="2:11.200" end="2:11.280">ョ</span>
+        <span begin="2:11.280" end="2:11.360">ヘ</span>
+        <span begin="2:11.360" end="2:11.440">ン</span>
+        <span begin="2:11.440" end="2:11.680">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="2:11.680" end="2:13.480" itunes:key="L44" ttm:agent="v1">
+        <span begin="2:11.680" end="2:11.930">納</span>
+        <span begin="2:11.930" end="2:12.070">期</span>
+        <span begin="2:12.070" end="2:12.180">は</span>
+        <span begin="2:12.180" end="2:12.310">明</span>
+        <span begin="2:12.310" end="2:12.440">日</span>
+        <span begin="2:12.440" end="2:12.620">だ </span>
+        <span begin="2:12.620" end="2:12.850">絶</span>
+        <span begin="2:12.850" end="2:13.070">対</span>
+        <span begin="2:13.070" end="2:13.220">徹</span>
+        <span begin="2:13.220" end="2:13.480">夜</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">交稿期限是明天 绝对要熬夜了</span>
+        <span ttm:role="x-roman">nōki wa ashita da zettai tetsuya</span>
+      </p>
+      <p begin="2:13.570" end="2:15.440" itunes:key="L45" ttm:agent="v1">
+        <span begin="2:13.570" end="2:13.680">エ</span>
+        <span begin="2:13.680" end="2:13.810">ビ</span>
+        <span begin="2:13.810" end="2:13.920">デ</span>
+        <span begin="2:13.920" end="2:14.030">イ </span>
+        <span begin="2:14.030" end="2:14.160">エ</span>
+        <span begin="2:14.160" end="2:14.280">ビ</span>
+        <span begin="2:14.280" end="2:14.390">ナ</span>
+        <span begin="2:14.390" end="2:14.500">イ </span>
+        <span begin="2:14.500" end="2:14.610">ト</span>
+        <span begin="2:14.610" end="2:14.850">ラ</span>
+        <span begin="2:14.850" end="2:14.920">ッ</span>
+        <span begin="2:14.920" end="2:14.990">ク</span>
+        <span begin="2:14.990" end="2:15.110">メ</span>
+        <span begin="2:15.110" end="2:15.210">イ</span>
+        <span begin="2:15.210" end="2:15.320">カ</span>
+        <span begin="2:15.320" end="2:15.440">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Every day Every night Track maker</span>
+        <span ttm:role="x-roman">ebidei ebi nai torakkumeikā</span>
+      </p>
+      <p begin="2:30.420" end="2:32.320" itunes:key="L46" ttm:agent="v1">
+        <span begin="2:30.420" end="2:30.540">お</span>
+        <span begin="2:30.540" end="2:30.670">洒</span>
+        <span begin="2:30.670" end="2:30.810">落</span>
+        <span begin="2:30.810" end="2:30.910">の</span>
+        <span begin="2:30.910" end="2:31.160">極</span>
+        <span begin="2:31.160" end="2:31.270">地</span>
+        <span begin="2:31.270" end="2:31.370">だ </span>
+        <span begin="2:31.370" end="2:31.440">フ</span>
+        <span begin="2:31.440" end="2:31.510">ァ</span>
+        <span begin="2:31.510" end="2:31.579">ッ</span>
+        <span begin="2:31.579" end="2:31.650">シ</span>
+        <span begin="2:31.650" end="2:31.720">ョ</span>
+        <span begin="2:31.720" end="2:31.790">ン</span>
+        <span begin="2:31.790" end="2:31.880">セ</span>
+        <span begin="2:31.880" end="2:32.060">ン</span>
+        <span begin="2:32.060" end="2:32.190">タ</span>
+        <span begin="2:32.190" end="2:32.320">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的中心 Fashion center</span>
+        <span ttm:role="x-roman">oshare no kyokuchi da fasshon sentā</span>
+      </p>
+      <p begin="2:32.320" end="2:34.120" itunes:key="L47" ttm:agent="v1">
+        <span begin="2:32.320" end="2:32.540">両</span>
+        <span begin="2:32.540" end="2:32.660">手</span>
+        <span begin="2:32.660" end="2:32.760">を</span>
+        <span begin="2:32.760" end="2:32.990">掲</span>
+        <span begin="2:32.990" end="2:33.160">げ</span>
+        <span begin="2:33.160" end="2:33.300">て </span>
+        <span begin="2:33.300" end="2:33.370">ク</span>
+        <span begin="2:33.370" end="2:33.440">ラ</span>
+        <span begin="2:33.440" end="2:33.510">ッ</span>
+        <span begin="2:33.510" end="2:33.579">ピ</span>
+        <span begin="2:33.579" end="2:33.700">ョ</span>
+        <span begin="2:33.700" end="2:33.820">ヘ</span>
+        <span begin="2:33.820" end="2:33.930">ン</span>
+        <span begin="2:33.930" end="2:34.120">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="2:34.180" end="2:36.030" itunes:key="L48" ttm:agent="v1">
+        <span begin="2:34.180" end="2:34.250">ジ</span>
+        <span begin="2:34.250" end="2:34.320">ャ</span>
+        <span begin="2:34.320" end="2:34.390">ー</span>
+        <span begin="2:34.390" end="2:34.530">ジ</span>
+        <span begin="2:34.530" end="2:34.650">に</span>
+        <span begin="2:34.650" end="2:34.760">ワ</span>
+        <span begin="2:34.760" end="2:34.850">イ</span>
+        <span begin="2:34.850" end="2:34.940">シ</span>
+        <span begin="2:34.940" end="2:35.030">ャ</span>
+        <span begin="2:35.030" end="2:35.120">ツ </span>
+        <span begin="2:35.120" end="2:35.350">絶</span>
+        <span begin="2:35.350" end="2:35.579">対</span>
+        <span begin="2:35.579" end="2:35.710">ヘ</span>
+        <span begin="2:35.710" end="2:35.820">ン</span>
+        <span begin="2:35.820" end="2:36.030">だ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">运动衫搭白衬衫 绝对是不伦不类</span>
+        <span ttm:role="x-roman">jāji ni waishatsu zettai hen da</span>
+      </p>
+      <p begin="2:36.130" end="2:37.940" itunes:key="L49" ttm:agent="v1">
+        <span begin="2:36.130" end="2:36.350">M・</span>
+        <span begin="2:36.350" end="2:36.530">I・</span>
+        <span begin="2:36.530" end="2:36.810">D・</span>
+        <span begin="2:36.810" end="2:37.010">I </span>
+        <span begin="2:37.010" end="2:37.140">ト</span>
+        <span begin="2:37.140" end="2:37.250">ラ</span>
+        <span begin="2:37.250" end="2:37.360">ッ</span>
+        <span begin="2:37.360" end="2:37.470">ク</span>
+        <span begin="2:37.470" end="2:37.600">メ</span>
+        <span begin="2:37.600" end="2:37.710">イ</span>
+        <span begin="2:37.710" end="2:37.840">カ</span>
+        <span begin="2:37.840" end="2:37.940">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">MIDI Track maker</span>
+        <span ttm:role="x-roman">M. I. D. I torakkumeikā</span>
+      </p>
+      <p begin="2:37.940" end="2:39.800" itunes:key="L50" ttm:agent="v1">
+        <span begin="2:37.940" end="2:38.030">お</span>
+        <span begin="2:38.030" end="2:38.140">洒</span>
+        <span begin="2:38.140" end="2:38.260">落</span>
+        <span begin="2:38.260" end="2:38.390">の</span>
+        <span begin="2:38.390" end="2:38.620">聖</span>
+        <span begin="2:38.620" end="2:38.740">地</span>
+        <span begin="2:38.740" end="2:38.870">だ </span>
+        <span begin="2:38.870" end="2:38.950">フ</span>
+        <span begin="2:38.950" end="2:39.020">ァ</span>
+        <span begin="2:39.020" end="2:39.110">ッ</span>
+        <span begin="2:39.110" end="2:39.180">シ</span>
+        <span begin="2:39.180" end="2:39.240">ョ</span>
+        <span begin="2:39.240" end="2:39.300">ン</span>
+        <span begin="2:39.300" end="2:39.450">セ</span>
+        <span begin="2:39.450" end="2:39.560">ン</span>
+        <span begin="2:39.560" end="2:39.700">タ</span>
+        <span begin="2:39.700" end="2:39.800">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">时尚的圣地 Fashion center</span>
+        <span ttm:role="x-roman">oshare no seichi da fasshon sentā</span>
+      </p>
+      <p begin="2:39.800" end="2:41.650" itunes:key="L51" ttm:agent="v1">
+        <span begin="2:39.800" end="2:40.040">両</span>
+        <span begin="2:40.040" end="2:40.170">手</span>
+        <span begin="2:40.170" end="2:40.270">を</span>
+        <span begin="2:40.270" end="2:40.500">掲</span>
+        <span begin="2:40.500" end="2:40.620">げ</span>
+        <span begin="2:40.620" end="2:40.730">て </span>
+        <span begin="2:40.730" end="2:40.850">ク</span>
+        <span begin="2:40.850" end="2:40.980">ラ</span>
+        <span begin="2:40.980" end="2:41.079">ッ</span>
+        <span begin="2:41.079" end="2:41.170">ピ</span>
+        <span begin="2:41.170" end="2:41.260">ョ</span>
+        <span begin="2:41.260" end="2:41.350">ヘ</span>
+        <span begin="2:41.350" end="2:41.450">ン</span>
+        <span begin="2:41.450" end="2:41.650">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">举起双手 Clap your hands up</span>
+        <span ttm:role="x-roman">ryōte o kakage te kurappyohenza</span>
+      </p>
+      <p begin="2:41.690" end="2:43.510" itunes:key="L52" ttm:agent="v1">
+        <span begin="2:41.690" end="2:41.920">納</span>
+        <span begin="2:41.920" end="2:42.060">期</span>
+        <span begin="2:42.060" end="2:42.170">は</span>
+        <span begin="2:42.170" end="2:42.390">明</span>
+        <span begin="2:42.390" end="2:42.530">日</span>
+        <span begin="2:42.530" end="2:42.640">だ </span>
+        <span begin="2:42.640" end="2:42.880">絶</span>
+        <span begin="2:42.880" end="2:43.110">対</span>
+        <span begin="2:43.110" end="2:43.340">徹</span>
+        <span begin="2:43.340" end="2:43.510">夜</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">交稿期限是明天 绝对要熬夜了</span>
+        <span ttm:role="x-roman">nōki wa ashita da zettai tetsuya</span>
+      </p>
+      <p begin="2:43.570" end="2:45.450" itunes:key="L53" ttm:agent="v1">
+        <span begin="2:43.570" end="2:43.690">エ</span>
+        <span begin="2:43.690" end="2:43.810">ビ</span>
+        <span begin="2:43.810" end="2:43.930">デ</span>
+        <span begin="2:43.930" end="2:44.040">イ </span>
+        <span begin="2:44.040" end="2:44.170">エ</span>
+        <span begin="2:44.170" end="2:44.280">ビ</span>
+        <span begin="2:44.280" end="2:44.430">ナ</span>
+        <span begin="2:44.430" end="2:44.510">イ </span>
+        <span begin="2:44.510" end="2:44.640">ト</span>
+        <span begin="2:44.640" end="2:44.820">ラ</span>
+        <span begin="2:44.820" end="2:44.900">ッ</span>
+        <span begin="2:44.900" end="2:44.970">ク</span>
+        <span begin="2:44.970" end="2:45.060">メ</span>
+        <span begin="2:45.060" end="2:45.170">イ</span>
+        <span begin="2:45.170" end="2:45.290">カ</span>
+        <span begin="2:45.290" end="2:45.450">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Every day Every night Track maker</span>
+        <span ttm:role="x-roman">ebidei ebi nai torakkumeikā</span>
+      </p>
+      <p begin="2:48.250" end="2:49.290" itunes:key="L54" ttm:agent="v1">
+        <span begin="2:48.250" end="2:48.340">フ</span>
+        <span begin="2:48.340" end="2:48.410">ァ</span>
+        <span begin="2:48.410" end="2:48.470">ッ</span>
+        <span begin="2:48.470" end="2:48.530">シ</span>
+        <span begin="2:48.530" end="2:48.610">ョ</span>
+        <span begin="2:48.610" end="2:48.720">ン</span>
+        <span begin="2:48.720" end="2:48.850">セ</span>
+        <span begin="2:48.850" end="2:48.960">ン</span>
+        <span begin="2:48.960" end="2:49.120">タ</span>
+        <span begin="2:49.120" end="2:49.290">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Fashion center</span>
+        <span ttm:role="x-roman">fasshon sentā</span>
+      </p>
+      <p begin="2:52.000" end="2:52.920" itunes:key="L55" ttm:agent="v1">
+        <span begin="2:52.000" end="2:52.120">ク</span>
+        <span begin="2:52.120" end="2:52.300">ラ</span>
+        <span begin="2:52.300" end="2:52.370">ッ</span>
+        <span begin="2:52.370" end="2:52.430">ピ</span>
+        <span begin="2:52.430" end="2:52.490">ョ</span>
+        <span begin="2:52.490" end="2:52.620">ヘ</span>
+        <span begin="2:52.620" end="2:52.720">ン</span>
+        <span begin="2:52.720" end="2:52.920">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Clap your hands up</span>
+        <span ttm:role="x-roman">kurappyohenza</span>
+      </p>
+      <p begin="2:53.870" end="2:54.829" itunes:key="L56" ttm:agent="v1">
+        <span begin="2:53.870" end="2:53.960">フ</span>
+        <span begin="2:53.960" end="2:54.030">ァ</span>
+        <span begin="2:54.030" end="2:54.090">ッ</span>
+        <span begin="2:54.090" end="2:54.150">シ</span>
+        <span begin="2:54.150" end="2:54.230">ョ</span>
+        <span begin="2:54.230" end="2:54.340">ン</span>
+        <span begin="2:54.340" end="2:54.470">セ</span>
+        <span begin="2:54.470" end="2:54.579">ン</span>
+        <span begin="2:54.579" end="2:54.720">タ</span>
+        <span begin="2:54.720" end="2:54.829">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Fashion center</span>
+        <span ttm:role="x-roman">fasshon sentā</span>
+      </p>
+      <p begin="2:55.760" end="2:56.670" itunes:key="L57" ttm:agent="v1">
+        <span begin="2:55.760" end="2:55.880">ク</span>
+        <span begin="2:55.880" end="2:56.030">ラ</span>
+        <span begin="2:56.030" end="2:56.110">ッ</span>
+        <span begin="2:56.110" end="2:56.170">ピ</span>
+        <span begin="2:56.170" end="2:56.230">ョ</span>
+        <span begin="2:56.230" end="2:56.370">ヘ</span>
+        <span begin="2:56.370" end="2:56.470">ン</span>
+        <span begin="2:56.470" end="2:56.670">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Clap your hands up</span>
+        <span ttm:role="x-roman">kurappyohenza</span>
+      </p>
+      <p begin="2:57.630" end="2:58.579" itunes:key="L58" ttm:agent="v1">
+        <span begin="2:57.630" end="2:57.720">フ</span>
+        <span begin="2:57.720" end="2:57.790">ァ</span>
+        <span begin="2:57.790" end="2:57.850">ッ</span>
+        <span begin="2:57.850" end="2:57.910">シ</span>
+        <span begin="2:57.910" end="2:57.990">ョ</span>
+        <span begin="2:57.990" end="2:58.100">ン</span>
+        <span begin="2:58.100" end="2:58.230">セ</span>
+        <span begin="2:58.230" end="2:58.340">ン</span>
+        <span begin="2:58.340" end="2:58.470">タ</span>
+        <span begin="2:58.470" end="2:58.579">ー</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Fashion center</span>
+        <span ttm:role="x-roman">fasshon sentā</span>
+      </p>
+      <p begin="2:59.510" end="3:00.430" itunes:key="L59" ttm:agent="v1">
+        <span begin="2:59.510" end="2:59.630">ク</span>
+        <span begin="2:59.630" end="2:59.780">ラ</span>
+        <span begin="2:59.780" end="2:59.860">ッ</span>
+        <span begin="2:59.860" end="2:59.920">ピ</span>
+        <span begin="2:59.920" end="2:59.980">ョ</span>
+        <span begin="2:59.980" end="3:00.100">ヘ</span>
+        <span begin="3:00.100" end="3:00.220">ン</span>
+        <span begin="3:00.220" end="3:00.430">ザ</span>
+        <span ttm:role="x-translation" xml:lang="zh-CN">Clap your hands up</span>
+        <span ttm:role="x-roman">kurappyohenza</span>
+      </p>
+    </div>
+  </body>
+</tt>

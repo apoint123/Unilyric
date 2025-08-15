@@ -1,0 +1,49 @@
+name: 自动发布 CI 构建版本
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 签出代码
+        uses: actions/checkout@main
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+
+      - name: 安装 NASM
+        uses: ilammy/setup-nasm@v1
+
+      - name: 缓存 Cargo 依赖
+        uses: Swatinem/rust-cache@master
+        with:
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        
+      - name: 构建项目
+        run: cargo build --release
+
+      - name: 压缩产物
+        run: Compress-Archive -Path ./target/release/Unilyric.exe -DestinationPath Unilyric.zip
+
+      - name: 上传产物
+        uses: softprops/action-gh-release@master
+        with:
+          prerelease: true
+          tag_name: "nightly-${{ github.sha }}"
+          name: "预览构建 ${{ github.sha }}"
+          body: |
+            由 Commit ${{ github.sha }} 自动构建并发布
+            
+            Commit 信息:
+            ${{ github.event.head_commit.message }}
+          files: |
+            Unilyric.zip

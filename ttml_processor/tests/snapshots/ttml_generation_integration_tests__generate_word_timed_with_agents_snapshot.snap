@@ -1,0 +1,34 @@
+---
+source: ttml_processor/tests/ttml_generation_integration_tests.rs
+expression: ttml_output
+---
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Word">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1">
+        <ttm:name type="full">演唱者1号</ttm:name>
+      </ttm:agent>
+      <ttm:agent type="group" xml:id="v1000"/>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <songwriters>
+          <songwriter>作曲家1号</songwriter>
+        </songwriters>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body dur="12.000">
+    <div begin="5.000" end="12.000">
+      <p begin="5.000" end="8.200" itunes:key="L1" ttm:agent="v1">
+        <span begin="5.000" end="5.500">I </span>
+        <span begin="5.600" end="6.200">sing</span>
+      </p>
+      <p begin="9.000" end="12.000" itunes:key="L2" ttm:agent="v1000">
+        <span begin="9.000" end="9.500">We </span>
+        <span begin="9.600" end="10.200">sing</span>
+      </p>
+    </div>
+  </body>
+</tt>

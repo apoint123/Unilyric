@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="word">
+  <head/>
+  <body>
+    <div>
+      <p begin="5.000s" end="8.000s">
+        <span begin="5.000s" end="5.500s">Hello</span> <span begin="5.600s" end="6.200s">world</span>
+      </p>
+    </div>
+  </body>
+</tt>

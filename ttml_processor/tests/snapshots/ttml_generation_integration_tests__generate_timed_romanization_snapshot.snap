@@ -1,0 +1,31 @@
+---
+source: ttml_processor/tests/ttml_generation_integration_tests.rs
+expression: ttml_output
+---
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Word">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <iTunesMetadata xmlns="http://music.apple.com/lyric-ttml-internal">
+        <transliterations>
+          <transliteration xml:lang="ja-Latn">
+            <text for="L1">
+              <span begin="1.000" end="1.500">Asa</span>
+              <span begin="1.600" end="2.000">mo</span>
+            </text>
+          </transliteration>
+        </transliterations>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body dur="2.000">
+    <div begin="1.000" end="2.000">
+      <p begin="1.000" end="2.000" itunes:key="L1" ttm:agent="v1">
+        <span begin="1.000" end="2.000">朝も</span>
+      </p>
+    </div>
+  </body>
+</tt>

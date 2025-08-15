@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal" itunes:timing="word" xml:lang="zh">
+    <head>
+        <metadata>
+            <meta key="title" value="My Awesome Song" />
+            <meta key="artist" value="The Rustaceans" />
+            <ttm:agent xml:id="v1" type="person">
+                <ttm:name>演唱者1号</ttm:name>
+            </ttm:agent>
+            <ttm:agent xml:id="v2" type="person">
+                <ttm:name>演唱者2号</ttm:name>
+            </ttm:agent>
+            <iTunesMetadata>
+                <songwriters>
+                    <songwriter>作曲者1号</songwriter>
+                    <songwriter>作曲者2号</songwriter>
+                </songwriters>
+            </iTunesMetadata>
+        </metadata>
+    </head>
+    <body>
+        <div>
+            <p begin="10s" end="12s" ttm:agent="v1">
+                <span begin="10s" end="12s">一行歌词</span>
+            </p>
+        </div>
+    </body>
+</tt>

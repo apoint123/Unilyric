@@ -1,0 +1,23 @@
+---
+source: ttml_processor/tests/ttml_generation_integration_tests.rs
+expression: ttml_output
+---
+<tt xmlns="http://www.w3.org/ns/ttml"
+    xmlns:amll="http://www.example.com/ns/amll"
+    xmlns:itunes="http://music.apple.com/lyric-ttml-internal"
+    xmlns:ttm="http://www.w3.org/ns/ttml#metadata"
+    itunes:timing="Line">
+  <head>
+    <metadata>
+      <ttm:agent type="person" xml:id="v1"/>
+      <amll:meta key="musicName" value="逐行歌曲"/>
+      <amll:meta key="artists" value="测试艺术家"/>
+    </metadata>
+  </head>
+  <body dur="10.000">
+    <div begin="1.000" end="10.000">
+      <p begin="1.000" end="5.000" itunes:key="L1" ttm:agent="v1">这是一行歌词</p>
+      <p begin="6.000" end="10.000" itunes:key="L2" ttm:agent="v1">这是第二行歌词</p>
+    </div>
+  </body>
+</tt>

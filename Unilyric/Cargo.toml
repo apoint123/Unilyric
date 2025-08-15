@@ -1,0 +1,39 @@
+[package]
+name = "Unilyric"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+arboard = "3.3.0"
+eframe = "0.31.1"
+egui = "0.31.1"
+egui-toast = "0.17.0"
+egui_extras = { version = "0.31.1", features = ["all_loaders"] }
+rfd = "0.15.3"
+webbrowser = "1.0.4"
+ferrous-opencc = "*"
+
+futures-util = "0.3.31"
+tokio = { version = "1.45", features = ["rt-multi-thread", "macros"] }
+tokio-tungstenite = "0.27.0"
+
+rand = "0.9"
+log = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+directories = "6"
+once_cell = "1.19"
+thiserror = "2.0.12"
+
+chrono = "0.4.41"
+tracing = "0.1.41"
+tracing-subscriber = "0.3.19"
+tracing-appender = "0.2.3"
+lyrics_helper_rs = { path = "../lyrics_helper_rs" }
+smtc-suite = "2"
+binrw = "0.15.0"
+fontdb = "0.23.0"
+image = { version = "0.25", features = ["jpeg", "png"] }
+image_hasher = "3.0.0"
+lyrics_helper_core = { path = "../lyrics_helper_core" }

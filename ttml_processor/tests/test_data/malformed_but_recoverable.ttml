@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml">
+    <head />
+    <body>
+        <div>
+            <p begin="1s" end="5s"> This line contains a br tag... <br /> which should be ignored
+                and generate a warning. </p>
+            <p begin="6s" end="8s">
+                <span begin="6s" end="7s">Syllable</span>
+                <span begin="9s" end="8s">This syllable has invalid time.</span>
+            </p>
+        </div>
+    </body>
+</tt>
