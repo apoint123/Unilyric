@@ -7,3 +7,7 @@ members = [
 ]
 
 resolver = "3"
+
+[patch.crates-io]
+lyrics_helper_core = { path = "lyrics_helper_core" }
+ttml_processor = { path = "ttml_processor" }

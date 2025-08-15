@@ -58,8 +58,8 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 fst = "0.4"
-lyrics_helper_core = { path = "../lyrics_helper_core" }
-ttml_processor = { path = "../ttml_processor" }
+lyrics_helper_core = "0.1.0"
+ttml_processor = "0.1.0"
 
 [dev-dependencies]
 tracing = "0.1.41"
