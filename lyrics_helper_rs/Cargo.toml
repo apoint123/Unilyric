@@ -1,0 +1,77 @@
+[package]
+name = "lyrics_helper_rs"
+version = "0.2.1"
+edition = "2024"
+authors = ["apoint123 <vpnzaph@outlook.com>"]
+description = "一个功能强大且可扩展的 Rust 歌词处理工具库。"
+readme = "README.md"
+homepage = "https://github.com/apoint123/lyrics-helper-rs"
+repository = "https://github.com/apoint123/lyrics-helper-rs"
+license = "MIT"
+keywords = ["lyrics", "lrc", "parser", "converter", "async"]
+categories = [
+    "multimedia::audio",
+    "parsing",
+    "api-bindings",
+    "command-line-utilities",
+    "text-processing",
+]
+
+[lib]
+name = "lyrics_helper_rs"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aes = "0.8.4"
+anyhow = "1.0"
+async-trait = "0.1.8"
+base64 = "0.22.1"
+block-padding = "0.3.3"
+cbc = "0.1.2"
+chrono = { version = "0.4", features = ["serde"] }
+cipher = "0.4.4"
+dashmap = "7.0.0-rc2"
+dirs = "6.0.0"
+ecb = "0.1.2"
+fancy-regex = "0.16"
+ferrous-opencc = "0.2"
+flate2 = "1.1.2"
+futures = "0.3.31"
+hex = "0.4.3"
+tokio = { version = "1", features = ["full"] }
+md-5 = "0.11.0-rc.0"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+pinyin = "0.10.0"
+quick-xml = { version = "0.38.0", features = ["serialize"] }
+rand = "0.9.1"
+rayon = "1.10.0"
+regex = "1.11.1"
+reqwest = { version = "0.12.20", features = ["json", "cookies"] }
+rsa = "0.10.0-rc.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+strsim = "0.11.1"
+thiserror = "2.0.12"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+fst = "0.4"
+lyrics_helper_core = { path = "../lyrics_helper_core" }
+ttml_processor = { path = "../ttml_processor" }
+
+[dev-dependencies]
+tracing = "0.1.41"
+criterion = "0.7.0"
+
+[build-dependencies]
+fst = "0.4"
+
+[[bench]]
+name = "decryption_benchmark"
+harness = false
+
+[[bench]]
+name = "ttml_parser_benchmark"
+harness = false
