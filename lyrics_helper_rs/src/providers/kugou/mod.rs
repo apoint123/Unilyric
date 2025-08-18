@@ -10,10 +10,7 @@
 //!    - 调用 `get_song_info(hash)` 获取该歌曲的详细信息。
 //!    - 调用 `get_song_link(hash)` 获取该歌曲的播放链接。
 
-use std::{
-    collections::BTreeMap,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -80,15 +77,8 @@ struct RegisterData {
     dfid: String,
 }
 
-fn get_current_timestamp_sec_str() -> Result<String> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| {
-            LyricsHelperError::Internal(format!(
-                "你的时间比 1970 年 1 月 1 日还早！请检查一下你的时间: {e}"
-            ))
-        })
-        .map(|d| d.as_secs().to_string())
+fn get_current_timestamp_sec_str() -> String {
+    Utc::now().timestamp().to_string()
 }
 
 fn strip_artist_from_title<'a>(full_title: &'a str, artists_str: &str) -> &'a str {
@@ -119,7 +109,7 @@ impl KugouMusic {
     async fn register_via_network() -> Result<Self> {
         let http_client = Client::new();
 
-        let clienttime = get_current_timestamp_sec_str()?;
+        let clienttime = get_current_timestamp_sec_str();
 
         let register_payload_json = json!({
             "mid": "",
@@ -240,7 +230,7 @@ impl KugouMusic {
     where
         R: DeserializeOwned,
     {
-        let clienttime = get_current_timestamp_sec_str()?;
+        let clienttime = get_current_timestamp_sec_str();
         business_params.insert("appid".to_string(), APP_ID.to_string());
         business_params.insert("clientver".to_string(), CLIENT_VER.to_string());
         business_params.insert("clienttime".to_string(), clienttime);
@@ -288,7 +278,7 @@ impl KugouMusic {
         R: DeserializeOwned,
     {
         let body_str = serde_json::to_string(body_payload)?;
-        let clienttime = get_current_timestamp_sec_str()?;
+        let clienttime = get_current_timestamp_sec_str();
         let mut params: BTreeMap<String, String> = BTreeMap::new();
         params.insert("appid".to_string(), APP_ID.to_string());
         params.insert("clientver".to_string(), CLIENT_VER.to_string());
@@ -702,7 +692,7 @@ impl Provider for KugouMusic {
         page_size: u32,
     ) -> Result<Vec<generic::Song>> {
         // 此 API 需要一个特殊的 `key` 字段，该字段依赖 `clienttime`
-        let clienttime = get_current_timestamp_sec_str()?;
+        let clienttime = get_current_timestamp_sec_str();
 
         let key = signature::sign_params_key(APP_ID, CLIENT_VER, &clienttime);
 
@@ -916,10 +906,8 @@ impl Provider for KugouMusic {
     }
 
     async fn get_song_link(&self, song_hash: &str) -> Result<String> {
-        let clienttime_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| LyricsHelperError::Internal(format!("时间错误: {e}")))?
-            .as_millis();
+        let clienttime_ms = Utc::now().timestamp_millis();
+
         let userid = 0;
 
         let inner_key = signature::sign_key(song_hash, &self.mid, userid, APP_ID, true);
@@ -940,7 +928,9 @@ impl Provider for KugouMusic {
             resource: models::Resource {
                 album_audio_id: None,
                 collect_list_id: "3",
-                collect_time: clienttime_ms,
+                collect_time: clienttime_ms
+                    .try_into()
+                    .map_err(|e| LyricsHelperError::Internal(format!("时间错误: {e}")))?,
                 hash: song_hash,
                 id: 0,
                 page_id: 1,

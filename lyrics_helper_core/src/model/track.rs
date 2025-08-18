@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{converter::types::ParsedSourceData, model::generic::Artist};
 
 /// 代表搜索结果与原始查询元数据的匹配程度。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Default, Serialize)]
 pub enum MatchType {
     /// 没有匹配或匹配度极低。
     #[default]
@@ -42,7 +42,7 @@ pub struct Track<'a> {
 /// 代表一个标准化的搜索结果条目。
 ///
 /// 这是所有 Provider 的 `search_songs` 方法需要返回的类型。
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default, Serialize)]
 pub struct SearchResult {
     /// 搜索结果的歌曲标题。
     pub title: String,
@@ -83,7 +83,7 @@ pub struct RawLyrics {
 }
 
 /// 代表完整的歌词获取结果，包括解析后的数据和原始副本。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct FullLyricsResult {
     /// 经过统一解析和合并后的标准歌词数据。
     pub parsed: ParsedSourceData,
@@ -92,7 +92,7 @@ pub struct FullLyricsResult {
 }
 
 /// 代表一个包含歌词和其来源元数据的完整搜索结果。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct LyricsAndMetadata {
     /// 获取到的歌词详情，包括解析后和原始数据。
     pub lyrics: FullLyricsResult,
@@ -110,8 +110,8 @@ pub struct ComprehensiveSearchResult {
     pub all_search_candidates: Vec<SearchResult>,
 }
 
-/// 歌曲的语言，目前只做了QQ音乐的
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+/// 歌曲的语言
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum Language {
     /// 纯音乐
     Instrumental,

@@ -4,8 +4,7 @@
 //! 目的是让 API 请求看起来像是从一个真实的 QQ 音乐移动端 App 发出的。
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
-use rand::Rng;
-use rand::distr::Alphanumeric;
+use rand::{Rng, distributions::Alphanumeric};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use uuid::Uuid;
@@ -54,12 +53,12 @@ pub struct Device {
 
 /// 根据 Luhn 算法生成一个随机的 IMEI 号码。
 fn random_imei() -> String {
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
     let mut imei_digits: Vec<u32> = Vec::with_capacity(15);
     let mut sum = 0;
 
     for i in 0..14 {
-        let digit = rng.random_range(0..=9);
+        let digit = rng.gen_range(0..=9);
         imei_digits.push(digit);
 
         let mut temp = digit;
@@ -87,22 +86,22 @@ impl Default for Device {
 impl Device {
     /// 创建一个新的随机设备。
     pub fn new() -> Self {
-        let mut rng = rand::rng();
+        let mut rng = rand::thread_rng();
         let mut android_id = String::with_capacity(16);
         for _ in 0..8 {
-            let byte = rng.random::<u8>();
+            let byte = rng.r#gen::<u8>();
             let _ = write!(android_id, "{byte:02x}");
         }
 
         Self {
-            display: format!("QMAPI.{}.001", rng.random_range(100_000..999_999)),
+            display: format!("QMAPI.{}.001", rng.gen_range(100_000..999_999)),
             product: "iarim".to_string(),
             device: "sagit".to_string(),
             board: "eomam".to_string(),
             model: "MI 6".to_string(),
             fingerprint: format!(
                 "xiaomi/iarim/sagit:10/eomam.200122.001/{}:user/release-keys",
-                rng.random_range(1_000_000..9_999_999)
+                rng.gen_range(1_000_000..9_999_999)
             ),
             boot_id: Uuid::new_v4().to_string(),
             proc_version: format!(
@@ -140,7 +139,7 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{get_config_file_path, load_cached_config, save_cached_config};
+    use crate::config::{load_cached_config, native::get_config_file_path, save_cached_config};
 
     use super::*;
     use std::fs;

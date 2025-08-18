@@ -414,7 +414,12 @@ impl QQMusic {
     ///
     pub async fn new() -> Result<Self> {
         const CACHE_FILENAME: &str = "qq_device.json";
-        let http_client = Client::builder().timeout(Duration::from_secs(10)).build()?;
+        let mut builder = Client::builder();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            builder = builder.timeout(Duration::from_secs(10));
+        }
+        let http_client = builder.build()?;
 
         let device = if let Ok(config) = load_cached_config::<device::Device>(CACHE_FILENAME) {
             info!("已从缓存加载 QQ Device。");

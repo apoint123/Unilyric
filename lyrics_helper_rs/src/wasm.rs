@@ -1,11 +1,9 @@
 // 随便写的，只保证基本功能正常
 
-use crate::{
-    LyricsHelper, SearchMode,
-    converter::types::{ConversionInput, ConversionOptions},
-    model::track::Track,
-};
+use crate::{LyricsHelper, SearchMode};
+use lyrics_helper_core::{ConversionInput, ConversionOptions, Track};
 use serde::Deserialize;
+use wasm_bindgen::JsValue;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen(start)]
@@ -23,7 +21,9 @@ pub struct WasmLyricsHelper {
 #[wasm_bindgen]
 impl WasmLyricsHelper {
     pub async fn new() -> Result<WasmLyricsHelper, JsValue> {
-        let helper = LyricsHelper::new()
+        let mut helper = LyricsHelper::new();
+        helper
+            .load_providers()
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         Ok(Self { helper })
@@ -56,18 +56,29 @@ impl WasmLyricsHelper {
                 Some(&artists_vec)
             },
             album: owned_track.album.as_deref(),
+            duration: None,
         };
 
         let mode_str: String = serde_wasm_bindgen::from_value(mode_js)?;
         let mode = match mode_str.as_str() {
             "Ordered" => SearchMode::Ordered,
             "Parallel" => SearchMode::Parallel,
-            _ => SearchMode::Specific(mode_str),
+            provider_str => {
+                if let Some(provider) = crate::ProviderName::try_from_str(provider_str) {
+                    SearchMode::Specific(provider)
+                } else {
+                    return Err(JsValue::from_str(&format!(
+                        "不支持的提供商: {}",
+                        provider_str
+                    )));
+                }
+            }
         };
 
         let result = self
             .helper
             .search_lyrics(&track_to_search, mode)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
@@ -86,6 +97,6 @@ impl WasmLyricsHelper {
         let result = crate::converter::convert_single_lyric(&input, &options)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
-        Ok(result)
+        Ok(result.output_lyrics)
     }
 }

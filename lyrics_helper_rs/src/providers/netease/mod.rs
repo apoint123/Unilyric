@@ -287,8 +287,8 @@ impl NeteaseClient {
         let full_url_for_request =
             "https://interface3.music.163.com/eapi/song/enhance/player/url/v1";
 
-        let request_id = rand::rng()
-            .random_range(10_000_000..100_000_000)
+        let request_id = rand::thread_rng()
+            .gen_range(10_000_000..100_000_000)
             .to_string();
         let header_struct = PayloadHeader {
             os: "pc",

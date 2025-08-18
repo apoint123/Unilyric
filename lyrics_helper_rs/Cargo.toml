@@ -29,27 +29,27 @@ async-trait = "0.1.8"
 base64 = "0.22.1"
 block-padding = "0.3.3"
 cbc = "0.1.2"
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { version = "0.4", features = ["serde", "wasmbind"] }
 cipher = "0.4.4"
-dashmap = "7.0.0-rc2"
-dirs = "6.0.0"
+dashmap = "6.1.0"
+dirs = { version = "6.0.0", optional = true }
 ecb = "0.1.2"
 fancy-regex = "0.16"
 ferrous-opencc = "0.2"
 flate2 = "1.1.2"
 futures = "0.3.31"
 hex = "0.4.3"
-tokio = { version = "1", features = ["full"] }
-md-5 = "0.11.0-rc.0"
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+md-5 = "0.10.6"
 num-bigint = "0.4.6"
 num-traits = "0.2.19"
 pinyin = "0.10.0"
 quick-xml = { version = "0.38.0", features = ["serialize"] }
-rand = "0.9.1"
-rayon = "1.10.0"
+rand = { version = "0.8" }
+rayon = { version = "1.10.0", optional = true }
 regex = "1.11.1"
 reqwest = { version = "0.12.20", features = ["json", "cookies"] }
-rsa = "0.10.0-rc.3"
+rsa = { version = "0.9.8" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 strsim = "0.11.1"
@@ -60,10 +60,36 @@ uuid = { version = "1", features = ["v4"] }
 fst = "0.4"
 lyrics_helper_core = "0.1.0"
 ttml_processor = "0.1.0"
+getrandom = { version = "0.2", features = ["js"] }
+
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", features = ["Window", "Storage"], optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+tracing-wasm = { version = "0.2", optional = true }
+serde-wasm-bindgen = { version = "0.6", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies.uuid]
+version = "1"
+features = ["v4", "js"]
 
 [dev-dependencies]
 tracing = "0.1.41"
 criterion = "0.7.0"
+
+[features]
+default = ["dirs", "rayon"]
+wasm = [
+    "wasm-bindgen",
+    "wasm-bindgen-futures",
+    "js-sys",
+    "web-sys",
+    "console_error_panic_hook",
+    "tracing-wasm",
+    "serde-wasm-bindgen",
+]
+console_error_panic_hook = ["dep:console_error_panic_hook"]
 
 [build-dependencies]
 fst = "0.4"

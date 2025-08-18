@@ -95,6 +95,8 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(not(target_arch = "wasm32"))]
+use futures::FutureExt;
 use futures::{Future, future};
 use lyrics_helper_core::{
     ComprehensiveSearchResult, ConversionInput, ConversionOptions, CoverSize, FullConversionResult,
@@ -176,11 +178,10 @@ impl std::str::FromStr for ProviderName {
         Self::try_from_str(s).ok_or_else(|| format!("不支持的提供商: {s}"))
     }
 }
+#[cfg(not(target_arch = "wasm32"))]
+use crate::providers::amll_ttml_database::AmllTtmlDatabase;
 
-use crate::providers::{
-    Provider, amll_ttml_database::AmllTtmlDatabase, kugou::KugouMusic, netease::NeteaseClient,
-    qq::QQMusic,
-};
+use crate::providers::{Provider, kugou::KugouMusic, netease::NeteaseClient, qq::QQMusic};
 
 /// 定义歌词的搜索策略。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -241,13 +242,23 @@ impl SearchMode {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 /// 一个代表歌词搜索结果的 Future。
 pub type SearchLyricsFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<LyricsAndMetadata>>> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+/// 一个代表歌词搜索结果的 Future。
+pub type SearchLyricsFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<LyricsAndMetadata>>> + 'a>>;
 
+#[cfg(not(target_arch = "wasm32"))]
 /// 一个代表全面的歌词搜索结果的 Future。
 pub type SearchLyricsComprehensiveFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<ComprehensiveSearchResult>>> + Send + 'a>>;
+#[cfg(target_arch = "wasm32")]
+/// 一个代表全面的歌词搜索结果的 Future。
+pub type SearchLyricsComprehensiveFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Option<ComprehensiveSearchResult>>> + 'a>>;
 
 /// 顶层歌词助手客户端，封装了所有提供商，为用户提供统一、简单的接口。
 ///
@@ -282,12 +293,17 @@ impl LyricsHelper {
     /// # 返回
     /// 如果所有提供商都成功或部分成功初始化，则返回 `Ok(())`。
     pub async fn load_providers(&mut self) -> Result<()> {
+        #[cfg(not(target_arch = "wasm32"))]
         type Initializer<'a> = Pin<
             Box<
                 dyn Future<Output = (&'static str, Result<Box<dyn Provider + Send + Sync>>)>
                     + Send
                     + 'a,
             >,
+        >;
+        #[cfg(target_arch = "wasm32")]
+        type Initializer<'a> = Pin<
+            Box<dyn Future<Output = (&'static str, Result<Box<dyn Provider + Send + Sync>>)> + 'a>,
         >;
 
         let amll_config = config::load_amll_config().unwrap_or_else(|e| {
@@ -314,6 +330,7 @@ impl LyricsHelper {
                     KugouMusic::new().await.map(|p| Box::new(p) as Box<_>),
                 )
             }),
+            #[cfg(not(target_arch = "wasm32"))]
             Box::pin(async {
                 (
                     "AmllTtmlDatabase",
@@ -352,10 +369,53 @@ impl LyricsHelper {
     /// # 返回
     /// 一个 `Result`，成功时包含一个 `Vec<SearchResult>`，该向量已按匹配度从高到低排序。
     #[must_use]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn search_track<'a>(
         &self,
         track_meta: &Track<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SearchResult>>> + Send + 'a>> {
+        if self.providers.is_empty() {
+            return Box::pin(async { Err(LyricsHelperError::ProvidersNotInitialized) });
+        }
+
+        let providers = self.providers.clone();
+        let track_meta = track_meta.clone();
+
+        Box::pin(async move {
+            let search_futures = providers
+                .iter()
+                .map(|provider| search::search_track(provider.as_ref(), &track_meta, true));
+
+            let all_results: Vec<SearchResult> = future::join_all(search_futures)
+                .await
+                .into_iter()
+                .filter_map(Result::ok)
+                .flatten()
+                .collect();
+
+            let mut sorted_results = all_results;
+            sorted_results.sort_by(|a, b| b.match_type.cmp(&a.match_type));
+
+            let mut unique_results = Vec::new();
+            let mut seen_keys = HashSet::new();
+
+            for result in sorted_results {
+                let key = (result.provider_name.clone(), result.provider_id.clone());
+                if seen_keys.insert(key) {
+                    unique_results.push(result);
+                }
+            }
+
+            Ok(unique_results)
+        })
+    }
+
+    #[must_use]
+    #[cfg(target_arch = "wasm32")]
+    pub fn search_track<'a>(
+        &self,
+        track_meta: &Track<'a>,
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<SearchResult>>> + 'a>> {
         if self.providers.is_empty() {
             return Box::pin(async { Err(LyricsHelperError::ProvidersNotInitialized) });
         }
@@ -402,6 +462,7 @@ impl LyricsHelper {
     ///
     /// # 返回
     /// `Result<ParsedSourceData>` - 成功时返回已解析和合并好的歌词数据。
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_full_lyrics<'a>(
         &self,
         provider_name: &'a str,
@@ -416,6 +477,30 @@ impl LyricsHelper {
             .iter()
             .find(|p| p.name() == provider_name)
             .cloned() // 克隆 Arc
+            .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
+
+        let song_id = song_id.to_string();
+
+        Ok(Box::pin(
+            async move { provider.get_full_lyrics(&song_id).await },
+        ))
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_full_lyrics<'a>(
+        &self,
+        provider_name: &'a str,
+        song_id: &'a str,
+    ) -> Result<Pin<Box<dyn Future<Output = Result<FullLyricsResult>> + 'a>>> {
+        if self.providers.is_empty() {
+            return Err(LyricsHelperError::ProvidersNotInitialized);
+        }
+
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.name() == provider_name)
+            .cloned()
             .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
 
         let song_id = song_id.to_string();
@@ -552,10 +637,78 @@ impl LyricsHelper {
     /// * `Some(Vec<u8>)` - 成功获取到的封面数据
     /// * `None` - 所有候选项都无法提供封面
     #[must_use]
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_best_cover<'a>(
         &self,
         candidates: &'a [SearchResult],
     ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + Send + 'a>> {
+        let providers_map: HashMap<_, _> = self
+            .providers
+            .iter()
+            .map(|p| (p.name(), p.clone()))
+            .collect();
+
+        let candidates = candidates.to_vec();
+
+        Box::pin(async move {
+            let candidates_to_try = candidates.iter().take(5);
+
+            for candidate in candidates_to_try {
+                if let Some(album_id) = &candidate.album_id
+                    && let Some(provider) = providers_map.get(candidate.provider_name.as_str())
+                {
+                    tracing::debug!(
+                        "尝试从 '{}' 获取专辑 '{}' 的封面",
+                        provider.name(),
+                        album_id
+                    );
+
+                    match provider
+                        .get_album_cover_url(album_id, CoverSize::Large)
+                        .await
+                    {
+                        Ok(url) => match reqwest::get(&url).await {
+                            Ok(response) => {
+                                if response.status().is_success() {
+                                    match response.bytes().await {
+                                        Ok(bytes) => {
+                                            tracing::info!(
+                                                "从 '{}' 的 '{}' 成功获取到封面",
+                                                provider.name(),
+                                                candidate.title
+                                            );
+                                            return Some(bytes.to_vec());
+                                        }
+                                        Err(e) => {
+                                            tracing::debug!("下载封面数据失败: {}", e);
+                                        }
+                                    }
+                                } else {
+                                    tracing::debug!("封面请求返回状态码: {}", response.status());
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!("请求封面URL失败: {}", e);
+                            }
+                        },
+                        Err(e) => {
+                            tracing::debug!("获取封面URL失败: {}", e);
+                        }
+                    }
+                }
+            }
+
+            tracing::info!("遍历完所有候选项都无法获取到封面");
+            None
+        })
+    }
+
+    #[must_use]
+    #[cfg(target_arch = "wasm32")]
+    pub fn get_best_cover<'a>(
+        &self,
+        candidates: &'a [SearchResult],
+    ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + 'a>> {
         let providers_map: HashMap<_, _> = self
             .providers
             .iter()

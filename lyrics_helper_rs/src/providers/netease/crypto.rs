@@ -15,7 +15,7 @@ use ecb::Encryptor as EcbModeEncryptor;
 use md5::{Digest, Md5 as Md5Hasher};
 use num_bigint::BigInt;
 use num_traits::Num;
-use rand::{Rng, distr::Alphanumeric, rng};
+use rand::{Rng, distributions::Alphanumeric, thread_rng};
 
 use crate::error::{LyricsHelperError, Result};
 
@@ -35,7 +35,7 @@ pub(crate) const MODULUS_STR_API: &str = "00e0b509f6259df8642dbc35662901477df226
 ///
 /// 此函数主要用于为 WEAPI 生成 16 字节的随机对称密钥 `weapi_secret_key`。
 pub fn create_secret_key(length: usize) -> String {
-    rng()
+    thread_rng()
         .sample_iter(&Alphanumeric)
         .take(length)
         .map(char::from)

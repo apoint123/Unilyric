@@ -11,3 +11,12 @@ resolver = "3"
 [patch.crates-io]
 lyrics_helper_core = { path = "lyrics_helper_core" }
 ttml_processor = { path = "ttml_processor" }
+
+[workspace.dependencies]
+getrandom = { version = "0.2", features = ["js"] }
+
+[profile.release]
+opt-level = 'z'
+lto = true
+codegen-units = 1
+panic = 'abort'

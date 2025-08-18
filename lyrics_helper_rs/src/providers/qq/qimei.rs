@@ -5,10 +5,11 @@
 
 use crate::providers::qq::device::Device;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use chrono::Local;
+use chrono::{Local, Utc};
 use cipher::{BlockEncryptMut, KeyIvInit};
 use md5::{Digest, Md5};
 use rand::Rng;
+use rand::rngs::OsRng;
 use rsa::pkcs8::DecodePublicKey;
 use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
 use std::fmt::Write;
@@ -37,7 +38,7 @@ fn rsa_encrypt(content: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
 
     let public_key = RsaPublicKey::from_public_key_pem(cleaned_key)?;
 
-    let mut rng = rand::rng();
+    let mut rng = OsRng;
     let encrypted = public_key.encrypt(&mut rng, Pkcs1v15Encrypt, content)?;
     Ok(encrypted)
 }
@@ -64,12 +65,12 @@ fn aes_encrypt(key: &[u8], content: &[u8]) -> Result<Vec<u8>, &'static str> {
 
 fn random_beacon_id() -> String {
     let mut beacon_id = String::with_capacity(1600);
-    let mut rng = rand::rng();
+    let mut rng = rand::thread_rng();
 
     let now = Local::now();
     let time_month = now.format("%Y-%m-01").to_string();
-    let rand1: u32 = rng.random_range(100_000..=999_999);
-    let rand2: u64 = rng.random_range(100_000_000..=999_999_999);
+    let rand1: u32 = rng.gen_range(100_000..=999_999);
+    let rand2: u64 = rng.gen_range(100_000_000..=999_999_999);
 
     for i in 1..=40 {
         write!(beacon_id, "k{i}:").unwrap();
@@ -85,14 +86,14 @@ fn random_beacon_id() -> String {
                 const CHARSET: &[u8] = b"123456789abcdef";
                 let hex_str: String = (0..16)
                     .map(|_| {
-                        let idx = rng.random_range(0..CHARSET.len());
+                        let idx = rng.gen_range(0..CHARSET.len());
                         CHARSET[idx] as char
                     })
                     .collect();
                 beacon_id.push_str(&hex_str);
             }
             _ => {
-                beacon_id.push_str(&rng.random_range(0..=9999).to_string());
+                beacon_id.push_str(&rng.gen_range(0..=9999).to_string());
             }
         }
         beacon_id.push(';');
@@ -141,17 +142,17 @@ pub async fn get_qimei(
         let payload_bytes = serde_json::to_vec(&payload)?;
 
         let (crypt_key, nonce) = {
-            let mut rng = rand::rng();
+            let mut rng = rand::thread_rng();
             let crypt_key: String = (0..16)
                 .map(|_| {
-                    let idx = rng.random_range(0..HEX_CHARSET.len());
+                    let idx = rng.gen_range(0..HEX_CHARSET.len());
                     HEX_CHARSET[idx] as char
                 })
                 .collect();
 
             let nonce: String = (0..16)
                 .map(|_| {
-                    let idx = rng.random_range(0..HEX_CHARSET.len());
+                    let idx = rng.gen_range(0..HEX_CHARSET.len());
                     HEX_CHARSET[idx] as char
                 })
                 .collect();
@@ -165,9 +166,7 @@ pub async fn get_qimei(
         let params_encrypted = aes_encrypt(crypt_key.as_bytes(), &payload_bytes)?;
         let params_b64 = STANDARD.encode(params_encrypted);
 
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_millis();
+        let ts = Utc::now().timestamp_millis();
 
         let extra = format!(r#"{{"appKey":"{APP_KEY}"}}"#);
 
