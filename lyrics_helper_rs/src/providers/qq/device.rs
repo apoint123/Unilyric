@@ -139,9 +139,13 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::{load_cached_config, native::get_config_file_path, save_cached_config};
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::config::native::get_config_file_path;
+    #[cfg(not(target_arch = "wasm32"))]
+    use crate::config::{load_cached_config, save_cached_config};
 
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
     use std::fs;
 
     #[test]
@@ -159,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_arch = "wasm32"))]
     fn test_device_caching_flow() {
         const CACHE_FILENAME: &str = "qq_device_test.json";
         let cache_path = get_config_file_path(CACHE_FILENAME).expect("无法获取缓存路径");

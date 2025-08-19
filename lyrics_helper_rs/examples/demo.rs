@@ -6,6 +6,7 @@
 //! cargo run --package lyrics_helper_rs --example demo
 //! ```
 
+use std::fs;
 use std::io::{self, Write};
 
 use lyrics_helper_core::{MetadataStore, SearchResult, Track, TtmlGenerationOptions};
@@ -16,7 +17,7 @@ use lyrics_helper_rs::error::Result;
 use tracing::{Level, error, info};
 use ttml_processor::generate_ttml;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
@@ -97,7 +98,7 @@ async fn main() -> Result<()> {
     )?;
 
     let output_filename = "lyrics.ttml";
-    tokio::fs::write(output_filename, &ttml_output).await?;
+    fs::write(output_filename, &ttml_output)?;
 
     info!("转换成功！TTML 歌词已保存到文件: {}", output_filename);
     Ok(())

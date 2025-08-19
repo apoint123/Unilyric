@@ -10,13 +10,12 @@
 //!    - 调用 `get_song_info(hash)` 获取该歌曲的详细信息。
 //!    - 调用 `get_song_link(hash)` 获取该歌曲的播放链接。
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
 use md5::{Digest, Md5};
-use reqwest::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
 use tracing::{info, instrument, warn};
@@ -25,6 +24,7 @@ use crate::{
     config::{load_cached_config, save_cached_config},
     converter::{self},
     error::{LyricsHelperError, Result},
+    http::HttpClient,
     providers::Provider,
 };
 
@@ -63,7 +63,7 @@ pub struct KugouMusic {
     dfid: String,
     mid: String,
     uuid: String,
-    http_client: Client,
+    http_client: Arc<dyn HttpClient>,
 }
 
 /// 用于解析注册响应的结构体
@@ -91,11 +91,10 @@ fn strip_artist_from_title<'a>(full_title: &'a str, artists_str: &str) -> &'a st
 }
 
 impl KugouMusic {
-    fn from_dfid(dfid: String) -> Self {
+    fn from_dfid(dfid: String, http_client: Arc<dyn HttpClient>) -> Self {
         let mid = hex::encode(Md5::digest(dfid.as_bytes()));
         let uuid_str = format!("{dfid}{mid}");
         let uuid = hex::encode(Md5::digest(uuid_str.as_bytes()));
-        let http_client = Client::new();
 
         Self {
             dfid,
@@ -106,9 +105,7 @@ impl KugouMusic {
     }
 
     /// 创建一个新的 `KugouMusic` 提供商实例
-    async fn register_via_network() -> Result<Self> {
-        let http_client = Client::new();
-
+    async fn register_via_network(http_client: Arc<dyn HttpClient>) -> Result<Self> {
         let clienttime = get_current_timestamp_sec_str();
 
         let register_payload_json = json!({
@@ -135,31 +132,35 @@ impl KugouMusic {
         let mut final_query_params = params_for_sig;
         final_query_params.insert("signature".to_string(), signature);
 
-        let mut headers = reqwest::header::HeaderMap::new();
-        headers.insert("User-Agent", KUGOU_ANDROID_USER_AGENT.parse().unwrap());
         let header_mid = hex::encode(Md5::digest(b"-"));
-        headers.insert("mid", header_mid.parse().unwrap());
+        let request_headers = [
+            ("User-Agent", KUGOU_ANDROID_USER_AGENT),
+            ("mid", &header_mid),
+        ];
 
-        let register_url = "https://userservice.kugou.com/risk/v1/r_register_dev";
+        let base_url = "https://userservice.kugou.com/risk/v1/r_register_dev";
+        let query_string = serde_urlencoded::to_string(&final_query_params).map_err(|e| {
+            LyricsHelperError::Internal(format!("Failed to build query string: {e}"))
+        })?;
+        let full_url = format!("{base_url}?{query_string}");
+
         let resp = http_client
-            .post(register_url)
-            .query(&final_query_params)
-            .headers(headers)
-            .body(encoded_payload)
-            .send()
+            .request_with_headers(
+                crate::http::HttpMethod::Post,
+                &full_url,
+                &request_headers,
+                Some(encoded_payload.as_bytes()),
+            )
             .await?;
 
-        if !resp.status().is_success() {
-            return Err(LyricsHelperError::ApiError(format!(
+        if resp.status >= 400 {
+            return Err(LyricsHelperError::Http(format!(
                 "酷狗设备注册失败，HTTP状态码: {}",
-                resp.status()
+                resp.status
             )));
         }
 
-        let response_text = resp
-            .text()
-            .await
-            .map_err(|e| LyricsHelperError::ApiError(format!("读取酷狗注册响应体失败: {e}")))?;
+        let response_text = resp.text()?;
 
         let json_value: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
             LyricsHelperError::ApiError(format!("解析酷狗注册响应 '{response_text}' 失败: {e}"))
@@ -177,47 +178,7 @@ impl KugouMusic {
 
         let dfid = register_info.data.dfid;
 
-        Ok(Self::from_dfid(dfid))
-    }
-
-    /// 公共构造函数，集成了加载和注册逻辑
-    pub async fn new() -> Result<Self> {
-        const CACHE_FILENAME: &str = "kugou_config.json";
-        const DFID_EXPIRATION_DAYS: i64 = 7;
-
-        let cached_config = load_cached_config::<KugouConfig>(CACHE_FILENAME);
-
-        if let Ok(config) = &cached_config {
-            if Utc::now() - config.last_updated < Duration::days(DFID_EXPIRATION_DAYS) {
-                info!("使用有效的酷狗 DFID 缓存。");
-                return Ok(Self::from_dfid(config.data.dfid.clone()));
-            }
-            info!("酷狗 DFID 缓存已过期。");
-        }
-
-        info!("正在通过网络为酷狗注册新设备...");
-        match Self::register_via_network().await {
-            Ok(new_instance) => {
-                info!("酷狗新设备注册成功。");
-                let new_config = KugouConfig {
-                    dfid: new_instance.dfid.clone(),
-                };
-                if let Err(e) = save_cached_config(CACHE_FILENAME, &new_config) {
-                    warn!("保存新的酷狗 DFID 失败: {}", e);
-                }
-                Ok(new_instance)
-            }
-            Err(e) => {
-                if let Ok(config) = cached_config {
-                    warn!("酷狗注册失败 ({})，将继续使用已过期的 DFID。", e);
-                    Ok(Self::from_dfid(config.data.dfid))
-                } else {
-                    Err(LyricsHelperError::ApiError(format!(
-                        "酷狗设备注册失败，且无可用缓存: {e}"
-                    )))
-                }
-            }
-        }
+        Ok(Self::from_dfid(dfid, http_client))
     }
 
     /// 私有辅助函数，用于执行需要安卓签名的 GET 请求。
@@ -242,18 +203,23 @@ impl KugouMusic {
         let signature = signature::signature_android_params(&business_params, "", false);
         business_params.insert("signature".to_string(), signature);
 
-        let mut request_builder = self.http_client.get(url).query(&business_params);
+        let query_string = serde_urlencoded::to_string(&business_params)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
+        let full_url = format!("{url}?{query_string}");
+
+        let router_header;
+        let mut headers = vec![("User-Agent", KUGOU_ANDROID_USER_AGENT), ("kg-tid", KG_TID)];
         if let Some(router) = x_router {
-            request_builder = request_builder.header("x-router", router);
+            router_header = ("x-router", router);
+            headers.push(router_header);
         }
 
-        let response = request_builder
-            .header("User-Agent", KUGOU_ANDROID_USER_AGENT)
-            .header("kg-tid", KG_TID)
-            .send()
+        let response = self
+            .http_client
+            .request_with_headers(crate::http::HttpMethod::Get, &full_url, &headers, None)
             .await?;
 
-        let response_text = response.text().await?;
+        let response_text = response.text()?;
 
         tracing::trace!(
             url = url,
@@ -261,9 +227,7 @@ impl KugouMusic {
             "原始 JSON 响应"
         );
 
-        let result: R = serde_json::from_str(&response_text)?;
-
-        Ok(result)
+        serde_json::from_str(&response_text).map_err(Into::into)
     }
 
     /// 私有辅助函数，用于执行需要安卓签名的 POST 请求。
@@ -291,19 +255,32 @@ impl KugouMusic {
         let signature = signature::signature_android_params(&params, &body_str, false);
         params.insert("signature".to_string(), signature);
 
-        let mut request_builder = self.http_client.post(url).query(&params);
+        let query_string = serde_urlencoded::to_string(&params)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
+        let full_url = format!("{url}?{query_string}");
+
+        let router_header;
+        let mut headers = vec![
+            ("User-Agent", KUGOU_ANDROID_USER_AGENT),
+            ("kg-tid", KG_TID),
+            ("Content-Type", "application/json"),
+        ];
         if let Some(router) = x_router {
-            request_builder = request_builder.header("x-router", router);
+            router_header = ("x-router", router);
+            headers.push(router_header);
         }
-        let response = request_builder
-            .header("User-Agent", KUGOU_ANDROID_USER_AGENT)
-            .header("kg-tid", KG_TID)
-            .header("Content-Type", "application/json")
-            .body(body_str)
-            .send()
+
+        let response = self
+            .http_client
+            .request_with_headers(
+                crate::http::HttpMethod::Post,
+                &full_url,
+                &headers,
+                Some(body_str.as_bytes()),
+            )
             .await?;
 
-        let response_text = response.text().await?;
+        let response_text = response.text()?;
 
         tracing::trace!(
             url = url,
@@ -311,9 +288,7 @@ impl KugouMusic {
             "原始 JSON 响应"
         );
 
-        let result: R = serde_json::from_str(&response_text)?;
-
-        Ok(result)
+        serde_json::from_str(&response_text).map_err(Into::into)
     }
 
     /// 为 expendablekmr.kugou.com 域名下的 GET 请求执行签名和发送。
@@ -337,32 +312,33 @@ impl KugouMusic {
         business_params.insert("clientver".to_string(), CLIENT_VER.to_string());
         business_params.insert("signature".to_string(), signature);
 
-        // 构建请求，并使用占位符身份设置 Header
-        let url = "https://expendablekmr.kugou.com/container/v2/image";
+        let query_string = serde_urlencoded::to_string(&business_params)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
+        let base_url = "https://expendablekmr.kugou.com/container/v2/image";
+        let full_url = format!("{base_url}?{query_string}");
+
         let mid = hex::encode(Md5::digest(b"-"));
+        let headers = [
+            ("User-Agent", KUGOU_ANDROID_USER_AGENT),
+            ("kg-tid", KG_TID),
+            ("dfid", "-"),
+            ("mid", &mid),
+        ];
 
         let response = self
             .http_client
-            .get(url)
-            .query(&business_params)
-            .header("User-Agent", KUGOU_ANDROID_USER_AGENT)
-            .header("kg-tid", KG_TID)
-            .header("dfid", "-")
-            .header("mid", mid)
-            .send()
+            .request_with_headers(crate::http::HttpMethod::Get, &full_url, &headers, None)
             .await?;
 
-        let response_text = response.text().await?;
+        let response_text = response.text()?;
 
         tracing::trace!(
-            url = url,
+            url = base_url,
             response.body = %response_text,
             "原始 JSON 响应"
         );
 
-        let result: R = serde_json::from_str(&response_text)?;
-
-        Ok(result)
+        serde_json::from_str(&response_text).map_err(Into::into)
     }
 
     /// 批量获取封面等图片信息。
@@ -391,6 +367,48 @@ impl KugouMusic {
 impl Provider for KugouMusic {
     fn name(&self) -> &'static str {
         "kugou"
+    }
+
+    async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        const CACHE_FILENAME: &str = "kugou_config.json";
+        const DFID_EXPIRATION_DAYS: i64 = 7;
+
+        let cached_config = load_cached_config::<KugouConfig>(CACHE_FILENAME);
+
+        if let Ok(config) = &cached_config {
+            if Utc::now() - config.last_updated < Duration::days(DFID_EXPIRATION_DAYS) {
+                info!("使用有效的酷狗 DFID 缓存。");
+                return Ok(Self::from_dfid(config.data.dfid.clone(), http_client));
+            }
+            info!("酷狗 DFID 缓存已过期。");
+        }
+
+        info!("正在通过网络为酷狗注册新设备...");
+        match Self::register_via_network(http_client.clone()).await {
+            Ok(new_instance) => {
+                info!("酷狗新设备注册成功。");
+                let new_config = KugouConfig {
+                    dfid: new_instance.dfid.clone(),
+                };
+                if let Err(e) = save_cached_config(CACHE_FILENAME, &new_config) {
+                    warn!("保存新的酷狗 DFID 失败: {}", e);
+                }
+                Ok(new_instance)
+            }
+            Err(e) => {
+                if let Ok(config) = cached_config {
+                    warn!("酷狗注册失败 ({})，将继续使用已过期的 DFID。", e);
+                    Ok(Self::from_dfid(config.data.dfid, http_client))
+                } else {
+                    Err(LyricsHelperError::ApiError(format!(
+                        "酷狗设备注册失败，且无可用缓存: {e}"
+                    )))
+                }
+            }
+        }
     }
 
     /// 根据歌曲元数据搜索歌曲。
@@ -476,13 +494,7 @@ impl Provider for KugouMusic {
         let search_lyrics_url = format!(
             "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=&hash={song_hash}"
         );
-        let search_resp_text = self
-            .http_client
-            .get(&search_lyrics_url)
-            .send()
-            .await?
-            .text()
-            .await?;
+        let search_resp_text = self.http_client.get(&search_lyrics_url).await?.text()?;
 
         tracing::trace!(
             url = search_lyrics_url,
@@ -509,13 +521,7 @@ impl Provider for KugouMusic {
             best_candidate.id, best_candidate.accesskey
         );
 
-        let download_resp_text = self
-            .http_client
-            .get(&download_url)
-            .send()
-            .await?
-            .text()
-            .await?;
+        let download_resp_text = self.http_client.get(&download_url).await?.text()?;
 
         tracing::trace!(
             url = download_url,
@@ -1025,7 +1031,10 @@ mod tests {
     async fn get_dfid() -> &'static str {
         TEST_DFID
             .get_or_init(|| async {
-                let new_instance = KugouMusic::register_via_network()
+                let http_client = Arc::new(
+                    crate::http::ReqwestClient::new().expect("Failed to create HTTP client"),
+                );
+                let new_instance = KugouMusic::register_via_network(http_client)
                     .await
                     .expect("获取 DFID 失败");
 
@@ -1039,7 +1048,9 @@ mod tests {
 
     async fn get_test_provider() -> KugouMusic {
         let dfid = get_dfid().await;
-        KugouMusic::from_dfid(dfid.to_string())
+        let http_client =
+            Arc::new(crate::http::ReqwestClient::new().expect("Failed to create HTTP client"));
+        KugouMusic::from_dfid(dfid.to_string(), http_client)
     }
 
     const TEST_SONG_NAME: &str = "这人生所有的美好";

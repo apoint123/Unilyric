@@ -69,6 +69,7 @@ web-sys = { version = "0.3", features = ["Window", "Storage"], optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 tracing-wasm = { version = "0.2", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
+serde_urlencoded = "0.7.1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.uuid]
 version = "1"
@@ -76,6 +77,8 @@ features = ["v4", "js"]
 
 [dev-dependencies]
 tracing = "0.1.41"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.7.0"
 
 [features]
@@ -97,7 +100,9 @@ fst = "0.4"
 [[bench]]
 name = "decryption_benchmark"
 harness = false
+required-features = []
 
 [[bench]]
 name = "ttml_parser_benchmark"
 harness = false
+required-features = []

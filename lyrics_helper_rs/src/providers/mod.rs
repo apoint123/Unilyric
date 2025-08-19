@@ -2,14 +2,16 @@
 //!
 //! 该模块定义了与 Providers 进行交互的核心抽象。
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use lyrics_helper_core::{
     CoverSize, FullLyricsResult, ParsedSourceData, SearchResult, Track, model::generic,
 };
 
 use crate::error::Result;
+use crate::http::{HttpClient, ReqwestClient};
 
-#[cfg(not(target_arch = "wasm32"))]
 pub mod amll_ttml_database;
 pub mod kugou;
 // pub mod musixmatch;
@@ -21,6 +23,20 @@ pub mod qq;
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// 使用默认的 Reqwest HTTP 客户端创建一个新的 Provider 实例。
+    async fn new() -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let http_client = Arc::new(ReqwestClient::new()?);
+        Self::with_http_client(http_client).await
+    }
+
+    /// 使用自定义的 HTTP 客户端创建一个新的 Provider 实例。
+    async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
+    where
+        Self: Sized;
+
     ///
     /// 返回提供商的唯一名称。
     ///

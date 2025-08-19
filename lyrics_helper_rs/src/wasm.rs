@@ -1,5 +1,6 @@
-// 随便写的，只保证基本功能正常
+use std::sync::Arc;
 
+use crate::http::WasmClient;
 use crate::{LyricsHelper, SearchMode};
 use lyrics_helper_core::{ConversionInput, ConversionOptions, Track};
 use serde::Deserialize;
@@ -20,12 +21,17 @@ pub struct WasmLyricsHelper {
 
 #[wasm_bindgen]
 impl WasmLyricsHelper {
-    pub async fn new() -> Result<WasmLyricsHelper, JsValue> {
-        let mut helper = LyricsHelper::new();
+    #[wasm_bindgen(constructor)]
+    pub async fn new(proxy_url: Option<String>) -> Result<WasmLyricsHelper, JsValue> {
+        let wasm_http_client = Arc::new(WasmClient::new(proxy_url));
+
+        let mut helper = LyricsHelper::new_with_http_client(wasm_http_client);
+
         helper
             .load_providers()
             .await
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
         Ok(Self { helper })
     }
 

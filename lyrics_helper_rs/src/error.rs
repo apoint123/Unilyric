@@ -11,9 +11,13 @@ pub enum LyricsHelperError {
     #[error(transparent)]
     Anyhow(#[from] anyhow::Error),
 
-    /// 网络请求失败 (源自 `reqwest::Error`)
-    #[error("网络请求失败: {0}")]
-    Reqwest(#[from] reqwest::Error),
+    /// 通用的HTTP请求错误
+    #[error("HTTP请求错误: {0}")]
+    Http(String),
+
+    /// 编码/解码错误
+    #[error("编码错误: {0}")]
+    Encoding(String),
 
     /// JSON 解析失败 (源自 `serde_json::Error`)
     #[error("JSON 解析失败: {0}")]
@@ -67,10 +71,6 @@ pub enum LyricsHelperError {
     #[error("内部错误: {0}")]
     Internal(String),
 
-    /// 更通用的网络层错误
-    #[error("网络错误: {0}")]
-    Network(String),
-
     /// API 请求被限流
     #[error("API 请求被限流: {0}")]
     RateLimited(String),
@@ -92,7 +92,7 @@ impl From<ConvertError> for LyricsHelperError {
             ConvertError::Base64Decode(e) => Self::Base64Decode(e),
             ConvertError::FromUtf8(e) => Self::FromUtf8(e),
             ConvertError::Io(e) => Self::Io(e),
-            ConvertError::Encoding(e) => Self::Internal(format!("编码错误: {e}")),
+            ConvertError::Encoding(e) => Self::Encoding(format!("编码错误: {e}")),
 
             ConvertError::JsonParse { source, context } => {
                 let error_message = format!("解析 JSON 内容 {context} 失败: {source}");

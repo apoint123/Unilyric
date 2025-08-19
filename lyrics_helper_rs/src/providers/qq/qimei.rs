@@ -3,6 +3,8 @@
 //! Qimei 是访问 QQ 音乐新版 API 必需的一个关键身份参数。
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
+use crate::http::HttpClient;
+use crate::http::HttpMethod;
 use crate::providers::qq::device::Device;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{Local, Utc};
@@ -107,6 +109,7 @@ fn random_beacon_id() -> String {
 /// * `device` - 一个包含了虚拟设备所有信息的 `Device` 实例。
 /// * `version` - 当前模拟的 App 版本号字符串。
 pub async fn get_qimei(
+    http_client: &dyn HttpClient,
     device: &Device,
     version: &str,
 ) -> Result<QimeiResult, Box<dyn std::error::Error>> {
@@ -180,33 +183,44 @@ pub async fn get_qimei(
         let sign = hex::encode(signature_hasher.finalize());
 
         let ts_sec = ts / 1000;
-        let client = reqwest::Client::new();
         let mut header_sign_hasher = Md5::new();
         header_sign_hasher.update(format!(
             "qimei_qq_androidpzAuCmaFAaFaHrdakPjLIEqKrGnSOOvH{ts_sec}"
         ));
         let header_sign = hex::encode(header_sign_hasher.finalize());
+        let ts_sec_str = ts_sec.to_string();
 
-        let response = client
-            .post("https://api.tencentmusic.com/tme/trpc/proxy")
-            .header("method", "GetQimei")
-            .header("service", "trpc.tme_datasvr.qimeiproxy.QimeiProxy")
-            .header("appid", "qimei_qq_android")
-            .header("sign", header_sign)
-            .header("user-agent", "QQMusic")
-            .header("timestamp", ts_sec.to_string())
-            .json(&serde_json::json!({
-                "app": 0, "os": 1,
-                "qimeiParams": {
-                    "key": key_b64, "params": params_b64,
-                    "time": ts.to_string(), "nonce": nonce,
-                    "sign": sign, "extra": extra
-                }
-            }))
-            .send()
-            .await?;
+        let headers = [
+            ("method", "GetQimei"),
+            ("service", "trpc.tme_datasvr.qimeiproxy.QimeiProxy"),
+            ("appid", "qimei_qq_android"),
+            ("sign", &header_sign),
+            ("user-agent", "QQMusic"),
+            ("timestamp", &ts_sec_str),
+            ("Content-Type", "application/json"),
+        ];
 
-        let response_text = response.text().await?;
+        let body = serde_json::json!({
+            "app": 0, "os": 1,
+            "qimeiParams": {
+                "key": key_b64, "params": params_b64,
+                "time": ts.to_string(), "nonce": nonce,
+                "sign": sign, "extra": extra
+            }
+        });
+        let body_bytes = serde_json::to_vec(&body)?;
+
+        let response = http_client
+            .request_with_headers(
+                HttpMethod::Post,
+                "https://api.tencentmusic.com/tme/trpc/proxy",
+                &headers,
+                Some(&body_bytes),
+            )
+            .await
+            .map_err(Box::new)?;
+
+        let response_text = response.text().map_err(Box::new)?;
         let outer_resp: serde_json::Value = serde_json::from_str(&response_text)?;
         let inner_json_str = outer_resp["data"].as_str().ok_or("Inner data not found")?;
         let inner_resp: serde_json::Value = serde_json::from_str(inner_json_str)?;
@@ -241,16 +255,15 @@ pub async fn get_qimei(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::qq::device::Device;
+    use crate::{http::ReqwestClient, providers::qq::device::Device};
 
     #[tokio::test]
     #[ignore]
     async fn test_get_qimei_online() {
         let device = Device::new();
-
         let api_version = "13.2.5.8";
-
-        let qimei_result = get_qimei(&device, api_version).await;
+        let http_client = ReqwestClient::new().unwrap();
+        let qimei_result = get_qimei(&http_client, &device, api_version).await;
 
         assert!(
             qimei_result.is_ok(),

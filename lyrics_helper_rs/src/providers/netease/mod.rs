@@ -1,7 +1,7 @@
 //! 此模块实现了与网易云音乐平台进行交互的 `Provider`。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-use std::fmt::Write;
+use std::{fmt::Write, sync::Arc};
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -10,16 +10,14 @@ use lyrics_helper_core::{
     RawLyrics, SearchResult, Track, model::generic,
 };
 use rand::Rng;
-use reqwest::{
-    Client,
-    header::{CONTENT_TYPE, COOKIE, HeaderMap, HeaderValue, REFERER, USER_AGENT},
-};
+use reqwest::header::{CONTENT_TYPE, COOKIE, HeaderValue, REFERER, USER_AGENT};
 use serde::Serialize;
 use serde_json::json;
 
 use crate::{
     converter,
     error::{LyricsHelperError, Result},
+    http::HttpClient,
     providers::Provider,
 };
 
@@ -93,39 +91,11 @@ pub struct NeteaseClient {
     weapi_enc_sec_key: String,
     /// 用户的 Cookie，用于访问需要登录的接口
     cookie: Option<String>,
-    http_client: Client,
+    http_client: Arc<dyn HttpClient>,
     config: ClientConfig,
 }
 
 impl NeteaseClient {
-    /// 创建一个新的 `NeteaseClient` 实例。
-    fn new(config: ClientConfig, cookie: Option<String>) -> Result<Self> {
-        let weapi_secret_key = crypto::create_secret_key(16);
-        let weapi_enc_sec_key = crypto::rsa_encode(
-            &weapi_secret_key,
-            crypto::PUBKEY_STR_API,
-            crypto::MODULUS_STR_API,
-        )?;
-        let http_client = Client::new();
-        Ok(Self {
-            weapi_secret_key,
-            weapi_enc_sec_key,
-            cookie,
-            http_client,
-            config,
-        })
-    }
-
-    /// 一个便捷的默认构造函数
-    pub fn new_default() -> Result<Self> {
-        Self::new(ClientConfig::default(), None)
-    }
-
-    /// 一个便捷的带 Cookie 的构造函数
-    pub fn new_with_cookie(cookie: String) -> Result<Self> {
-        Self::new(ClientConfig::default(), Some(cookie))
-    }
-
     /// 辅助函数，用于发送加密的 WEAPI 请求。
     async fn post_weapi<T: Serialize, R: serde::de::DeserializeOwned>(
         &self,
@@ -174,18 +144,32 @@ impl NeteaseClient {
             .map_err(|e| LyricsHelperError::ApiError(format!("无法解析 WEAPI COOKIE: {e}")))?;
 
         // 发送 POST 请求
-        let response_text = self
+        let cookie_str_header = cookie_value.to_str().map_err(|_| {
+            LyricsHelperError::Internal("Failed to convert WEAPI cookie to string".to_string())
+        })?;
+
+        let headers = [
+            (USER_AGENT.as_str(), user_agent),
+            (REFERER.as_str(), BASE_URL_NETEASE),
+            (COOKIE.as_str(), cookie_str_header),
+            (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
+        ];
+
+        let body_bytes = serde_urlencoded::to_string(&form_data)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?
+            .into_bytes();
+
+        let response = self
             .http_client
-            .post(url)
-            .header(USER_AGENT, user_agent)
-            .header(REFERER, BASE_URL_NETEASE)
-            .header(COOKIE, cookie_value)
-            .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
-            .form(&form_data)
-            .send()
-            .await?
-            .text()
+            .request_with_headers(
+                crate::http::HttpMethod::Post,
+                url,
+                &headers,
+                Some(&body_bytes),
+            )
             .await?;
+
+        let response_text = response.text()?;
 
         if response_text.is_empty() {
             return Err(LyricsHelperError::ApiError(
@@ -234,24 +218,32 @@ impl NeteaseClient {
             .parse::<HeaderValue>()
             .map_err(|e| LyricsHelperError::ApiError(format!("无法解析 EAPI COOKIE: {e}")))?;
 
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static(user_agent));
-        headers.insert(COOKIE, cookie_value);
-        headers.insert(REFERER, HeaderValue::from_static(BASE_URL_NETEASE));
-        headers.insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/x-www-form-urlencoded"),
-        );
+        let cookie_str_header = cookie_value.to_str().map_err(|_| {
+            LyricsHelperError::Internal("Failed to convert EAPI cookie to string".to_string())
+        })?;
 
-        let response_text = self
+        let headers = [
+            (USER_AGENT.as_str(), user_agent),
+            (COOKIE.as_str(), cookie_str_header),
+            (REFERER.as_str(), BASE_URL_NETEASE),
+            (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
+        ];
+
+        let body_bytes = serde_urlencoded::to_string(&form_data)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?
+            .into_bytes();
+
+        let response = self
             .http_client
-            .post(full_url)
-            .headers(headers)
-            .form(&form_data)
-            .send()
-            .await?
-            .text()
+            .request_with_headers(
+                crate::http::HttpMethod::Post,
+                full_url,
+                &headers,
+                Some(&body_bytes),
+            )
             .await?;
+
+        let response_text = response.text()?;
 
         // println!("\n{}\n", &response_text);
         serde_json::from_str::<R>(&response_text).map_err(LyricsHelperError::from)
@@ -346,6 +338,26 @@ impl NeteaseClient {
 impl Provider for NeteaseClient {
     fn name(&self) -> &'static str {
         "netease"
+    }
+
+    async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let weapi_secret_key = crypto::create_secret_key(16);
+        let weapi_enc_sec_key = crypto::rsa_encode(
+            &weapi_secret_key,
+            crypto::PUBKEY_STR_API,
+            crypto::MODULUS_STR_API,
+        )?;
+
+        Ok(Self {
+            weapi_secret_key,
+            weapi_enc_sec_key,
+            cookie: None,
+            http_client,
+            config: ClientConfig::default(),
+        })
     }
 
     async fn search_songs(&self, track: &Track<'_>) -> Result<Vec<SearchResult>> {
@@ -754,7 +766,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_search_songs() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
 
         let search_track = Track {
             title: Some(TEST_SONG_NAME),
@@ -785,7 +797,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_lyrics() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let lyrics = provider.get_lyrics(TEST_SONG_ID).await.unwrap();
 
         assert!(!lyrics.lines.is_empty(), "解析后的歌词行列表不应为空");
@@ -795,7 +807,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_info() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let album_info = provider.get_album_info(TEST_ALBUM_ID).await.unwrap();
 
         assert_eq!(album_info.name, "明天见");
@@ -808,7 +820,7 @@ mod tests {
     #[ignore]
     async fn test_get_playlist() {
         const NEW_SONGS_PLAYLIST_ID: &str = "3779629";
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let playlist = provider.get_playlist(NEW_SONGS_PLAYLIST_ID).await.unwrap();
 
         let songs = playlist.songs.as_ref().expect("歌单应包含歌曲列表");
@@ -822,7 +834,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_song_info() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let song = provider.get_song_info(TEST_SONG_ID).await.unwrap();
 
         assert_eq!(song.name, TEST_SONG_NAME);
@@ -836,7 +848,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_song_link() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let link_result = provider.get_song_link(TEST_SONG_ID).await;
 
         match link_result {
@@ -859,7 +871,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_cover_url() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
         let album_id = "182985259";
 
         let medium_cover_url = provider
@@ -891,7 +903,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_singer_songs() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
 
         let singer_id = "12138269";
         let limit = 5;
@@ -935,7 +947,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_songs() {
-        let provider = NeteaseClient::new_default().unwrap();
+        let provider = NeteaseClient::new().await.unwrap();
 
         let album_id = "182985259";
 

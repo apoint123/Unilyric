@@ -82,10 +82,11 @@
 pub mod config;
 pub mod converter;
 pub mod error;
+pub mod http;
 pub mod model;
 pub mod providers;
 pub mod search;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
 pub mod wasm;
 
 use std::{
@@ -94,6 +95,8 @@ use std::{
     pin::Pin,
     sync::Arc,
 };
+
+use crate::http::{HttpClient, ReqwestClient};
 
 #[cfg(not(target_arch = "wasm32"))]
 use futures::FutureExt;
@@ -178,7 +181,6 @@ impl std::str::FromStr for ProviderName {
         Self::try_from_str(s).ok_or_else(|| format!("不支持的提供商: {s}"))
     }
 }
-#[cfg(not(target_arch = "wasm32"))]
 use crate::providers::amll_ttml_database::AmllTtmlDatabase;
 
 use crate::providers::{Provider, kugou::KugouMusic, netease::NeteaseClient, qq::QQMusic};
@@ -265,6 +267,7 @@ pub type SearchLyricsComprehensiveFuture<'a> =
 /// 这是与本库交互的主要入口点。
 pub struct LyricsHelper {
     providers: Vec<Arc<dyn Provider + Send + Sync>>,
+    http_client: Arc<dyn HttpClient>,
 }
 
 impl Default for LyricsHelper {
@@ -280,8 +283,20 @@ impl LyricsHelper {
     /// 若要使用歌词搜索和下载功能，必须先调用 `load_providers()` 方法。
     #[must_use]
     pub fn new() -> Self {
+        let default_client =
+            Arc::new(ReqwestClient::new().expect("Failed to create default HTTP client"));
+        Self::new_with_http_client(default_client)
+    }
+
+    /// 创建一个新的 `LyricsHelper` 实例，使用一个自定义的 HTTP 客户端。
+    ///
+    /// # 参数
+    /// * `http_client` - 一个实现了 `HttpClient` trait 的客户端实例。
+    #[must_use]
+    pub fn new_with_http_client(http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             providers: Vec::new(),
+            http_client,
         }
     }
 
@@ -306,35 +321,37 @@ impl LyricsHelper {
             Box<dyn Future<Output = (&'static str, Result<Box<dyn Provider + Send + Sync>>)> + 'a>,
         >;
 
-        let amll_config = config::load_amll_config().unwrap_or_else(|e| {
-            tracing::error!("[Main] 加载 AMLL 镜像配置失败: {}. 使用默认设置。", e);
-            config::AmllConfig::default()
-        });
+        let http_client = self.http_client.clone();
 
         let initializers: Vec<Initializer<'_>> = vec![
             Box::pin(async {
                 (
                     "QQMusic",
-                    QQMusic::new().await.map(|p| Box::new(p) as Box<_>),
+                    QQMusic::with_http_client(http_client.clone())
+                        .await
+                        .map(|p| Box::new(p) as Box<_>),
                 )
             }),
             Box::pin(async {
                 (
                     "NeteaseClient",
-                    NeteaseClient::new_default().map(|p| Box::new(p) as Box<_>),
+                    NeteaseClient::with_http_client(http_client.clone())
+                        .await
+                        .map(|p| Box::new(p) as Box<_>),
                 )
             }),
             Box::pin(async {
                 (
                     "KugouMusic",
-                    KugouMusic::new().await.map(|p| Box::new(p) as Box<_>),
+                    KugouMusic::with_http_client(http_client.clone())
+                        .await
+                        .map(|p| Box::new(p) as Box<_>),
                 )
             }),
-            #[cfg(not(target_arch = "wasm32"))]
             Box::pin(async {
                 (
                     "AmllTtmlDatabase",
-                    AmllTtmlDatabase::new(&amll_config)
+                    AmllTtmlDatabase::with_http_client(http_client.clone())
                         .await
                         .map(|p| Box::new(p) as Box<_>),
                 )
@@ -639,7 +656,7 @@ impl LyricsHelper {
     #[must_use]
     #[cfg(not(target_arch = "wasm32"))]
     pub fn get_best_cover<'a>(
-        &self,
+        &'a self,
         candidates: &'a [SearchResult],
     ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + Send + 'a>> {
         let providers_map: HashMap<_, _> = self
@@ -667,25 +684,17 @@ impl LyricsHelper {
                         .get_album_cover_url(album_id, CoverSize::Large)
                         .await
                     {
-                        Ok(url) => match reqwest::get(&url).await {
+                        Ok(url) => match self.http_client.get(&url).await {
                             Ok(response) => {
-                                if response.status().is_success() {
-                                    match response.bytes().await {
-                                        Ok(bytes) => {
-                                            tracing::info!(
-                                                "从 '{}' 的 '{}' 成功获取到封面",
-                                                provider.name(),
-                                                candidate.title
-                                            );
-                                            return Some(bytes.to_vec());
-                                        }
-                                        Err(e) => {
-                                            tracing::debug!("下载封面数据失败: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    tracing::debug!("封面请求返回状态码: {}", response.status());
+                                if response.status < 300 {
+                                    tracing::info!(
+                                        "从 '{}' 的 '{}' 成功获取到封面",
+                                        provider.name(),
+                                        candidate.title
+                                    );
+                                    return Some(response.body);
                                 }
+                                tracing::debug!("封面请求返回状态码: {}", response.status);
                             }
                             Err(e) => {
                                 tracing::debug!("请求封面URL失败: {}", e);
@@ -706,7 +715,7 @@ impl LyricsHelper {
     #[must_use]
     #[cfg(target_arch = "wasm32")]
     pub fn get_best_cover<'a>(
-        &self,
+        &'a self,
         candidates: &'a [SearchResult],
     ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + 'a>> {
         let providers_map: HashMap<_, _> = self
@@ -734,30 +743,23 @@ impl LyricsHelper {
                         .get_album_cover_url(album_id, CoverSize::Large)
                         .await
                     {
-                        Ok(url) => match reqwest::get(&url).await {
+                        Ok(url) => match self.http_client.get(&url).await {
                             Ok(response) => {
-                                if response.status().is_success() {
-                                    match response.bytes().await {
-                                        Ok(bytes) => {
-                                            tracing::info!(
-                                                "从 '{}' 的 '{}' 成功获取到封面",
-                                                provider.name(),
-                                                candidate.title
-                                            );
-                                            return Some(bytes.to_vec());
-                                        }
-                                        Err(e) => {
-                                            tracing::debug!("下载封面数据失败: {}", e);
-                                        }
-                                    }
-                                } else {
-                                    tracing::debug!("封面请求返回状态码: {}", response.status());
+                                if response.status < 300 {
+                                    tracing::info!(
+                                        "从 '{}' 的 '{}' 成功获取到封面",
+                                        provider.name(),
+                                        candidate.title
+                                    );
+                                    return Some(response.body);
                                 }
+                                tracing::debug!("封面请求返回状态码: {}", response.status);
                             }
                             Err(e) => {
                                 tracing::debug!("请求封面URL失败: {}", e);
                             }
                         },
+
                         Err(e) => {
                             tracing::debug!("获取封面URL失败: {}", e);
                         }

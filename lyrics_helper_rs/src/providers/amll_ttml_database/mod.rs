@@ -1,19 +1,15 @@
 //! 此模块实现了与 AMLL TTML Database 进行交互的 `Provider`。
 
-use std::{path::Path, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use reqwest::Client;
 use serde::Deserialize;
-use tokio::{
-    fs,
-    io::{AsyncBufReadExt, BufReader},
-};
 
 use crate::{
-    config::{AmllConfig, AmllMirror},
+    config::AmllMirror,
     converter::{self},
     error::{LyricsHelperError, Result},
+    http::HttpClient,
     model::match_type::MatchScorable,
     providers::{Provider, amll_ttml_database::types::SearchField},
     search::matcher::compare_track,
@@ -34,6 +30,8 @@ const REPO_OWNER: &str = "Steve-xmh";
 const REPO_NAME: &str = "amll-ttml-db";
 const REPO_BRANCH: &str = "main";
 const USER_AGENT: &str = "lyrics-helper-rs/0.1.0";
+const INDEX_CACHE_FILENAME: &str = "amll_ttml_db/index.jsonl";
+const HEAD_CACHE_FILENAME: &str = "amll_ttml_db/index.jsonl.head";
 
 /// 用于反序列化 GitHub commit API 响应的辅助结构体。
 #[derive(Deserialize)]
@@ -44,89 +42,11 @@ struct GitHubCommitInfo {
 /// AMLL TTML Database 提供商的实现。
 pub struct AmllTtmlDatabase {
     index: Arc<Vec<IndexEntry>>,
-    http_client: Client,
+    http_client: Arc<dyn HttpClient>,
     lyrics_url_template: String,
 }
 
 impl AmllTtmlDatabase {
-    /// 创建一个新的 `AmllTtmlDatabase` 实例。
-    ///
-    /// # 缓存逻辑
-    /// 1. 检查远程索引文件的最新 commit SHA。
-    /// 2. 与本地缓存的 SHA (`index.jsonl.head`) 进行比较。
-    /// 3. 如果 SHA 不同或本地缓存不存在，则从 GitHub 下载最新的 `index.jsonl` 文件，并更新缓存和 SHA。
-    /// 4. 如果 SHA 相同，或因 API 速率限制无法检查更新，则直接从本地缓存加载索引。
-    /// 5. 如果被速率限制且无本地缓存，则初始化失败。
-    pub async fn new(config: &AmllConfig) -> Result<Self> {
-        let (index_url, lyrics_url_template) = match &config.mirror {
-            AmllMirror::GitHub => (
-                format!(
-                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/{INDEX_FILE_PATH_IN_REPO}"
-                ),
-                format!(
-                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/raw-lyrics/{{song_id}}"
-                ),
-            ),
-            AmllMirror::Dimeta => (
-                "https://amll.mirror.dimeta.top/api/db/metadata/raw-lyrics-index.jsonl".to_string(),
-                "https://amll.mirror.dimeta.top/api/db/raw-lyrics/{song_id}".to_string(),
-            ),
-            AmllMirror::Bikonoo => (
-                "https://amll.bikonoo.com/metadata/raw-lyrics-index.jsonl".to_string(),
-                "https://amll.bikonoo.com/raw-lyrics/{song_id}".to_string(),
-            ),
-            AmllMirror::Custom {
-                index_url,
-                lyrics_url_template,
-            } => (index_url.clone(), lyrics_url_template.clone()),
-        };
-
-        let cache_dir = dirs::cache_dir()
-            .ok_or_else(|| LyricsHelperError::Internal("无法获取缓存目录".to_string()))?
-            .join("lyrics-helper-rs/amll_ttml_db");
-        fs::create_dir_all(&cache_dir).await?;
-        let index_cache_path = cache_dir.join("index.jsonl");
-
-        let http_client = Client::new();
-
-        let remote_head_result = fetch_remote_index_head(&http_client).await;
-
-        let (should_update, remote_head) = match remote_head_result {
-            Ok(sha) => {
-                let local_head = load_cached_index_head(&index_cache_path).await?;
-                (Some(sha.clone()) != local_head, Some(sha))
-            }
-            Err(LyricsHelperError::RateLimited(msg)) => {
-                tracing::warn!("[AMLL] {msg}");
-                tracing::warn!("[AMLL] 无法检查索引更新，将使用本地缓存（如果存在）。");
-                (false, None)
-            }
-            Err(e) => return Err(e),
-        };
-
-        let index_entries = if !should_update && index_cache_path.exists() {
-            tracing::info!("[AMLL] 索引缓存有效或无法检查更新，从本地加载...");
-            load_index_from_cache(&index_cache_path).await?
-        } else if let Some(sha) = remote_head {
-            tracing::info!("[AMLL] 索引已过期或不存在，正在从 {} 下载...", index_url);
-            download_and_parse_index(&index_cache_path, &sha, &http_client, &index_url).await?
-        } else if index_cache_path.exists() {
-            tracing::warn!("[AMLL] 将使用可能已过期的本地缓存。");
-            load_index_from_cache(&index_cache_path).await?
-        } else {
-            return Err(LyricsHelperError::Internal(
-                "AMLL 数据库初始化失败：被速率限制且无本地缓存可用。".to_string(),
-            ));
-        };
-
-        tracing::info!("[AMLL] 索引加载完成，共 {} 条记录。", index_entries.len());
-        Ok(Self {
-            index: Arc::new(index_entries),
-            http_client,
-            lyrics_url_template,
-        })
-    }
-
     /// 根据特定字段进行精确或模糊搜索。
     ///
     /// 这是一个此 Provider 特有的高级搜索功能。
@@ -183,6 +103,86 @@ impl Provider for AmllTtmlDatabase {
         "amll-ttml-database"
     }
 
+    async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let config = crate::config::load_amll_config().unwrap_or_else(|e| {
+            tracing::error!("[AMLL] 加载 AMLL 镜像配置失败: {}. 使用默认 GitHub 源。", e);
+            crate::config::AmllConfig::default()
+        });
+
+        let (index_url, lyrics_url_template) = match &config.mirror {
+            AmllMirror::GitHub => (
+                format!(
+                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/{INDEX_FILE_PATH_IN_REPO}"
+                ),
+                format!(
+                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/raw-lyrics/{{song_id}}"
+                ),
+            ),
+            AmllMirror::Dimeta => (
+                "https://amll.mirror.dimeta.top/api/db/metadata/raw-lyrics-index.jsonl".to_string(),
+                "https://amll.mirror.dimeta.top/api/db/raw-lyrics/{song_id}".to_string(),
+            ),
+            AmllMirror::Bikonoo => (
+                "https://amll.bikonoo.com/metadata/raw-lyrics-index.jsonl".to_string(),
+                "https://amll.bikonoo.com/raw-lyrics/{song_id}".to_string(),
+            ),
+            AmllMirror::Custom {
+                index_url,
+                lyrics_url_template,
+            } => (index_url.clone(), lyrics_url_template.clone()),
+        };
+
+        let remote_head_result = fetch_remote_index_head(http_client.as_ref()).await;
+
+        let (should_update, remote_head) = match remote_head_result {
+            Ok(sha) => {
+                let local_head = load_cached_index_head();
+                (Some(sha.clone()) != local_head, Some(sha))
+            }
+            Err(LyricsHelperError::RateLimited(msg)) => {
+                tracing::warn!("[AMLL] {msg}");
+                tracing::warn!("[AMLL] 无法检查索引更新，将使用本地缓存（如果存在）。");
+                (false, None)
+            }
+            Err(e) => return Err(e),
+        };
+
+        let index_entries_result = load_index_from_cache();
+
+        let index_entries = match (should_update, remote_head, index_entries_result) {
+            (false, _, Ok(entries)) => {
+                tracing::info!("[AMLL] 索引缓存有效，从本地加载...");
+                entries
+            }
+            (true, Some(sha), _) | (false, Some(sha), Err(_)) => {
+                tracing::info!(
+                    "[AMLL] 索引需要更新或本地缓存不可用，正在从 {} 下载...",
+                    index_url
+                );
+                download_and_parse_index(&sha, http_client.as_ref(), &index_url).await?
+            }
+            (true, None, Ok(entries)) => {
+                tracing::warn!("[AMLL] 无法检查更新，将使用可能已过期的本地缓存。");
+                entries
+            }
+            (_, _, Err(_)) => {
+                return Err(LyricsHelperError::Internal(
+                    "AMLL 数据库初始化失败：被速率限制且无本地缓存可用。".to_string(),
+                ));
+            }
+        };
+
+        tracing::info!("[AMLL] 索引加载完成，共 {} 条记录。", index_entries.len());
+        Ok(Self {
+            index: Arc::new(index_entries),
+            http_client,
+            lyrics_url_template,
+        })
+    }
+
     /// 在索引中搜索歌曲。
     async fn search_songs(&self, track: &Track<'_>) -> Result<Vec<SearchResult>> {
         let title_to_search = track.title.unwrap_or_default();
@@ -195,7 +195,7 @@ impl Provider for AmllTtmlDatabase {
         let candidates: Vec<IndexEntry> = self
             .index
             .iter()
-            .rev()
+            .rev() // 越下面的越新
             .filter(|entry| {
                 entry.get_meta_vec("musicName").is_some_and(|titles| {
                     titles
@@ -273,14 +273,14 @@ impl Provider for AmllTtmlDatabase {
         let ttml_url = self.lyrics_url_template.replace("{song_id}", song_id);
         tracing::info!("[AMLL] 下载并解析 TTML: {}", ttml_url);
 
-        let response_text = self
-            .http_client
-            .get(&ttml_url)
-            .send()
-            .await?
-            .error_for_status()?
-            .text()
-            .await?;
+        let response = self.http_client.get(&ttml_url).await?;
+        if response.status >= 400 {
+            return Err(LyricsHelperError::Http(format!(
+                "下载 AMLL 歌词失败，状态码: {}",
+                response.status
+            )));
+        }
+        let response_text = response.text()?;
 
         let conversion_input = ConversionInput {
             main_lyric: InputFile {
@@ -376,32 +376,32 @@ impl Provider for AmllTtmlDatabase {
 }
 
 /// 从 GitHub API 获取索引文件的最新 commit SHA。
-async fn fetch_remote_index_head(http_client: &Client) -> Result<String> {
+async fn fetch_remote_index_head(http_client: &dyn HttpClient) -> Result<String> {
     let url = format!(
         "{GITHUB_API_BASE_URL}/repos/{REPO_OWNER}/{REPO_NAME}/commits?path={INDEX_FILE_PATH_IN_REPO}&sha={REPO_BRANCH}&per_page=1"
     );
+    let headers = [
+        ("User-Agent", USER_AGENT),
+        ("Accept", "application/vnd.github.v3+json"),
+    ];
     let response = http_client
-        .get(&url)
-        .header("User-Agent", USER_AGENT)
-        .header("Accept", "application/vnd.github.v3+json")
-        .timeout(Duration::from_secs(10))
-        .send()
+        .request_with_headers(crate::http::HttpMethod::Get, &url, &headers, None)
         .await?;
 
-    if response.status().is_client_error() {
-        let status = response.status();
-        if let Ok(err_resp) = response.json::<types::GitHubErrorResponse>().await
-            && status == reqwest::StatusCode::FORBIDDEN
+    if response.status >= 400 {
+        let status = response.status;
+        if status == 403
+            && let Ok(err_resp) = response.json::<types::GitHubErrorResponse>()
             && err_resp.message.contains("rate limit exceeded")
         {
             return Err(LyricsHelperError::RateLimited(err_resp.message));
         }
-        return Err(LyricsHelperError::Network(format!(
+        return Err(LyricsHelperError::Http(format!(
             "GitHub API 返回错误: {status}"
         )));
     }
 
-    let commits: Vec<GitHubCommitInfo> = response.error_for_status()?.json().await?;
+    let commits: Vec<GitHubCommitInfo> = response.json()?;
 
     commits
         .first()
@@ -410,66 +410,67 @@ async fn fetch_remote_index_head(http_client: &Client) -> Result<String> {
 }
 
 /// 从本地 `.head` 文件加载缓存的 commit SHA。
-async fn load_cached_index_head(cache_file_path: &Path) -> Result<Option<String>> {
-    let head_file_path = cache_file_path.with_extension("jsonl.head");
-    if !head_file_path.exists() {
-        return Ok(None);
+fn load_cached_index_head() -> Option<String> {
+    match crate::config::read_from_cache(HEAD_CACHE_FILENAME) {
+        Ok(head) => {
+            let trimmed_head = head.trim();
+            if trimmed_head.is_empty() {
+                None
+            } else {
+                Some(trimmed_head.to_string())
+            }
+        }
+        Err(_) => {
+            // 在原生和WASM中，读取错误很可能意味着文件/键不存在。
+            None
+        }
     }
-    let head = fs::read_to_string(&head_file_path).await?;
-    let trimmed_head = head.trim();
-    Ok(if trimmed_head.is_empty() {
-        None
-    } else {
-        Some(trimmed_head.to_string())
-    })
 }
 
 /// 从本地缓存文件加载索引。
-async fn load_index_from_cache(cache_file_path: &Path) -> Result<Vec<IndexEntry>> {
-    let file = fs::File::open(cache_file_path).await?;
-    let reader = BufReader::new(file);
-    let mut lines = reader.lines();
-    let mut entries = Vec::new();
-    while let Some(line) = lines.next_line().await? {
-        if !line.trim().is_empty()
-            && let Ok(entry) = serde_json::from_str::<IndexEntry>(&line)
-        {
-            entries.push(entry);
-        }
-    }
+fn load_index_from_cache() -> Result<Vec<IndexEntry>> {
+    let content = crate::config::read_from_cache(INDEX_CACHE_FILENAME)
+        .map_err(|e| LyricsHelperError::Internal(format!("Failed to read index cache: {e}")))?;
+
+    let entries = content
+        .lines()
+        .filter_map(|line| {
+            if line.trim().is_empty() {
+                None
+            } else {
+                serde_json::from_str::<IndexEntry>(line).ok()
+            }
+        })
+        .collect();
     Ok(entries)
 }
 
 /// 下载、解析索引文件，并更新本地缓存。
 async fn download_and_parse_index(
-    cache_file_path: &Path,
     remote_head_sha: &str,
-    http_client: &Client,
+    http_client: &dyn HttpClient,
     index_url: &str,
 ) -> Result<Vec<IndexEntry>> {
-    let response_text = http_client
-        .get(index_url)
-        .timeout(Duration::from_secs(30))
-        .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?;
+    let response = http_client.get(index_url).await?;
+    if response.status >= 400 {
+        return Err(LyricsHelperError::Http(format!(
+            "下载 AMLL 索引失败，状态码: {}",
+            response.status
+        )));
+    }
+    let response_text = response.text()?;
 
     let entries: Vec<IndexEntry> = response_text
         .lines()
         .filter(|line| !line.trim().is_empty())
-        .fold(Vec::new(), |mut acc, line| {
-            match serde_json::from_str(line) {
-                Ok(entry) => acc.push(entry),
-                Err(e) => {
-                    tracing::warn!(
-                        "[AMLL] 索引文件中有损坏的行，已忽略。错误: {e}, 行内容: '{line}'"
-                    );
-                }
+        .filter_map(|line| match serde_json::from_str(line) {
+            Ok(entry) => Some(entry),
+            Err(e) => {
+                tracing::warn!("[AMLL] 索引文件中有损坏的行，已忽略。错误: {e}, 行内容: '{line}'");
+                None
             }
-            acc
-        });
+        })
+        .collect();
 
     if entries.is_empty() && !response_text.trim().is_empty() {
         return Err(LyricsHelperError::Internal(
@@ -477,18 +478,18 @@ async fn download_and_parse_index(
         ));
     }
 
-    save_index_to_cache(cache_file_path, &response_text, remote_head_sha).await?;
+    save_index_to_cache(&response_text, remote_head_sha)?;
     Ok(entries)
 }
 
 /// 将下载的内容和最新的 SHA 写入本地缓存文件。
-async fn save_index_to_cache(cache_file_path: &Path, content: &str, head_sha: &str) -> Result<()> {
-    if let Some(parent) = cache_file_path.parent() {
-        fs::create_dir_all(parent).await?;
-    }
-    fs::write(cache_file_path, content).await?;
-    let head_file_path = cache_file_path.with_extension("jsonl.head");
-    fs::write(&head_file_path, head_sha).await?;
+fn save_index_to_cache(content: &str, head_sha: &str) -> Result<()> {
+    crate::config::write_to_cache(INDEX_CACHE_FILENAME, content)
+        .map_err(|e| LyricsHelperError::Internal(format!("写入索引缓存失败: {e}")))?;
+
+    crate::config::write_to_cache(HEAD_CACHE_FILENAME, head_sha)
+        .map_err(|e| LyricsHelperError::Internal(format!("写入 HEAD 缓存失败: {e}")))?;
+
     Ok(())
 }
 
@@ -503,7 +504,7 @@ mod tests {
 
         let provider = AmllTtmlDatabase {
             index: Arc::new(vec![index_entry.clone()]),
-            http_client: Client::new(),
+            http_client: Arc::new(crate::http::ReqwestClient::new().unwrap()),
             lyrics_url_template: format!(
                 "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/raw-lyrics/{{song_id}}"
             ),

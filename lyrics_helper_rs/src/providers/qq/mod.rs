@@ -4,7 +4,10 @@
 //! 包括搜索、获取歌词、歌曲、专辑、歌手和播放列表信息。
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
@@ -15,7 +18,6 @@ use lyrics_helper_core::{
     Artist, ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, Language,
     LyricFormat, ParsedSourceData, RawLyrics, SearchResult, Track, model::generic,
 };
-use reqwest::Client;
 use serde_json::json;
 use tracing::{info, trace, warn};
 use uuid::Uuid;
@@ -24,6 +26,7 @@ use crate::{
     config::{load_cached_config, save_cached_config},
     converter,
     error::{LyricsHelperError, Result},
+    http::HttpClient,
     providers::{Provider, qq::models::QQMusicCoverSize},
 };
 
@@ -73,7 +76,7 @@ static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").
 
 /// QQ 音乐的提供商实现。
 pub struct QQMusic {
-    http_client: Client,
+    http_client: Arc<dyn HttpClient>,
     qimei: String,
 }
 
@@ -83,6 +86,35 @@ pub struct QQMusic {
 impl Provider for QQMusic {
     fn name(&self) -> &'static str {
         "qq"
+    }
+
+    async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        const CACHE_FILENAME: &str = "qq_device.json";
+
+        let device = if let Ok(config) = load_cached_config::<device::Device>(CACHE_FILENAME) {
+            info!("已从缓存加载 QQ Device。");
+            config.data
+        } else {
+            info!("QQ Device 配置文件不存在或无效，将创建并保存一个新设备。");
+            let new_device = device::Device::new();
+            if let Err(e) = save_cached_config(CACHE_FILENAME, &new_device) {
+                warn!("保存新的 QQ Device 失败: {}", e);
+            }
+            new_device
+        };
+
+        let api_version = "13.2.5.8";
+        let qimei_result = qimei::get_qimei(http_client.as_ref(), &device, api_version)
+            .await
+            .map_err(|e| LyricsHelperError::ApiError(format!("获取 Qimei 失败: {e}")))?;
+
+        Ok(Self {
+            http_client,
+            qimei: qimei_result.q36,
+        })
     }
 
     /// 根据歌曲信息在 QQ 音乐上搜索歌曲。
@@ -405,45 +437,6 @@ impl Provider for QQMusic {
 }
 
 impl QQMusic {
-    ///
-    /// 创建一个新的 `QQMusic` 提供商实例。
-    ///
-    /// # 返回
-    ///
-    /// 一个 `Result`，成功时包含 `QQMusic` 的实例。
-    ///
-    pub async fn new() -> Result<Self> {
-        const CACHE_FILENAME: &str = "qq_device.json";
-        let mut builder = Client::builder();
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            builder = builder.timeout(Duration::from_secs(10));
-        }
-        let http_client = builder.build()?;
-
-        let device = if let Ok(config) = load_cached_config::<device::Device>(CACHE_FILENAME) {
-            info!("已从缓存加载 QQ Device。");
-            config.data
-        } else {
-            info!("QQ Device 配置文件不存在或无效，将创建并保存一个新设备。");
-            let new_device = device::Device::new();
-            if let Err(e) = save_cached_config(CACHE_FILENAME, &new_device) {
-                warn!("保存新的 QQ Device 失败: {}", e);
-            }
-            new_device
-        };
-
-        let api_version = "13.2.5.8";
-        let qimei_result = qimei::get_qimei(&device, api_version)
-            .await
-            .map_err(|e| LyricsHelperError::ApiError(format!("获取 Qimei 失败: {e}")))?;
-
-        Ok(Self {
-            http_client,
-            qimei: qimei_result.q36,
-        })
-    }
-
     fn build_comm(&self) -> serde_json::Value {
         json!({
             "cv": 13_020_508,
@@ -475,14 +468,8 @@ impl QQMusic {
             }
         });
 
-        let response_text = self
-            .http_client
-            .post(url)
-            .json(&payload)
-            .send()
-            .await?
-            .text()
-            .await?;
+        let response = self.http_client.post_json(url, &payload).await?;
+        let response_text = response.text()?;
 
         trace!("原始 JSON 响应 {request_key}: {response_text}");
 

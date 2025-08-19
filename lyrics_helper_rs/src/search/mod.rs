@@ -2,11 +2,17 @@
 
 use std::collections::HashMap;
 
+#[cfg(test)]
+use std::sync::Arc;
+
 use futures::future;
 use lyrics_helper_core::{MatchType, SearchResult, Track};
 use tracing::{debug, info, warn};
 
 use crate::{error::Result, providers::Provider};
+
+#[cfg(test)]
+use crate::http::HttpClient;
 
 pub(crate) mod matcher;
 use matcher::compare_track;
@@ -215,6 +221,13 @@ mod tests {
     #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
     #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
     impl Provider for MockProvider {
+        async fn with_http_client(_http_client: Arc<dyn HttpClient>) -> Result<Self>
+        where
+            Self: Sized,
+        {
+            Ok(Self { name: "mock" })
+        }
+
         fn name(&self) -> &'static str {
             self.name
         }
