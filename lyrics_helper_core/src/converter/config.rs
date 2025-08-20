@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use bitflags::bitflags;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
@@ -212,6 +214,28 @@ impl Default for MetadataStripperFlags {
     }
 }
 
+#[derive(Deserialize)]
+struct DefaultStripperConfig {
+    keywords: Vec<String>,
+    regex_patterns: Vec<String>,
+}
+
+fn default_stripper_config() -> &'static DefaultStripperConfig {
+    static CONFIG: OnceLock<DefaultStripperConfig> = OnceLock::new();
+    CONFIG.get_or_init(|| {
+        let config_str = include_str!("../../assets/default_stripper_config.toml");
+        toml::from_str(config_str).expect("Failed to parse default_stripper_config.toml")
+    })
+}
+
+fn default_keywords() -> Vec<String> {
+    default_stripper_config().keywords.clone()
+}
+
+fn default_regex_patterns() -> Vec<String> {
+    default_stripper_config().regex_patterns.clone()
+}
+
 /// 配置元数据行清理器的选项。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct MetadataStripperOptions {
@@ -220,12 +244,12 @@ pub struct MetadataStripperOptions {
     pub flags: MetadataStripperFlags,
 
     /// 用于匹配头部/尾部块的关键词列表。
-    /// 如果为 `None`，将使用一组内建的默认关键词。
-    pub keywords: Option<Vec<String>>,
+    #[serde(default = "default_keywords")]
+    pub keywords: Vec<String>,
 
     /// 用于匹配并移除任意行的正则表达式列表。
-    /// 如果为 `None`，将使用一组内建的默认正则表达式。
-    pub regex_patterns: Option<Vec<String>>,
+    #[serde(default = "default_regex_patterns")]
+    pub regex_patterns: Vec<String>,
 }
 
 /// 为 `ferrous_opencc::config::BuiltinConfig` 提供扩展方法

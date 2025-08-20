@@ -8,7 +8,7 @@ lyrics_helper_core = { path = "lyrics_helper_core" }
 ttml_processor = { path = "ttml_processor" }
 
 [workspace.dependencies]
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasmjs"] }
 
 [profile.release]
 opt-level = 'z'

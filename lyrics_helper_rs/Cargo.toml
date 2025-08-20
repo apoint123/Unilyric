@@ -60,7 +60,7 @@ uuid = { version = "1", features = ["v4"] }
 fst = "0.4"
 lyrics_helper_core = "0.1.0"
 ttml_processor = "0.1.0"
-getrandom = { version = "0.2", features = ["js"] }
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }

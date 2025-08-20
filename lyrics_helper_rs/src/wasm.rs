@@ -46,6 +46,7 @@ impl WasmLyricsHelper {
             title: Option<String>,
             artists: Option<Vec<String>>,
             album: Option<String>,
+            duration: Option<u64>,
         }
 
         let owned_track: OwnedTrack = serde_wasm_bindgen::from_value(track_meta_js)?;
@@ -62,7 +63,7 @@ impl WasmLyricsHelper {
                 Some(&artists_vec)
             },
             album: owned_track.album.as_deref(),
-            duration: None,
+            duration: owned_track.duration,
         };
 
         let mode_str: String = serde_wasm_bindgen::from_value(mode_js)?;
@@ -74,8 +75,7 @@ impl WasmLyricsHelper {
                     SearchMode::Specific(provider)
                 } else {
                     return Err(JsValue::from_str(&format!(
-                        "不支持的提供商: {}",
-                        provider_str
+                        "不支持的提供商: {provider_str}"
                     )));
                 }
             }
@@ -92,7 +92,7 @@ impl WasmLyricsHelper {
     }
 
     #[wasm_bindgen(js_name = convertLyrics)]
-    pub async fn convert_lyrics(
+    pub fn convert_lyrics(
         &self,
         input_js: JsValue,
         options_js: JsValue,
