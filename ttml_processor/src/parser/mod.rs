@@ -102,7 +102,7 @@ pub fn parse_ttml(
         if let Event::Text(e) = &event
             && state.format_detection == FormatDetection::Undetermined
         {
-            let bytes = e.as_ref();
+            let bytes: &[u8] = e.as_ref();
             if bytes.contains(&b'\n') && bytes.iter().all(|&b| b.is_ascii_whitespace()) {
                 state.whitespace_nodes_with_newline += 1;
             }

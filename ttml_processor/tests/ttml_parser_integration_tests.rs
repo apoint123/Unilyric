@@ -40,6 +40,10 @@ fn get_syllables_from_line(line: &LyricLine, content_type: ContentType) -> Vec<&
         .collect()
 }
 
+fn get_syllables_from_track(track: &LyricTrack) -> Vec<&LyricSyllable> {
+    track.words.iter().flat_map(|w| &w.syllables).collect()
+}
+
 #[test]
 fn test_parse_line_timed_basic() {
     let content = load_test_data("line_timed_basic.ttml");
@@ -624,4 +628,84 @@ fn test_complex_round_trip() {
         generate_ttml(&parsed_data.lines, &metadata_store, agent_store, &options).unwrap();
 
     insta::assert_snapshot!(generated_ttml_output);
+}
+
+#[test]
+fn test_parse_space_only_span_as_whitespace_in_body() {
+    let content = r#"
+<tt xmlns="http://www.w3.org/ns/ttml" itunes:timing="word" xmlns:itunes="http://itunes.apple.com/lyric-ttml-extensions">
+<body>
+  <p begin="0s" end="2s">
+    <span begin="0s" end="1s">First</span>
+    <span begin="1s" end="1s"> </span>
+    <span begin="1.1s" end="2s">Word</span>
+  </p>
+</body>
+</tt>
+"#;
+    let result = parse_ttml(content, &TtmlParsingOptions::default()).unwrap();
+    let line = &result.lines[0];
+    let main_syllables = get_syllables_from_line(line, ContentType::Main);
+
+    assert_eq!(main_syllables.len(), 2, "应该解析出两个音节");
+    assert_eq!(main_syllables[0].text, "First");
+    assert!(
+        main_syllables[0].ends_with_space,
+        "第一个音节 'First' 后面应该有空格"
+    );
+    assert_eq!(main_syllables[1].text, "Word");
+    assert!(
+        !main_syllables[1].ends_with_space,
+        "第二个音节 'Word' 后面不应有空格"
+    );
+}
+
+#[test]
+fn test_parse_space_only_span_as_whitespace_in_metadata() {
+    let content = r#"
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="ja">
+  <head>
+    <metadata>
+      <iTunesMetadata>
+        <translations>
+          <translation xml:lang="en">
+            <text for="L1">
+              <span begin="1.0s" end="1.5s">Word</span>
+              <span begin="1.5s" end="1.5s"> </span>
+              <span begin="1.6s" end="2.0s">One</span>
+            </text>
+          </translation>
+        </translations>
+      </iTunesMetadata>
+    </metadata>
+  </head>
+  <body>
+    <p begin="1.0s" end="2.0s" itunes:key="L1">
+        <span begin="1.0s" end="1.5s">音节</span>
+        <span begin="1.6s" end="2.0s">一</span>
+    </p>
+  </body>
+</tt>
+"#;
+    let result = parse_ttml(content, &TtmlParsingOptions::default()).unwrap();
+    let line = &result.lines[0];
+
+    let translation_track = line
+        .main_track()
+        .and_then(|at| at.translations.first())
+        .expect("应该找到翻译轨道");
+
+    let translation_syllables = get_syllables_from_track(translation_track);
+
+    assert_eq!(translation_syllables.len(), 2, "翻译轨道应该有两个音节");
+    assert_eq!(translation_syllables[0].text, "Word");
+    assert!(
+        translation_syllables[0].ends_with_space,
+        "翻译音节 'Word' 后面应该有空格"
+    );
+    assert_eq!(translation_syllables[1].text, "One");
+    assert!(
+        !translation_syllables[1].ends_with_space,
+        "翻译音节 'One' 后面不应有空格"
+    );
 }

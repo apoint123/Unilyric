@@ -261,6 +261,12 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
         let raw_text = std::mem::take(&mut meta_state.text_buffer);
 
         if let (Some(start_ms), Some(end_ms)) = (ended_span_ctx.start_ms, ended_span_ctx.end_ms) {
+            if raw_text.is_empty() {
+                return;
+            }
+
+            let trimmed_text = raw_text.trim();
+
             let is_within_background_container = meta_state
                 .span_stack
                 .iter()
@@ -274,6 +280,13 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
             } else {
                 &mut meta_state.current_main_syllables
             };
+
+            if trimmed_text.is_empty() {
+                if let Some(last_syl) = target_syllables.last_mut() {
+                    last_syl.ends_with_space = true;
+                }
+                return;
+            }
 
             super::body::process_syllable(
                 start_ms,

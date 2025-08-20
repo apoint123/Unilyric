@@ -275,7 +275,7 @@ fn process_text_event(e_text: &BytesText, state: &mut TtmlParserState) -> Result
 
     // 如果不是音节间空格，则处理常规文本
     let trimmed_text = text_slice.trim();
-    if trimmed_text.is_empty() {
+    if trimmed_text.is_empty() && state.body_state.span_stack.is_empty() {
         // 如果trim后为空（意味着它不是音节间空格，只是普通的空白节点），则忽略
         return Ok(());
     }
@@ -338,14 +338,7 @@ fn handle_generic_span_end(
             return Ok(());
         }
 
-        if start_ms > end_ms {
-            warnings.push(format!(
-                "音节 '{}' 的时间戳无效 (start_ms {} > end_ms {}), 但仍会创建音节。",
-                text.escape_debug(),
-                start_ms,
-                end_ms
-            ));
-        }
+        let trimmed_text = text.trim();
 
         let p_data = state
             .body_state
@@ -366,6 +359,31 @@ fn handle_generic_span_end(
         } else {
             ContentType::Main
         };
+
+        // 如果 span 只包含空白字符，则将其视为空格
+        if trimmed_text.is_empty() {
+            // 这是一个空格 span，标记前一个音节
+            if let Some(last_syl) = p_data
+                .tracks_accumulator
+                .iter_mut()
+                .find(|t| t.content_type == target_content_type)
+                .and_then(|at| at.content.words.last_mut())
+                .and_then(|w| w.syllables.last_mut())
+            {
+                last_syl.ends_with_space = true;
+            }
+            // 空格不应该产生音节，所以直接返回
+            return Ok(());
+        }
+
+        if start_ms > end_ms {
+            warnings.push(format!(
+                "音节 '{}' 的时间戳无效 (start_ms {} > end_ms {}), 但仍会创建音节。",
+                text.escape_debug(),
+                start_ms,
+                end_ms
+            ));
+        }
 
         let target_annotated_track =
             get_or_create_target_annotated_track(p_data, target_content_type);
@@ -743,19 +761,15 @@ fn recalculate_line_end_ms(line: &LyricLine) -> u64 {
     line.tracks
         .iter()
         .flat_map(|at| {
-            let content_syllables = at.content.words.iter().flat_map(|w| &w.syllables);
-            let translation_syllables = at
-                .translations
-                .iter()
-                .flat_map(|t| t.words.iter().flat_map(|w| &w.syllables));
-            let romanization_syllables = at
-                .romanizations
-                .iter()
-                .flat_map(|t| t.words.iter().flat_map(|w| &w.syllables));
-            content_syllables
-                .chain(translation_syllables)
-                .chain(romanization_syllables)
+            let content_words = at.content.words.iter();
+            let translation_words = at.translations.iter().flat_map(|t| t.words.iter());
+            let romanization_words = at.romanizations.iter().flat_map(|r| r.words.iter());
+
+            content_words
+                .chain(translation_words)
+                .chain(romanization_words)
         })
+        .flat_map(|word| &word.syllables)
         .map(|syllable| syllable.end_ms)
         .max()
         .unwrap_or(0)
