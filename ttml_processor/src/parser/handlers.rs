@@ -13,9 +13,7 @@ use super::{
     state::{BodyParseState, CurrentPElementData, MetadataParseState, TtmlParserState},
     utils::{get_string_attribute, get_time_attribute},
 };
-use lyrics_helper_core::{
-    Agent, AgentType, ConvertError, LyricLine, TtmlParsingOptions, TtmlTimingMode,
-};
+use lyrics_helper_core::{ConvertError, LyricLine, TtmlParsingOptions, TtmlTimingMode};
 use quick_xml::{
     Reader,
     events::{BytesStart, Event},
@@ -66,39 +64,7 @@ pub(super) fn handle_global_event(
 
                 let agent_attr_val =
                     get_string_attribute(e, reader, &[ATTR_AGENT, ATTR_AGENT_ALIAS])?;
-                let mut final_agent_id = None;
-
-                if let Some(val) = agent_attr_val {
-                    // 检查这个值是否是 <head> 中已定义的 ID
-                    if state.agent_store.agents_by_id.contains_key(&val) {
-                        final_agent_id = Some(val);
-                    } else {
-                        // 值被视为一个直接的名称，需要为其创建/查找ID
-                        if let Some(existing_id) = state.agent_name_to_id_map.get(&val) {
-                            final_agent_id = Some(existing_id.clone());
-                        } else {
-                            state.agent_counter += 1;
-                            let new_id = format!("v{}", state.agent_counter);
-
-                            state
-                                .agent_name_to_id_map
-                                .insert(val.clone(), new_id.clone());
-
-                            // 同时在 AgentStore 中创建一个新的 Agent 记录
-                            let new_agent = Agent {
-                                id: new_id.clone(),
-                                name: Some(val),
-                                agent_type: AgentType::Person, // 默认为 Person
-                            };
-                            state
-                                .agent_store
-                                .agents_by_id
-                                .insert(new_id.clone(), new_agent);
-
-                            final_agent_id = Some(new_id);
-                        }
-                    }
-                }
+                let final_agent_id = state.resolve_agent_id(agent_attr_val);
 
                 let song_part = get_string_attribute(e, reader, &[ATTR_ITUNES_SONG_PART])?
                     .or_else(|| state.body_state.current_div_song_part.clone());

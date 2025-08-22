@@ -243,56 +243,61 @@ fn process_text_event(e_text: &BytesText, state: &mut TtmlParserState) -> Result
 
     // 如果上一个事件是一个结束的音节 (</span>)，并且当前文本是纯空格，
     // 那么这个空格应该附加到上一个音节上。
-    if let LastSyllableInfo::EndedSyllable { was_background } = state.body_state.last_syllable_info
-        && !text_slice.is_empty()
-        && text_slice.chars().all(char::is_whitespace)
-    {
-        let has_space = state.format_detection == super::state::FormatDetection::NotFormatted
-            || (!text_slice.contains('\n') && !text_slice.contains('\r'));
+    let LastSyllableInfo::EndedSyllable { was_background } = state.body_state.last_syllable_info
+    else {
+        handle_general_text(&text_slice, state);
+        return Ok(());
+    };
 
-        if has_space && let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
-            let target_content_type = if was_background {
-                ContentType::Background
-            } else {
-                ContentType::Main
-            };
-
-            if let Some(last_syl) = p_data
-                .tracks_accumulator
-                .iter_mut()
-                .find(|t| t.content_type == target_content_type)
-                .and_then(|at| at.content.words.last_mut())
-                .and_then(|w| w.syllables.last_mut())
-                && !last_syl.ends_with_space
-            {
-                last_syl.ends_with_space = true;
-            }
-        }
-        // 消费掉这个空格，并重置状态，然后直接返回
-        state.body_state.last_syllable_info = LastSyllableInfo::None;
+    if text_slice.is_empty() || !text_slice.chars().all(char::is_whitespace) {
+        handle_general_text(&text_slice, state);
         return Ok(());
     }
 
-    // 如果不是音节间空格，则处理常规文本
+    let has_space = state.format_detection == super::state::FormatDetection::NotFormatted
+        || (!text_slice.contains('\n') && !text_slice.contains('\r'));
+
+    if has_space && let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
+        let target_content_type = if was_background {
+            ContentType::Background
+        } else {
+            ContentType::Main
+        };
+
+        if let Some(last_syl) = p_data
+            .tracks_accumulator
+            .iter_mut()
+            .find(|t| t.content_type == target_content_type)
+            .and_then(|at| at.content.words.last_mut())
+            .and_then(|w| w.syllables.last_mut())
+            && !last_syl.ends_with_space
+        {
+            last_syl.ends_with_space = true;
+        }
+    }
+    // 消费掉这个空格，并重置状态，然后直接返回
+    state.body_state.last_syllable_info = LastSyllableInfo::None;
+    Ok(())
+}
+
+/// 处理普通文本的逻辑
+fn handle_general_text(text_slice: &str, state: &mut TtmlParserState) {
+    state.body_state.last_syllable_info = LastSyllableInfo::None;
+
     let trimmed_text = text_slice.trim();
     if trimmed_text.is_empty() && state.body_state.span_stack.is_empty() {
         // 如果trim后为空（意味着它不是音节间空格，只是普通的空白节点），则忽略
-        return Ok(());
+        return;
     }
-
-    // 任何非音节间空格的文本出现后，重置 `last_syllable_info`
-    state.body_state.last_syllable_info = LastSyllableInfo::None;
 
     // 累加到缓冲区
     if !state.body_state.span_stack.is_empty() {
         // 如果在 span 内，文本属于这个 span
-        state.text_buffer.push_str(&text_slice);
+        state.text_buffer.push_str(text_slice);
     } else if let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
         // 如果在 p 内但在任何 span 外，文本直接属于 p
-        p_data.line_text_accumulator.push_str(&text_slice);
+        p_data.line_text_accumulator.push_str(text_slice);
     }
-
-    Ok(())
 }
 
 /// 处理 `</span>` 结束事件的分发器。
@@ -463,7 +468,7 @@ pub(super) fn process_syllable(
 
     // 创建新的音节
     let new_syllable = LyricSyllable {
-        text: text_processing_buffer.clone(),
+        text: std::mem::take(text_processing_buffer),
         start_ms,
         end_ms,
         duration_ms: Some(end_ms.saturating_sub(start_ms)),
@@ -507,7 +512,7 @@ fn handle_auxiliary_span_end(
     let target_annotated_track = get_or_create_target_annotated_track(p_data, target_content_type);
 
     let syllable = LyricSyllable {
-        text: state.text_processing_buffer.clone(),
+        text: std::mem::take(&mut state.text_processing_buffer),
         ..Default::default()
     };
     let word = Word {
@@ -591,7 +596,7 @@ fn handle_background_span_end(
                     );
 
                     let syllable = LyricSyllable {
-                        text: state.text_processing_buffer.clone(),
+                        text: std::mem::take(&mut state.text_processing_buffer),
                         start_ms,
                         end_ms: end_ms.max(start_ms),
                         duration_ms: Some(end_ms.saturating_sub(start_ms)),
@@ -708,7 +713,7 @@ fn create_main_track_from_accumulator_if_needed(
         );
         if !state.text_processing_buffer.is_empty() {
             let syllable = LyricSyllable {
-                text: state.text_processing_buffer.clone(),
+                text: std::mem::take(&mut state.text_processing_buffer),
                 start_ms: p_data.start_ms,
                 end_ms: p_data.end_ms,
                 ..Default::default()

@@ -2,7 +2,7 @@
 //!
 //! 该模块定义了在解析 TTML 文件时用于跟踪状态和累积数据的所有结构体和枚举。
 
-use lyrics_helper_core::{AgentStore, AnnotatedTrack, LyricSyllable, LyricTrack};
+use lyrics_helper_core::{Agent, AgentStore, AgentType, AnnotatedTrack, LyricSyllable, LyricTrack};
 use std::collections::HashMap;
 
 // =================================================================================
@@ -54,6 +54,43 @@ pub(super) struct TtmlParserState {
     pub(super) agent_counter: u32,
     /// 用于存储已为直接名称生成的 `ID` 映射 (`name` -> `id`)
     pub(super) agent_name_to_id_map: HashMap<String, String>,
+}
+
+impl TtmlParserState {
+    /// 根据 `<p>` 标签中的 `agent` 属性值，查找或创建一个 Agent ID。
+    ///
+    /// 这个方法会：
+    /// 1. 检查值是否为已知的 ID。
+    /// 2. 如果不是 ID，则检查是否为已知的名称。
+    /// 3. 如果两者都不是，则创建一个新的 Agent 记录和 ID。
+    pub(super) fn resolve_agent_id(&mut self, agent_attr_val: Option<String>) -> Option<String> {
+        let val = agent_attr_val?;
+
+        if self.agent_store.agents_by_id.contains_key(&val) {
+            return Some(val);
+        }
+
+        if let Some(existing_id) = self.agent_name_to_id_map.get(&val) {
+            return Some(existing_id.clone());
+        }
+
+        self.agent_counter += 1;
+        let new_id = format!("v{}", self.agent_counter);
+
+        self.agent_name_to_id_map
+            .insert(val.clone(), new_id.clone());
+
+        let new_agent = Agent {
+            id: new_id.clone(),
+            name: Some(val),
+            agent_type: AgentType::Person,
+        };
+        self.agent_store
+            .agents_by_id
+            .insert(new_id.clone(), new_agent);
+
+        Some(new_id)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

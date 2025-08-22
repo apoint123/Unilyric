@@ -96,7 +96,7 @@ fn handle_metadata_start_tag(
     Ok(())
 }
 
-/// 处理 metadata 中的 <agent> 或 <ttm:agent> 开始标签
+/// 处理 `metadata` 中的 `<agent>` 或 `<ttm:agent>` 开始标签
 fn process_agent_start_in_metadata(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
@@ -125,7 +125,7 @@ fn process_agent_start_in_metadata(
     Ok(())
 }
 
-/// 处理 metadata 中的 <meta> 或 <amll:meta> 开始标签
+/// 处理 `metadata` 中的 `<meta>` 或 `<amll:meta>` 开始标签
 fn process_meta_start_in_metadata(
     e: &BytesStart,
     reader: &mut Reader<&[u8]>,
@@ -144,7 +144,7 @@ fn process_meta_start_in_metadata(
     Ok(())
 }
 
-/// 处理 metadata 中的 <text> 开始标签
+/// 处理 `metadata` 中的 `<text>` 开始标签
 fn process_text_start_in_metadata(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
@@ -168,7 +168,7 @@ fn process_text_start_in_metadata(
     Ok(())
 }
 
-/// 处理 metadata 中的 <span> 开始标签
+/// 处理 `metadata` 中的 `<span>` 开始标签
 fn process_span_start_in_metadata(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
@@ -252,7 +252,7 @@ fn handle_metadata_end_tag(e: &quick_xml::events::BytesEnd, state: &mut TtmlPars
     }
 }
 
-/// 处理 metadata 中的 </span> 结束标签
+/// 处理 `metadata` 中的 `</span>` 结束标签
 fn process_span_end_in_metadata(state: &mut TtmlParserState) {
     let meta_state = &mut state.metadata_state;
     if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. })
@@ -314,7 +314,7 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
     }
 }
 
-/// 处理 metadata 中的 </text> 结束标签
+/// 处理 `metadata` 中的 `</text>` 结束标签
 fn process_text_end_in_metadata(state: &mut TtmlParserState) {
     let meta_state = &mut state.metadata_state;
     if let MetadataContext::InAuxiliaryText {

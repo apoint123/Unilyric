@@ -295,12 +295,9 @@ impl Provider for AmllTtmlDatabase {
             user_metadata_overrides: None,
         };
 
-        let mut parsed_data = tokio::task::spawn_blocking(move || {
+        let mut parsed_data =
             converter::parse_and_merge(&conversion_input, &ConversionOptions::default())
-        })
-        .await
-        .map_err(|e| LyricsHelperError::Parser(format!("TTML 解析失败: {e}")))?
-        .map_err(|e| LyricsHelperError::Parser(e.to_string()))?;
+                .map_err(|e| LyricsHelperError::Parser(e.to_string()))?;
 
         parsed_data.source_name = "amll-ttml-database".to_string();
 

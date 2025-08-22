@@ -74,6 +74,7 @@ pub fn parse_ttml(
         }
 
         let event = match reader.read_event_into(&mut buf) {
+            Ok(Event::Eof) => break,
             Ok(event) => event,
             Err(e) => {
                 // 尝试抢救数据
@@ -108,10 +109,6 @@ pub fn parse_ttml(
             }
         }
 
-        if event == Event::Eof {
-            break;
-        }
-
         if state.in_metadata {
             metadata::handle_metadata_event(
                 &event,
@@ -123,9 +120,6 @@ pub fn parse_ttml(
         } else if state.body_state.in_p {
             body::handle_p_event(&event, &mut state, &reader, &mut lines, &mut warnings)?;
         } else {
-            if event == Event::Eof {
-                break;
-            }
             handlers::handle_global_event(
                 &event,
                 &mut state,

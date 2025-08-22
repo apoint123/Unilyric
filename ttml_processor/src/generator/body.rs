@@ -39,16 +39,14 @@ pub(super) fn write_ttml_body<W: std::io::Write>(
             if !current_div_lines.is_empty() {
                 let prev_line = *current_div_lines.last().unwrap();
                 if prev_line.song_part != current_line.song_part {
-                    write_div(writer, &current_div_lines, options, &mut p_key_counter)
-                        .map_err(std::io::Error::other)?;
+                    write_div(writer, &current_div_lines, options, &mut p_key_counter)?;
                     current_div_lines.clear();
                 }
             }
             current_div_lines.push(current_line);
         }
         if !current_div_lines.is_empty() {
-            write_div(writer, &current_div_lines, options, &mut p_key_counter)
-                .map_err(std::io::Error::other)?;
+            write_div(writer, &current_div_lines, options, &mut p_key_counter)?;
         }
         Ok(())
     })?;
@@ -95,9 +93,7 @@ fn write_div<W: std::io::Write>(
                 .with_attribute(("end", format_ttml_time(line.end_ms).as_str()))
                 .with_attribute(("itunes:key", format!("L{p_key_counter}").as_str()))
                 .with_attribute(("ttm:agent", agent_id_to_set))
-                .write_inner_content(|writer| {
-                    write_p_content(writer, line, options).map_err(std::io::Error::other)
-                })?;
+                .write_inner_content(|writer| Ok(write_p_content(writer, line, options)?))?;
         }
         Ok(())
     })?;
