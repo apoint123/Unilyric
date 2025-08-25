@@ -135,8 +135,6 @@ impl UniLyricApp {
                     ))));
                 }
 
-                postprocess_menu.separator();
-
                 if postprocess_menu
                     .add_enabled(lyrics_loaded, egui::Button::new("演唱者识别"))
                     .on_disabled_hover_text("需要先成功解析歌词")
@@ -412,6 +410,7 @@ impl UniLyricApp {
                         ));
                     }
                 });
+                // TDOO: 把元数据修好
                 // ui_right.add_space(BUTTON_STRIP_SPACING);
                 // if ui_right.button("元数据").clicked() {
                 //     self.send_action(crate::app_actions::UserAction::UI(
@@ -670,6 +669,21 @@ impl UniLyricApp {
         ui.heading("自动歌词搜索设置");
         ui.add_space(10.0);
 
+        let auto_cache_enabled = self.ui.temp_edit_settings.auto_cache;
+
+        ui.checkbox(&mut self.ui.temp_edit_settings.auto_cache, "自动缓存歌词");
+
+        ui.add_enabled_ui(auto_cache_enabled, |enabled_ui| {
+            enabled_ui.horizontal(|h_ui| {
+                h_ui.label("最多缓存数量:");
+                h_ui.add(
+                    egui::DragValue::new(&mut self.ui.temp_edit_settings.auto_cache_max_count)
+                        .speed(1.0),
+                );
+            });
+        });
+
+        ui.separator();
         ui.checkbox(
             &mut self.ui.temp_edit_settings.prioritize_amll_db,
             "优先搜索 AMLL TTML 数据库 (推荐)",

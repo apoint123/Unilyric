@@ -90,6 +90,8 @@ pub struct AppSettings {
     pub auto_apply_metadata_stripper: bool,
     pub auto_apply_agent_recognizer: bool,
     pub amll_mirror: AppAmllMirror,
+    pub auto_cache: bool,
+    pub auto_cache_max_count: usize,
 }
 
 impl Default for AppSettings {
@@ -139,6 +141,8 @@ impl Default for AppSettings {
             auto_apply_metadata_stripper: true,
             auto_apply_agent_recognizer: true,
             amll_mirror: AppAmllMirror::default(),
+            auto_cache: false,
+            auto_cache_max_count: 500,
         }
     }
 }

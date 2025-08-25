@@ -74,29 +74,6 @@ impl UniLyricApp {
         Ok(())
     }
 
-    fn write_cache_index_entry(
-        &mut self,
-        index_path: &std::path::Path,
-        entry: crate::types::LocalLyricCacheEntry,
-    ) -> AppResult<()> {
-        use std::io::Write;
-
-        let file = std::fs::OpenOptions::new()
-            .append(true)
-            .create(true)
-            .open(index_path)
-            .map_err(AppError::from)?;
-
-        let mut writer = std::io::BufWriter::new(file);
-        let json_line = serde_json::to_string(&entry).map_err(AppError::from)?;
-
-        writeln!(writer, "{json_line}").map_err(AppError::from)?;
-
-        self.local_cache.index.lock().unwrap().push(entry);
-
-        Ok(())
-    }
-
     fn generate_safe_filename(&self, title: &str, artists: &[String]) -> String {
         let mut filename = format!("{} - {}", artists.join(", "), title);
         filename = filename
@@ -995,14 +972,32 @@ impl UniLyricApp {
             .local_cache
             .dir_path
             .as_ref()
-            .ok_or_else(|| AppError::Custom("缺少缓存目录路径".to_string()))?
-            .clone();
+            .cloned()
+            .ok_or_else(|| AppError::Custom("缺少缓存目录路径".to_string()))?;
         let index_path = self
             .local_cache
             .index_path
             .as_ref()
-            .ok_or_else(|| AppError::Custom("缺少缓存索引路径".to_string()))?
-            .clone();
+            .cloned()
+            .ok_or_else(|| AppError::Custom("缺少缓存索引路径".to_string()))?;
+
+        let max_cache_count = self.app_settings.lock().unwrap().auto_cache_max_count;
+        let mut index_guard = self.local_cache.index.lock().unwrap();
+
+        while index_guard.len() >= max_cache_count && !index_guard.is_empty() {
+            let oldest_entry = index_guard.remove(0);
+            info!(
+                "[LocalCache] 缓存已满，移除最旧的条目: {}",
+                oldest_entry.ttml_filename
+            );
+            let file_to_delete = cache_dir.join(oldest_entry.ttml_filename);
+            if let Err(e) = std::fs::remove_file(&file_to_delete) {
+                warn!(
+                    "[LocalCache] 删除旧缓存文件 {:?} 失败: {}",
+                    file_to_delete, e
+                );
+            }
+        }
 
         let media_info = self.player.current_now_playing.clone();
 
@@ -1031,9 +1026,16 @@ impl UniLyricApp {
             smtc_artists: artists,
             ttml_filename: final_filename,
             original_source_format: self.fetcher.last_source_format.map(|f| f.to_string()),
+            saved_timestamp: chrono::Utc::now().timestamp(),
         };
 
-        self.write_cache_index_entry(&index_path, entry)?;
+        index_guard.push(entry);
+
+        let lines: Vec<String> = index_guard
+            .iter()
+            .filter_map(|e| serde_json::to_string(e).ok())
+            .collect();
+        std::fs::write(&index_path, lines.join("\n")).map_err(AppError::from)?;
 
         tracing::info!("[LocalCache] 成功保存歌词到本地缓存: {file_path:?}");
         self.ui.toasts.add(egui_toast::Toast {

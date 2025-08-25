@@ -114,6 +114,8 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                                 let result_to_send = AutoFetchResult::LyricsSuccess {
                                     source: AutoSearchSource::LocalCache,
                                     lyrics_and_metadata: Box::new(lyrics_and_metadata),
+                                    title: track_info.title.clone().unwrap_or_default(),
+                                    artist: track_info.artist.clone().unwrap_or_default(),
                                 };
 
                                 if result_tx.send(result_to_send).is_err() {
@@ -240,10 +242,21 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                         }
                     };
 
+                    if app_settings.auto_cache
+                        && comprehensive_result.primary_lyric_result.source_track.match_type == lyrics_helper_core::MatchType::Perfect
+                    {
+                        info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
+                        if result_tx.send(AutoFetchResult::RequestCache).is_err() {
+                            error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
+                        }
+                    }
+
                     let lyrics_result = AutoFetchResult::LyricsReady {
                         source,
                         lyrics_and_metadata: Box::new(lyrics_and_metadata),
                         output_text,
+                        title: smtc_title.clone(),
+                        artist: smtc_artists.join("/"),
                     };
 
                     if result_tx.send(lyrics_result).is_err() {
@@ -259,7 +272,11 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     )
                     .await;
 
-                    let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
+                    let cover_result = AutoFetchResult::CoverUpdate {
+                        title: smtc_title.clone(),
+                        artist: smtc_artists.join("/"),
+                        cover_data: final_cover_data,
+                    };
 
                     if result_tx.send(cover_result).is_err() {
                         error!("[AutoFetch Task] 发送 AMLL DB 封面更新结果到主线程失败。");
@@ -344,10 +361,21 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     }
                 };
 
+                if app_settings.auto_cache
+                    && comprehensive_result.primary_lyric_result.source_track.match_type == lyrics_helper_core::MatchType::Perfect
+                {
+                    info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
+                    if result_tx.send(AutoFetchResult::RequestCache).is_err() {
+                        error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
+                    }
+                }
+
                 let lyrics_result = AutoFetchResult::LyricsReady {
                     source,
                     lyrics_and_metadata: Box::new(lyrics_and_metadata),
                     output_text,
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
                 };
 
                 if result_tx.send(lyrics_result).is_err() {
@@ -363,7 +391,11 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 )
                 .await;
 
-                let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
+                let cover_result = AutoFetchResult::CoverUpdate {
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
+                    cover_data: final_cover_data,
+                };
 
                 if result_tx.send(cover_result).is_err() {
                     error!("[AutoFetch Task] 发送封面更新结果到主线程失败。");
@@ -507,10 +539,21 @@ pub(super) fn trigger_manual_refetch_for_source(
                     }
                 };
 
+                if app_settings.auto_cache
+                    && comprehensive_result.primary_lyric_result.source_track.match_type == lyrics_helper_core::MatchType::Perfect
+                {
+                    info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
+                    if result_tx.send(AutoFetchResult::RequestCache).is_err() {
+                        error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
+                    }
+                }
+
                 let lyrics_ready_result = AutoFetchResult::LyricsReady {
                     source: source_to_refetch,
                     lyrics_and_metadata: Box::new(lyrics_and_metadata),
                     output_text,
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
                 };
 
                 if result_tx.send(lyrics_ready_result).is_err() {
@@ -526,7 +569,11 @@ pub(super) fn trigger_manual_refetch_for_source(
                 )
                 .await;
 
-                let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
+                let cover_result = AutoFetchResult::CoverUpdate {
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
+                    cover_data: final_cover_data,
+                };
 
                 if result_tx.send(cover_result).is_err() {
                     error!("[ManualRefetch Task] 发送封面更新结果到主线程失败。");

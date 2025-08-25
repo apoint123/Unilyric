@@ -1,5 +1,5 @@
 use eframe::egui;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::ConnectorUpdate;
 use crate::amll_connector::protocol::ClientMessage;
@@ -144,8 +144,22 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 source,
                 lyrics_and_metadata,
                 output_text,
+                title,
+                artist,
             } => {
-                info!("[AutoFetch] 歌词已就绪，来源: {:?}，直接更新UI。", source);
+                let now_playing = &app.player.current_now_playing;
+                let current_title = now_playing.title.as_deref().unwrap_or_default();
+                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
+
+                if current_title != title || current_artist != artist {
+                    debug!(
+                        "[AutoFetch] 收到过时的歌词 (当前歌曲: '{} - {}', 歌词所属: '{} - {}')，已丢弃。",
+                        current_title, current_artist, title, artist
+                    );
+                    return;
+                }
+
+                info!("[AutoFetch] 歌词已就绪，来源: {:?}，正在更新UI。", source);
 
                 let result_cache_opt = match source {
                     AutoSearchSource::QqMusic => Some(&app.fetcher.last_qq_result),
@@ -211,7 +225,21 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             AutoFetchResult::LyricsSuccess {
                 source,
                 lyrics_and_metadata,
+                title,
+                artist,
             } => {
+                let now_playing = &app.player.current_now_playing;
+                let current_title = now_playing.title.as_deref().unwrap_or_default();
+                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
+
+                if current_title != title || current_artist != artist {
+                    debug!(
+                        "[AutoFetch] 收到过时的歌词 (当前歌曲: '{} - {}', 歌词所属: '{} - {}')，已丢弃。",
+                        current_title, current_artist, title, artist
+                    );
+                    return;
+                }
+
                 let result_cache_opt = match source {
                     AutoSearchSource::QqMusic => Some(&app.fetcher.last_qq_result),
                     AutoSearchSource::Kugou => Some(&app.fetcher.last_kugou_result),
@@ -246,25 +274,37 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
 
-            AutoFetchResult::CoverUpdate(final_cover_data) => {
-                app.send_action(UserAction::Player(PlayerAction::UpdateCover(
-                    final_cover_data.clone(),
-                )));
+            AutoFetchResult::CoverUpdate {
+                title,
+                artist,
+                cover_data,
+            } => {
+                let now_playing = &app.player.current_now_playing;
+                let current_title = now_playing.title.as_deref().unwrap_or_default();
+                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
 
-                if let Some(cover_bytes) = final_cover_data
-                    && let Some(command_tx) = &app.amll_connector.command_tx
-                {
-                    let send_result = command_tx.try_send(
-                        crate::amll_connector::types::ConnectorCommand::SendCover(cover_bytes),
-                    );
-                    if let Err(e) = send_result {
-                        warn!("[AutoFetch] 发送封面到 WebSocket 失败: {}", e);
-                    } else {
-                        info!("[AutoFetch] 已发送封面到 WebSocket");
+                if current_title == title && current_artist == artist {
+                    app.player.current_now_playing.cover_data = cover_data.clone();
+
+                    if let Some(cover_bytes) = cover_data
+                        && let Some(command_tx) = &app.amll_connector.command_tx
+                    {
+                        let send_result = command_tx.try_send(
+                            crate::amll_connector::types::ConnectorCommand::SendCover(cover_bytes),
+                        );
+                        if let Err(e) = send_result {
+                            warn!("[AutoFetch] 发送封面到 WebSocket 失败: {}", e);
+                        } else {
+                            debug!("[AutoFetch] 已发送封面到 WebSocket");
+                        }
                     }
+                    app.egui_ctx.request_repaint();
+                } else {
+                    debug!(
+                        "[CoverUpdate] 封面已过时 (当前歌曲: '{} - {}', 封面所属: '{} - {}')，已丢弃。",
+                        current_title, current_artist, title, artist
+                    );
                 }
-
-                app.egui_ctx.request_repaint();
             }
 
             AutoFetchResult::NotFound => {
@@ -290,6 +330,9 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             AutoFetchResult::FetchError(err) => {
                 error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err.to_string());
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
+            }
+            AutoFetchResult::RequestCache => {
+                app.send_action(UserAction::Player(PlayerAction::SaveToLocalCache));
             }
         }
     }
@@ -432,8 +475,8 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
 
 /// 处理来自歌词转换任务的结果。
 pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
-    if app.lyrics.conversion_result_rx.is_some()
-        && let Ok(result) = app.lyrics.conversion_result_rx.as_ref().unwrap().try_recv()
+    if let Some(rx) = &app.lyrics.conversion_result_rx
+        && let Ok(result) = rx.try_recv()
     {
         app.lyrics.conversion_result_rx.take();
 

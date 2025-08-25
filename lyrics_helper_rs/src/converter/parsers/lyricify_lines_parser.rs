@@ -4,7 +4,7 @@ use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use crate::converter::{ utils::normalize_text_whitespace};
+use crate::converter::utils::normalize_text_whitespace;
 
 use lyrics_helper_core::{
     AnnotatedTrack, ContentType, ConvertError, LyricFormat, LyricLine, LyricLineBuilder,

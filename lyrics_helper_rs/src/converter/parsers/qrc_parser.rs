@@ -15,7 +15,7 @@ static KANA_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 static LYRIC_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<text>.+?)\((?P<start>\d+),(?P<duration>\d+)\)")
+    Regex::new(r"(?P<text>.*?)\((?P<start>\d+),(?P<duration>\d+)\)")
         .expect("编译 LYRIC_TOKEN_REGEX 失败")
 });
 

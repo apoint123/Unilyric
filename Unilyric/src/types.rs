@@ -19,6 +19,7 @@ pub struct LocalLyricCacheEntry {
     pub smtc_artists: Vec<String>,
     pub ttml_filename: String,
     pub original_source_format: Option<String>,
+    pub saved_timestamp: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,12 +40,21 @@ pub enum AutoFetchResult {
         source: AutoSearchSource,
         lyrics_and_metadata: Box<LyricsAndMetadata>,
         output_text: String,
+        title: String,
+        artist: String,
     },
-    CoverUpdate(Option<Vec<u8>>),
+    CoverUpdate {
+        title: String,
+        artist: String,
+        cover_data: Option<Vec<u8>>,
+    },
     LyricsSuccess {
         source: AutoSearchSource,
         lyrics_and_metadata: Box<LyricsAndMetadata>,
+        title: String,
+        artist: String,
     },
+    RequestCache,
     NotFound,
     FetchError(AppError),
 }
