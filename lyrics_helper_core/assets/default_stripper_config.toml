@@ -35,7 +35,9 @@ keywords = [
     "音乐制作",
     "录音师",
     "混音工程师",
+    "混音师",
     "母带工程师",
+    "母带处理工程师",
     "制作统筹",
     "艺术指导",
     "出品团队",
@@ -93,6 +95,9 @@ keywords = [
     "统筹",
     "推广",
     "出品/发行",
+    "封面",
+    "总企划",
+    "混缩",
     "OP",
     "SP",
     "Lyrics by",
@@ -244,6 +249,11 @@ keywords = [
     "统筹Planning",
     "营销推广Marketing",
     "出品人Producer",
+    "企划Planning",
+    "监制Executive Director",
+    "统筹Coordinator",
+    "出品人Publisher",
+    "出品Present by",
 ]
 
 regex_patterns = [

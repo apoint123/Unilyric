@@ -101,6 +101,13 @@ pub fn generate_from_parsed<S: BuildHasher>(
     options: &ConversionOptions,
     user_metadata_overrides: &Option<HashMap<String, Vec<String>, S>>,
 ) -> Result<FullConversionResult, ConvertError> {
+    ChineseConversionProcessor::process(&mut source_data.lines, &options.chinese_conversion);
+
+    processors::metadata_stripper::strip_descriptive_metadata_lines(
+        &mut source_data.lines,
+        &options.metadata_stripper,
+    );
+
     let mut metadata_store = MetadataStore::from(&source_data);
 
     if let Some(agent_definitions) = source_data.raw_metadata.get("agent")

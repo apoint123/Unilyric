@@ -3,8 +3,8 @@ use std::sync::Arc;
 use crate::amll_connector::types::ActorSettings;
 use crate::amll_connector::{AMLLConnectorConfig, ConnectorCommand};
 use crate::app_actions::{
-    AmllConnectorAction, FileAction, LyricsAction, PanelType, PlayerAction, SettingsAction,
-    UIAction, UserAction,
+    AmllConnectorAction, FileAction, LyricsAction, PanelType, PlayerAction, ProcessorType,
+    SettingsAction, UIAction, UserAction,
 };
 use crate::app_definition::UniLyricApp;
 use crate::app_handlers::ConnectorCommand::SendLyric;
@@ -14,7 +14,7 @@ use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
 use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
     ChineseConversionMode, ChineseConversionOptions, ConversionInput, ConversionOptions, InputFile,
-    LyricFormat, Track,
+    LyricFormat, SyllableSmoothingOptions, Track,
 };
 use rand::Rng;
 use smtc_suite::{MediaCommand, TextConversionMode};
@@ -82,6 +82,51 @@ impl UniLyricApp {
 
     pub fn trigger_convert(&mut self) {
         self.dispatch_conversion_task(Default::default());
+    }
+
+    fn dispatch_regeneration_task(&mut self) {
+        if self.lyrics.conversion_in_progress {
+            warn!("[Regenerate] 重新生成已在进行中，跳过新的请求。");
+            return;
+        }
+
+        let Some(parsed_data) = self.lyrics.parsed_lyric_data.clone() else {
+            warn!("[Regenerate] 没有已解析的数据可供重新生成。");
+            return;
+        };
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.lyrics.conversion_result_rx = Some(rx);
+        self.lyrics.conversion_in_progress = true;
+
+        let target_format = self.lyrics.target_format;
+
+        self.lyrics.metadata_manager.sync_store_from_ui_entries();
+        let metadata_overrides = Some(
+            self.lyrics
+                .metadata_manager
+                .store
+                .get_all_data()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        );
+
+        self.tokio_runtime.spawn(async move {
+            let result = lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
+                std::hash::RandomState,
+            >(
+                parsed_data,
+                target_format,
+                Default::default(),
+                metadata_overrides,
+            )
+            .await;
+
+            if tx.send(result).is_err() {
+                warn!("[Regenerate Task] 发送重新生成结果失败，接收端可能已关闭。");
+            }
+        });
     }
 
     fn dispatch_conversion_task(&mut self, options: ConversionOptions) {
@@ -631,11 +676,44 @@ impl UniLyricApp {
 
                 self.fetcher.current_ui_populated = true;
 
+                let parsed_data = &lyrics_and_metadata.lyrics.parsed;
                 let raw_data = lyrics_and_metadata.lyrics.raw;
+
+                self.lyrics.source_format = parsed_data.source_format;
+                self.fetcher.last_source_format = Some(parsed_data.source_format);
                 self.lyrics.input_text = raw_data.content;
 
                 self.trigger_convert();
 
+                ActionResult::Success
+            }
+            LyricsAction::ApplyProcessor(processor) => {
+                let Some(parsed_data) = self.lyrics.parsed_lyric_data.as_mut() else {
+                    return ActionResult::Warning("没有已解析的歌词可供处理".to_string());
+                };
+
+                info!("[Processor] 应用后处理器: {:?}", processor);
+
+                match processor {
+                    ProcessorType::MetadataStripper => {
+                        lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                            &mut parsed_data.lines,
+                            &Default::default(),
+                        );
+                    }
+                    ProcessorType::SyllableSmoother => {
+                        lyrics_helper_rs::converter::processors::syllable_smoothing::apply_smoothing(
+                            &mut parsed_data.lines,
+                            &SyllableSmoothingOptions::default(),
+                        );
+                    }
+                    ProcessorType::AgentRecognizer => {
+                        lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                            &mut parsed_data.lines,
+                        );
+                    }
+                }
+                self.dispatch_regeneration_task();
                 ActionResult::Success
             }
         }

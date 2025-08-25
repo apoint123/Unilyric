@@ -3,7 +3,9 @@ use crate::app_definition::UniLyricApp;
 
 use crate::types::{AutoSearchSource, AutoSearchStatus};
 
-use crate::app_actions::{AmllConnectorAction, LyricsAction, PlayerAction, UIAction, UserAction};
+use crate::app_actions::{
+    AmllConnectorAction, LyricsAction, PlayerAction, ProcessorType, UIAction, UserAction,
+};
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::{Color32, TextWrapMode};
 use ferrous_opencc::config::BuiltinConfig;
@@ -13,47 +15,49 @@ use lyrics_helper_core::FullLyricsResult;
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
 const BUTTON_STRIP_SPACING: f32 = 4.0;
 
-// 为 UniLyricApp 实现UI绘制相关的方法
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsCategory {
+    #[default]
+    General,
+    Interface,
+    AutoSearch,
+    Connector,
+}
+
+impl SettingsCategory {
+    fn display_name(&self) -> &'static str {
+        match self {
+            SettingsCategory::General => "通用",
+            SettingsCategory::Interface => "界面",
+            SettingsCategory::AutoSearch => "自动搜索",
+            SettingsCategory::Connector => "AMLL Connector",
+        }
+    }
+}
+
 impl UniLyricApp {
-    /// 绘制应用顶部的工具栏。
-    /// 工具栏包含文件菜单、源格式和目标格式选择下拉框，以及其他控制按钮。
     pub fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
-        // 使用 egui::menu::bar 创建一个菜单栏容器
         egui::menu::bar(ui, |ui_bar| {
-            // --- 文件菜单 ---
             ui_bar.menu_button("文件", |file_menu| {
-                // "打开歌词文件..." 按钮
-                // add_enabled 控制按钮是否可用 (当没有转换正在进行时可用)
                 if file_menu
-                    .add_enabled(
-                        !self.lyrics.conversion_in_progress,
-                        egui::Button::new("打开歌词文件..."),
-                    )
+                    .add(egui::Button::new("打开歌词文件..."))
                     .clicked()
                 {
                     self.send_action(crate::app_actions::UserAction::File(
                         crate::app_actions::FileAction::Open,
                     ));
                 }
-                file_menu.separator(); // 添加分割线
-
-                // 判断主歌词是否已加载，用于启用/禁用加载LRC翻译/罗马音的按钮
-                // 主歌词已加载的条件：
-                // 1. parsed_ttml_paragraphs (内部TTML表示) 非空且包含段落
-                // 2. 或者 input_text (原始输入文本框) 非空
-                // 3. 或者 direct_netease_main_lrc_content (从网易云直接获取的LRC主歌词) 非空
+                file_menu.separator();
                 let main_lyrics_loaded = (self.lyrics.parsed_lyric_data.is_some()
                     && self.lyrics.parsed_lyric_data.as_ref().is_some())
                     || !self.lyrics.input_text.is_empty();
                 let lrc_load_enabled = main_lyrics_loaded && !self.lyrics.conversion_in_progress;
-                let disabled_lrc_hover_text = "请先加载主歌词文件或内容"; // 按钮禁用时的提示文本
+                let disabled_lrc_hover_text = "请先加载主歌词文件或内容";
 
-                // "加载翻译 (LRC)..." 按钮
                 let translation_button = egui::Button::new("加载翻译 (LRC)...");
                 let mut translation_button_response =
                     file_menu.add_enabled(lrc_load_enabled, translation_button);
                 if !lrc_load_enabled {
-                    // 如果禁用，添加悬停提示
                     translation_button_response =
                         translation_button_response.on_disabled_hover_text(disabled_lrc_hover_text);
                 }
@@ -63,7 +67,6 @@ impl UniLyricApp {
                     ));
                 }
 
-                // "加载罗马音 (LRC)..." 按钮
                 let romanization_button = egui::Button::new("加载罗马音 (LRC)...");
                 let mut romanization_button_response =
                     file_menu.add_enabled(lrc_load_enabled, romanization_button);
@@ -78,11 +81,9 @@ impl UniLyricApp {
                 }
                 file_menu.separator();
 
-                // "下载歌词..." 子菜单
-                let download_enabled = !self.lyrics.conversion_in_progress; // 下载功能在无转换进行时可用
                 file_menu.menu_button("下载歌词...", |download_menu| {
                     if download_menu
-                        .add_enabled(download_enabled, egui::Button::new("搜索歌词..."))
+                        .add(egui::Button::new("搜索歌词..."))
                         .clicked()
                     {
                         self.send_action(crate::app_actions::UserAction::UI(
@@ -94,11 +95,9 @@ impl UniLyricApp {
                 });
 
                 file_menu.separator();
-                // "保存输出为..." 按钮
-                // 当输出文本非空且无转换进行时可用
                 if file_menu
                     .add_enabled(
-                        !self.lyrics.output_text.is_empty() && !self.lyrics.conversion_in_progress,
+                        !self.lyrics.output_text.is_empty(),
                         egui::Button::new("保存输出为..."),
                     )
                     .clicked()
@@ -106,6 +105,42 @@ impl UniLyricApp {
                     self.send_action(crate::app_actions::UserAction::File(
                         crate::app_actions::FileAction::Save,
                     ));
+                }
+            });
+
+            ui_bar.menu_button("后处理", |postprocess_menu| {
+                let lyrics_loaded = self.lyrics.parsed_lyric_data.is_some();
+
+                if postprocess_menu
+                    .add_enabled(lyrics_loaded, egui::Button::new("清理元数据行"))
+                    .on_disabled_hover_text("需要先成功解析歌词")
+                    .clicked()
+                {
+                    self.send_action(UserAction::Lyrics(Box::new(LyricsAction::ApplyProcessor(
+                        ProcessorType::MetadataStripper,
+                    ))));
+                }
+
+                if postprocess_menu
+                    .add_enabled(lyrics_loaded, egui::Button::new("音节平滑"))
+                    .on_disabled_hover_text("需要先成功解析歌词")
+                    .clicked()
+                {
+                    self.send_action(UserAction::Lyrics(Box::new(LyricsAction::ApplyProcessor(
+                        ProcessorType::SyllableSmoother,
+                    ))));
+                }
+
+                postprocess_menu.separator();
+
+                if postprocess_menu
+                    .add_enabled(lyrics_loaded, egui::Button::new("演唱者识别"))
+                    .on_disabled_hover_text("需要先成功解析歌词")
+                    .clicked()
+                {
+                    self.send_action(UserAction::Lyrics(Box::new(LyricsAction::ApplyProcessor(
+                        ProcessorType::AgentRecognizer,
+                    ))));
                 }
             });
 
@@ -373,14 +408,14 @@ impl UniLyricApp {
                         ));
                     }
                 });
-                ui_right.add_space(BUTTON_STRIP_SPACING);
-                if ui_right.button("元数据").clicked() {
-                    self.send_action(crate::app_actions::UserAction::UI(
-                        crate::app_actions::UIAction::ShowPanel(
-                            crate::app_actions::PanelType::Metadata,
-                        ),
-                    ));
-                }
+                // ui_right.add_space(BUTTON_STRIP_SPACING);
+                // if ui_right.button("元数据").clicked() {
+                //     self.send_action(crate::app_actions::UserAction::UI(
+                //         crate::app_actions::UIAction::ShowPanel(
+                //             crate::app_actions::PanelType::Metadata,
+                //         ),
+                //     ));
+                // }
                 ui_right.add_space(BUTTON_STRIP_SPACING);
                 let mut wrap_text_copy = self.ui.wrap_text;
                 if ui_right.checkbox(&mut wrap_text_copy, "自动换行").changed() {
@@ -407,288 +442,318 @@ impl UniLyricApp {
         egui::Window::new("应用程序设置")
             .open(&mut is_settings_window_open)
             .resizable(true)
-            .default_width(500.0)
-            .scroll([false, true])
+            .default_width(700.0)
+            .max_height(450.0)
             .show(ctx, |ui| {
-                egui::Grid::new("log_settings_grid")
-                    .num_columns(2)
-                    .spacing([40.0, 4.0])
-                    .striped(true)
-                    .show(ui, |grid_ui| {
-                        grid_ui.heading("日志设置");
-                        grid_ui.end_row();
+                ui.horizontal_top(|h_ui| {
+                    egui::SidePanel::left("settings_category_panel")
+                        .exact_width(140.0)
+                        .show_inside(h_ui, |nav_ui| {
+                            nav_ui.style_mut().spacing.item_spacing = egui::vec2(4.0, 8.0);
+                            nav_ui.heading("设置");
+                            nav_ui.separator();
 
-                        grid_ui.label("启用文件日志:");
-                        grid_ui.checkbox(
-                            &mut self.ui.temp_edit_settings.log_settings.enable_file_log,
-                            "",
-                        );
-                        grid_ui.end_row();
+                            let categories = [
+                                SettingsCategory::General,
+                                SettingsCategory::Interface,
+                                SettingsCategory::AutoSearch,
+                                SettingsCategory::Connector,
+                            ];
 
-                        grid_ui.label("文件日志级别:");
-                        ComboBox::from_id_salt("file_log_level_combo_settings")
-                            .selected_text(format!(
-                                "{:?}",
-                                self.ui.temp_edit_settings.log_settings.file_log_level
-                            ))
-                            .show_ui(grid_ui, |ui_combo| {
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Off,
-                                    "Off",
+                            for category in categories {
+                                nav_ui.selectable_value(
+                                    &mut self.ui.current_settings_category,
+                                    category,
+                                    category.display_name(),
                                 );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Error,
-                                    "Error",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Warn,
-                                    "Warn",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Info,
-                                    "Info",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Debug,
-                                    "Debug",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.file_log_level,
-                                    LevelFilter::Trace,
-                                    "Trace",
-                                );
-                            });
-                        grid_ui.end_row();
-
-                        grid_ui.label("控制台日志级别:");
-                        ComboBox::from_id_salt("console_log_level_combo_settings")
-                            .selected_text(format!(
-                                "{:?}",
-                                self.ui.temp_edit_settings.log_settings.console_log_level
-                            ))
-                            .show_ui(grid_ui, |ui_combo| {
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Off,
-                                    "Off",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Error,
-                                    "Error",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Warn,
-                                    "Warn",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Info,
-                                    "Info",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Debug,
-                                    "Debug",
-                                );
-                                ui_combo.selectable_value(
-                                    &mut self.ui.temp_edit_settings.log_settings.console_log_level,
-                                    LevelFilter::Trace,
-                                    "Trace",
-                                );
-                            });
-                        grid_ui.end_row();
-                    });
-                ui.add_space(10.0);
-
-                ui.separator();
-                ui.strong("界面设置:");
-
-                ui.horizontal(|h_ui| {
-                    h_ui.label("界面字体:");
-
-                    let mut selected = self
-                        .ui
-                        .temp_edit_settings
-                        .selected_font_family
-                        .clone()
-                        .unwrap_or_else(|| "默认".to_string());
-
-                    egui::ComboBox::from_label("")
-                        .selected_text(&selected)
-                        .show_ui(h_ui, |combo_ui| {
-                            if combo_ui
-                                .selectable_value(
-                                    &mut selected,
-                                    "默认".to_string(),
-                                    "默认 (内置字体)",
-                                )
-                                .clicked()
-                            {
-                                self.ui.temp_edit_settings.selected_font_family = None;
                             }
+                        });
 
-                            for font_name in &self.ui.available_system_fonts {
-                                if combo_ui
-                                    .selectable_value(&mut selected, font_name.clone(), font_name)
-                                    .clicked()
-                                {
-                                    self.ui.temp_edit_settings.selected_font_family =
-                                        Some(font_name.clone());
+                    egui::CentralPanel::default().show_inside(h_ui, |content_ui| {
+                        ScrollArea::vertical().show(content_ui, |scroll_ui| {
+                            match self.ui.current_settings_category {
+                                SettingsCategory::General => self.draw_settings_general(scroll_ui),
+                                SettingsCategory::Interface => {
+                                    self.draw_settings_interface(scroll_ui)
+                                }
+                                SettingsCategory::AutoSearch => {
+                                    self.draw_settings_auto_search(scroll_ui)
+                                }
+                                SettingsCategory::Connector => {
+                                    self.draw_settings_amll_connector(scroll_ui)
                                 }
                             }
                         });
+                    });
                 });
-
                 ui.separator();
-
-                egui::Grid::new("amll_connector_settings_grid")
-                    .num_columns(2)
-                    .spacing([40.0, 4.0])
-                    .striped(true)
-                    .show(ui, |grid_ui| {
-                        grid_ui.heading("AMLL Connector 设置");
-                        grid_ui.end_row();
-
-                        grid_ui.label("启用 AMLL Connector 功能:");
-                        grid_ui
-                            .checkbox(&mut self.ui.temp_edit_settings.amll_connector_enabled, "")
+                ui.with_layout(
+                    Layout::right_to_left(egui::Align::Center),
+                    |bottom_buttons_ui| {
+                        if bottom_buttons_ui.button("取消").clicked() {
+                            self.send_action(crate::app_actions::UserAction::Settings(
+                                crate::app_actions::SettingsAction::Cancel,
+                            ));
+                        }
+                        if bottom_buttons_ui
+                            .button("保存并应用")
                             .on_hover_text(
-                                "转发 SMTC 信息到 AMLL Player，让 AMLL Player 也支持其他音乐软件",
-                            );
-                        grid_ui.end_row();
-
-                        grid_ui.label("WebSocket URL:");
-                        grid_ui
-                            .add(
-                                TextEdit::singleline(
-                                    &mut self.ui.temp_edit_settings.amll_connector_websocket_url,
-                                )
-                                .hint_text("ws://localhost:11444")
-                                .desired_width(f32::INFINITY),
+                                "保存设置到文件。部分设置将在下次启动或下次自动搜索时生效",
                             )
-                            .on_hover_text("需点击“保存并应用”");
-                        grid_ui.end_row();
-
-                        grid_ui.label("将音频数据发送到 AMLL Player");
-                        grid_ui.checkbox(
-                            &mut self.ui.temp_edit_settings.send_audio_data_to_player,
-                            "",
-                        );
-                        grid_ui.end_row();
-
-                        grid_ui.heading("SMTC 偏移");
-                        grid_ui.end_row();
-
-                        grid_ui.label("时间轴偏移量 (毫秒):");
-                        grid_ui.add(
-                            egui::DragValue::new(
-                                &mut self.ui.temp_edit_settings.smtc_time_offset_ms,
-                            )
-                            .speed(10.0)
-                            .suffix(" ms"),
-                        );
-                        grid_ui.end_row();
-                    });
-
-                ui.add_space(10.0);
-                ui.strong("自动歌词搜索设置:");
-
-                ui.checkbox(
-                    &mut self.ui.temp_edit_settings.prioritize_amll_db,
-                    "优先搜索 AMLL TTML 数据库 (推荐)",
-                );
-
-                ui.checkbox(
-                    &mut self.ui.temp_edit_settings.enable_t2s_for_auto_search,
-                    "将繁体 SMTC 信息转为简体再搜索 (推荐)",
-                );
-                ui.add_space(10.0);
-
-                ui.checkbox(
-                    &mut self.ui.temp_edit_settings.always_search_all_sources,
-                    "始终搜索所有源 (最准，但最慢)",
-                );
-                ui.add_space(10.0);
-
-                ui.checkbox(
-                    &mut self.ui.temp_edit_settings.use_provider_subset,
-                    "只在以下选择的源中搜索:",
-                );
-
-                ui.add_enabled_ui(
-                    self.ui.temp_edit_settings.use_provider_subset,
-                    |enabled_ui| {
-                        egui::Frame::group(enabled_ui.style()).show(enabled_ui, |group_ui| {
-                            group_ui.label("选择要使用的提供商:");
-
-                            let all_providers = AutoSearchSource::default_order();
-
-                            for provider in all_providers {
-                                let provider_name =
-                                    Into::<&'static str>::into(provider).to_string();
-
-                                let mut is_selected = self
-                                    .ui
-                                    .temp_edit_settings
-                                    .auto_search_provider_subset
-                                    .contains(&provider_name);
-
-                                if group_ui
-                                    .checkbox(&mut is_selected, provider.display_name())
-                                    .changed()
-                                {
-                                    if is_selected {
-                                        self.ui
-                                            .temp_edit_settings
-                                            .auto_search_provider_subset
-                                            .push(provider_name);
-                                    } else {
-                                        self.ui
-                                            .temp_edit_settings
-                                            .auto_search_provider_subset
-                                            .retain(|p| p != &provider_name);
-                                    }
-                                }
-                            }
-                        });
+                            .clicked()
+                        {
+                            self.send_action(crate::app_actions::UserAction::Settings(
+                                crate::app_actions::SettingsAction::Save(Box::new(
+                                    self.ui.temp_edit_settings.clone(),
+                                )),
+                            ));
+                        }
                     },
                 );
-
-                ui.separator();
-                ui.add_space(10.0);
-
-                ui.horizontal(|bottom_buttons_ui| {
-                    if bottom_buttons_ui
-                        .button("保存并应用")
-                        .on_hover_text(
-                            "保存设置到文件。日志和搜索顺序设置将在下次启动或下次自动搜索时生效",
-                        )
-                        .clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Settings(
-                            crate::app_actions::SettingsAction::Save(Box::new(
-                                self.ui.temp_edit_settings.clone(),
-                            )),
-                        ));
-                    }
-                    if bottom_buttons_ui.button("取消").clicked() {
-                        self.send_action(crate::app_actions::UserAction::Settings(
-                            crate::app_actions::SettingsAction::Cancel,
-                        ));
-                    }
-                });
             });
 
         if !is_settings_window_open {
             self.ui.show_settings_window = false;
         }
+    }
+
+    fn draw_settings_general(&mut self, ui: &mut egui::Ui) {
+        ui.heading("通用设置");
+        ui.add_space(10.0);
+
+        egui::Grid::new("log_settings_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |grid_ui| {
+                grid_ui.label("启用文件日志:");
+                grid_ui.checkbox(
+                    &mut self.ui.temp_edit_settings.log_settings.enable_file_log,
+                    "",
+                );
+                grid_ui.end_row();
+
+                grid_ui.label("文件日志级别:");
+                ComboBox::from_id_salt("file_log_level_combo_settings")
+                    .selected_text(format!(
+                        "{:?}",
+                        self.ui.temp_edit_settings.log_settings.file_log_level
+                    ))
+                    .show_ui(grid_ui, |ui_combo| {
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Off,
+                            "Off",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Error,
+                            "Error",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Warn,
+                            "Warn",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Info,
+                            "Info",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Debug,
+                            "Debug",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.file_log_level,
+                            LevelFilter::Trace,
+                            "Trace",
+                        );
+                    });
+                grid_ui.end_row();
+
+                grid_ui.label("控制台日志级别:");
+                ComboBox::from_id_salt("console_log_level_combo_settings")
+                    .selected_text(format!(
+                        "{:?}",
+                        self.ui.temp_edit_settings.log_settings.console_log_level
+                    ))
+                    .show_ui(grid_ui, |ui_combo| {
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Off,
+                            "Off",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Error,
+                            "Error",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Warn,
+                            "Warn",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Info,
+                            "Info",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Debug,
+                            "Debug",
+                        );
+                        ui_combo.selectable_value(
+                            &mut self.ui.temp_edit_settings.log_settings.console_log_level,
+                            LevelFilter::Trace,
+                            "Trace",
+                        );
+                    });
+                grid_ui.end_row();
+            });
+    }
+
+    fn draw_settings_interface(&mut self, ui: &mut egui::Ui) {
+        ui.heading("界面设置");
+        ui.add_space(10.0);
+
+        ui.horizontal(|h_ui| {
+            h_ui.label("界面字体:");
+
+            let mut selected = self
+                .ui
+                .temp_edit_settings
+                .selected_font_family
+                .clone()
+                .unwrap_or_else(|| "默认".to_string());
+
+            egui::ComboBox::from_label("")
+                .selected_text(&selected)
+                .show_ui(h_ui, |combo_ui| {
+                    if combo_ui
+                        .selectable_value(&mut selected, "默认".to_string(), "默认 (内置字体)")
+                        .clicked()
+                    {
+                        self.ui.temp_edit_settings.selected_font_family = None;
+                    }
+                    for font_name in &self.ui.available_system_fonts {
+                        if combo_ui
+                            .selectable_value(&mut selected, font_name.clone(), font_name)
+                            .clicked()
+                        {
+                            self.ui.temp_edit_settings.selected_font_family =
+                                Some(font_name.clone());
+                        }
+                    }
+                });
+        });
+    }
+
+    fn draw_settings_auto_search(&mut self, ui: &mut egui::Ui) {
+        ui.heading("自动歌词搜索设置");
+        ui.add_space(10.0);
+
+        ui.checkbox(
+            &mut self.ui.temp_edit_settings.prioritize_amll_db,
+            "优先搜索 AMLL TTML 数据库 (推荐)",
+        );
+        ui.checkbox(
+            &mut self.ui.temp_edit_settings.enable_t2s_for_auto_search,
+            "将繁体 SMTC 信息转为简体再搜索 (推荐)",
+        );
+        ui.checkbox(
+            &mut self.ui.temp_edit_settings.always_search_all_sources,
+            "始终搜索所有源 (最准，但最慢)",
+        );
+        ui.add_space(10.0);
+        ui.checkbox(
+            &mut self.ui.temp_edit_settings.use_provider_subset,
+            "只在以下选择的源中搜索:",
+        );
+
+        ui.add_enabled_ui(
+            self.ui.temp_edit_settings.use_provider_subset,
+            |enabled_ui| {
+                egui::Frame::group(enabled_ui.style()).show(enabled_ui, |group_ui| {
+                    group_ui.label("选择要使用的提供商:");
+                    let all_providers = AutoSearchSource::default_order();
+                    for provider in all_providers {
+                        let provider_name = Into::<&'static str>::into(provider).to_string();
+                        let mut is_selected = self
+                            .ui
+                            .temp_edit_settings
+                            .auto_search_provider_subset
+                            .contains(&provider_name);
+                        if group_ui
+                            .checkbox(&mut is_selected, provider.display_name())
+                            .changed()
+                        {
+                            if is_selected {
+                                self.ui
+                                    .temp_edit_settings
+                                    .auto_search_provider_subset
+                                    .push(provider_name);
+                            } else {
+                                self.ui
+                                    .temp_edit_settings
+                                    .auto_search_provider_subset
+                                    .retain(|p| p != &provider_name);
+                            }
+                        }
+                    }
+                });
+            },
+        );
+    }
+
+    fn draw_settings_amll_connector(&mut self, ui: &mut egui::Ui) {
+        ui.heading("AMLL Connector 设置");
+        ui.add_space(10.0);
+
+        egui::Grid::new("amll_connector_settings_grid")
+            .num_columns(2)
+            .spacing([40.0, 4.0])
+            .striped(true)
+            .show(ui, |grid_ui| {
+                grid_ui.label("启用 AMLL Connector 功能:");
+                grid_ui
+                    .checkbox(&mut self.ui.temp_edit_settings.amll_connector_enabled, "")
+                    .on_hover_text(
+                        "转发 SMTC 信息到 AMLL Player，让 AMLL Player 也支持其他音乐软件",
+                    );
+                grid_ui.end_row();
+
+                grid_ui.label("WebSocket URL:");
+                grid_ui
+                    .add(
+                        TextEdit::singleline(
+                            &mut self.ui.temp_edit_settings.amll_connector_websocket_url,
+                        )
+                        .hint_text("ws://localhost:11444")
+                        .desired_width(f32::INFINITY),
+                    )
+                    .on_hover_text("需点击“保存并应用”");
+                grid_ui.end_row();
+
+                grid_ui.label("将音频数据发送到 AMLL Player");
+                grid_ui.checkbox(
+                    &mut self.ui.temp_edit_settings.send_audio_data_to_player,
+                    "",
+                );
+                grid_ui.end_row();
+
+                grid_ui
+                    .label("时间轴偏移量 (毫秒):")
+                    .on_hover_text("调整SMTC报告的时间戳以匹配歌词");
+                grid_ui.add(
+                    egui::DragValue::new(&mut self.ui.temp_edit_settings.smtc_time_offset_ms)
+                        .speed(10.0)
+                        .suffix(" ms"),
+                );
+                grid_ui.end_row();
+            });
     }
 
     pub fn draw_metadata_editor_window_contents(&mut self, ui: &mut egui::Ui, _open: &mut bool) {

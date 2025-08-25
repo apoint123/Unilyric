@@ -19,6 +19,7 @@ use tokio::{
 };
 
 use crate::amll_connector::types::UiUpdate;
+use crate::app_ui::SettingsCategory;
 use crate::types::{EditableMetadataEntry, ProviderState};
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
@@ -48,6 +49,7 @@ pub(super) struct UiState {
     pub(super) temp_edit_settings: AppSettings,
     pub(super) toasts: Toasts,
     pub(super) available_system_fonts: Vec<String>,
+    pub(super) current_settings_category: SettingsCategory,
 }
 
 impl UiState {
@@ -71,6 +73,7 @@ impl UiState {
             show_search_window: false,
             log_display_buffer: Vec::with_capacity(200),
             available_system_fonts: Vec::new(),
+            current_settings_category: SettingsCategory::default(),
         }
     }
 }

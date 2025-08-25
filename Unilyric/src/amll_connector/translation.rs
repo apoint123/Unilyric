@@ -26,6 +26,7 @@ fn extract_line_components(
     syllables: &[helper_types::LyricSyllable],
     translations: &[helper_types::LyricTrack],
     romanizations: &[helper_types::LyricTrack],
+    is_instrumental: bool,
 ) -> (Vec<protocol::LyricWord>, String, String) {
     let words = syllables
         .iter()
@@ -36,15 +37,22 @@ fn extract_line_components(
                 syllable.text.clone()
             };
 
+            let end_time = if is_instrumental {
+                // 应对纯音乐提示文本
+                syllable.start_ms + 3_600_000 // 1 h
+            } else {
+                syllable.end_ms
+            };
+
             protocol::LyricWord {
                 start_time: syllable.start_ms,
-                end_time: syllable.end_ms,
+                end_time,
                 word: NullString(word_text),
             }
         })
         .collect();
 
-    let translation = translations
+    let mut translation = translations
         .iter()
         .find(|t| {
             t.metadata
@@ -54,6 +62,10 @@ fn extract_line_components(
         .or_else(|| translations.first())
         .map_or(String::new(), get_track_text);
 
+    if translation == "//" {
+        translation = String::new();
+    }
+
     let romanization = romanizations.first().map_or(String::new(), get_track_text);
 
     (words, translation, romanization)
@@ -62,6 +74,28 @@ fn extract_line_components(
 pub(super) fn convert_to_protocol_lyrics(
     source_data: &helper_types::ParsedSourceData,
 ) -> Vec<protocol::LyricLine> {
+    let is_instrumental = if source_data.lines.len() == 1 {
+        source_data
+            .lines
+            .first()
+            .and_then(|line| {
+                line.tracks
+                    .iter()
+                    .find(|t| t.content_type == helper_types::ContentType::Main)
+            })
+            .is_some_and(|main_track| {
+                main_track
+                    .content
+                    .words
+                    .iter()
+                    .flat_map(|w| &w.syllables)
+                    .count()
+                    == 1
+            })
+    } else {
+        false
+    };
+
     let mut agent_duet_map: HashMap<String, bool> = HashMap::new();
 
     source_data
@@ -89,7 +123,7 @@ pub(super) fn convert_to_protocol_lyrics(
                 .find(|t| t.content_type == helper_types::ContentType::Main);
 
             let main_line_iter = main_annotated_track
-                .map(|main_track| {
+                .and_then(|main_track| {
                     let main_syllables: Vec<_> = main_track
                         .content
                         .words
@@ -98,21 +132,37 @@ pub(super) fn convert_to_protocol_lyrics(
                         .cloned()
                         .collect();
 
+                    if main_syllables.is_empty() {
+                        return None;
+                    }
+
                     let (words, translated_lyric, roman_lyric) = extract_line_components(
                         &main_syllables,
                         &main_track.translations,
                         &main_track.romanizations,
+                        is_instrumental,
                     );
 
-                    protocol::LyricLine {
-                        start_time: helper_line.start_ms,
-                        end_time: helper_line.end_ms,
+                    let start_time = words
+                        .iter()
+                        .map(|s| s.start_time)
+                        .min()
+                        .unwrap_or(helper_line.start_ms);
+                    let end_time = words
+                        .iter()
+                        .map(|s| s.end_time)
+                        .max()
+                        .unwrap_or(helper_line.end_ms);
+
+                    Some(protocol::LyricLine {
+                        start_time,
+                        end_time,
                         words,
                         translated_lyric: NullString(translated_lyric),
                         roman_lyric: NullString(roman_lyric),
                         is_bg: false,
                         is_duet: current_line_is_duet,
-                    }
+                    })
                 })
                 .into_iter();
 
@@ -138,16 +188,17 @@ pub(super) fn convert_to_protocol_lyrics(
                         &bg_syllables,
                         &bg_track.translations,
                         &bg_track.romanizations,
+                        false,
                     );
 
-                    let start_time = bg_syllables
+                    let start_time = bg_words
                         .iter()
-                        .map(|s| s.start_ms)
+                        .map(|s| s.start_time)
                         .min()
                         .unwrap_or(helper_line.start_ms);
-                    let end_time = bg_syllables
+                    let end_time = bg_words
                         .iter()
-                        .map(|s| s.end_ms)
+                        .map(|s| s.end_time)
                         .max()
                         .unwrap_or(helper_line.end_ms);
 

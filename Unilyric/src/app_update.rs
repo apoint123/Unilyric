@@ -173,6 +173,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 if !app.fetcher.current_ui_populated {
                     app.clear_lyrics_state_for_new_song_internal();
 
+                    app.lyrics.source_format = source_format;
                     app.lyrics.input_text = lyrics_and_metadata.lyrics.raw.content.clone();
                     app.lyrics.output_text = output_text;
                     app.lyrics.parsed_lyric_data = Some(lyrics_and_metadata.lyrics.parsed.clone());

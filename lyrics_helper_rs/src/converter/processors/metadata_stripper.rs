@@ -75,33 +75,51 @@ pub fn strip_descriptive_metadata_lines(
     }
 
     let keywords_to_use: &[String] = &options.keywords;
-    let regex_to_use: &[String] = &options.regex_patterns;
+    let use_regex = options
+        .flags
+        .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
+        && !options.regex_patterns.is_empty();
 
-    // 如果没有规则，直接返回
-    if lines.is_empty()
-        || (keywords_to_use.is_empty()
-            && (!options
-                .flags
-                .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
-                || regex_to_use.is_empty()))
-    {
+    if lines.is_empty() || (keywords_to_use.is_empty() && !use_regex) {
         return;
     }
 
     let original_count = lines.len();
 
-    // 基于关键词的移除
-    if !keywords_to_use.is_empty() {
-        let prepared_keywords: Cow<'_, [String]> = if options
-            .flags
-            .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE)
-        {
-            Cow::Borrowed(keywords_to_use)
-        } else {
-            Cow::Owned(keywords_to_use.iter().map(|k| k.to_lowercase()).collect())
-        };
+    let compiled_regexes: Vec<Regex> = if use_regex {
+        options
+            .regex_patterns
+            .iter()
+            .filter_map(|pattern_str| {
+                if pattern_str.trim().is_empty() {
+                    return None;
+                }
+                get_cached_regex(
+                    pattern_str,
+                    options
+                        .flags
+                        .contains(MetadataStripperFlags::REGEX_CASE_SENSITIVE),
+                )
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
 
-        let line_matches_keyword_rule = |line_to_check: &str| -> bool {
+    let prepared_keywords: Cow<'_, [String]> = if options
+        .flags
+        .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE)
+    {
+        Cow::Borrowed(keywords_to_use)
+    } else {
+        Cow::Owned(keywords_to_use.iter().map(|k| k.to_lowercase()).collect())
+    };
+    let keyword_case_sensitive = options
+        .flags
+        .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE);
+
+    let line_matches_any_rule = |line_to_check: &str| -> bool {
+        if !keywords_to_use.is_empty() {
             let mut text_after_prefix = line_to_check.trim_start();
             if text_after_prefix.starts_with('[') {
                 if let Some(end_bracket_idx) = text_after_prefix.find(']') {
@@ -113,11 +131,7 @@ pub fn strip_descriptive_metadata_lines(
                 text_after_prefix = text_after_prefix[end_paren_idx + 1..].trim_start();
             }
 
-            // 决定是否忽略大小写
-            let prepared_line: Cow<str> = if options
-                .flags
-                .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE)
-            {
+            let prepared_line: Cow<str> = if keyword_case_sensitive {
                 Cow::Borrowed(text_after_prefix)
             } else {
                 Cow::Owned(text_after_prefix.to_lowercase())
@@ -131,88 +145,53 @@ pub fn strip_descriptive_metadata_lines(
                     return true;
                 }
             }
-            false
-        };
-
-        let mut last_matching_header_index: Option<usize> = None;
-        let header_scan_limit = 20.min(lines.len());
-        for (i, line_item) in lines.iter().enumerate().take(header_scan_limit) {
-            let line_text = get_plain_text_from_new_lyric_line(line_item);
-            if line_matches_keyword_rule(&line_text) {
-                last_matching_header_index = Some(i);
-            }
-        }
-        let first_lyric_line_index = last_matching_header_index.map_or(0, |idx| idx + 1);
-
-        // 从歌词末尾反向扫描，找到第一个元数据行
-        let mut last_lyric_line_exclusive_index = lines.len();
-        if first_lyric_line_index < lines.len() {
-            let end_lookback_count = 10;
-            let footer_scan_start_index = lines
-                .len()
-                .saturating_sub(end_lookback_count)
-                .max(first_lyric_line_index);
-            for i in (footer_scan_start_index..lines.len()).rev() {
-                let line_text = get_plain_text_from_new_lyric_line(&lines[i]);
-                if line_matches_keyword_rule(&line_text) {
-                    last_lyric_line_exclusive_index = i;
-                } else {
-                    break;
-                }
-            }
-        } else {
-            last_lyric_line_exclusive_index = first_lyric_line_index;
         }
 
-        if first_lyric_line_index < last_lyric_line_exclusive_index {
-            // 先移除尾部，这样不会影响头部的索引
-            lines.drain(last_lyric_line_exclusive_index..);
-            lines.drain(..first_lyric_line_index);
-        } else if first_lyric_line_index > 0 || last_lyric_line_exclusive_index < original_count {
-            // 如果头尾边界交叉或重合，说明所有行都是元数据，全部清空
-            lines.clear();
+        if !compiled_regexes.is_empty()
+            && compiled_regexes
+                .iter()
+                .any(|regex| regex.is_match(line_to_check))
+        {
+            return true;
         }
 
-        if lines.len() < original_count {
-            debug!("[MetadataStripper] 关键词移除后，剩余 {} 行。", lines.len());
+        false
+    };
+
+    let mut last_matching_header_index: Option<usize> = None;
+    let header_scan_limit = 20.min(lines.len());
+    for (i, line_item) in lines.iter().enumerate().take(header_scan_limit) {
+        let line_text = get_plain_text_from_new_lyric_line(line_item);
+        if line_matches_any_rule(&line_text) {
+            last_matching_header_index = Some(i);
         }
     }
+    let first_lyric_line_index = last_matching_header_index.map_or(0, |idx| idx + 1);
 
-    // 基于正则表达式的移除
-    if options
-        .flags
-        .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
-        && !regex_to_use.is_empty()
-        && !lines.is_empty()
-    {
-        let compiled_regexes: Vec<Regex> = regex_to_use
-            .iter()
-            .filter_map(|pattern_str| {
-                if pattern_str.trim().is_empty() {
-                    return None;
-                }
-                get_cached_regex(
-                    pattern_str,
-                    options
-                        .flags
-                        .contains(MetadataStripperFlags::REGEX_CASE_SENSITIVE),
-                )
-            })
-            .collect();
-
-        if !compiled_regexes.is_empty() {
-            let before_count = lines.len();
-            lines.retain(|line| {
-                let line_text = get_plain_text_from_new_lyric_line(line);
-                !compiled_regexes
-                    .iter()
-                    .any(|regex| regex.is_match(&line_text))
-            });
-            let removed_count = before_count - lines.len();
-            if removed_count > 0 {
-                debug!("[MetadataStripper] 正则表达式移除了 {removed_count} 行。");
+    let mut last_lyric_line_exclusive_index = lines.len();
+    if first_lyric_line_index < lines.len() {
+        let end_lookback_count = 10;
+        let footer_scan_start_index = lines
+            .len()
+            .saturating_sub(end_lookback_count)
+            .max(first_lyric_line_index);
+        for i in (footer_scan_start_index..lines.len()).rev() {
+            let line_text = get_plain_text_from_new_lyric_line(&lines[i]);
+            if line_matches_any_rule(&line_text) {
+                last_lyric_line_exclusive_index = i;
+            } else {
+                break;
             }
         }
+    } else {
+        last_lyric_line_exclusive_index = first_lyric_line_index;
+    }
+
+    if first_lyric_line_index < last_lyric_line_exclusive_index {
+        lines.drain(last_lyric_line_exclusive_index..);
+        lines.drain(..first_lyric_line_index);
+    } else if first_lyric_line_index > 0 || last_lyric_line_exclusive_index < original_count {
+        lines.clear();
     }
 
     if lines.len() < original_count {

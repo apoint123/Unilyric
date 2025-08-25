@@ -211,7 +211,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     .source_track
                     .match_type;
 
-                if match_type >= MatchType::High {
+                if match_type >= MatchType::PrettyHigh {
                     let source: AutoSearchSource = comprehensive_result
                         .primary_lyric_result
                         .source_track

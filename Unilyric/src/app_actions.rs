@@ -51,6 +51,7 @@ pub enum LyricsAction {
     LoadFetchedResult(FullLyricsResult),
     ApplyFetchedLyrics(Box<LyricsAndMetadata>), // 应用获取到的歌词
     LoadFileContent(String, std::path::PathBuf),
+    ApplyProcessor(ProcessorType),
 }
 
 #[derive(Debug, Clone)]
@@ -101,4 +102,11 @@ pub enum AmllConnectorAction {
     Connect,
     Disconnect,
     Retry,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessorType {
+    MetadataStripper,
+    SyllableSmoother,
+    AgentRecognizer,
 }

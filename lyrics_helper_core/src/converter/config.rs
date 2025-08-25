@@ -237,7 +237,7 @@ fn default_regex_patterns() -> Vec<String> {
 }
 
 /// 配置元数据行清理器的选项。
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataStripperOptions {
     /// 用于控制清理器行为的位标志。
     #[serde(default)]
@@ -250,6 +250,16 @@ pub struct MetadataStripperOptions {
     /// 用于匹配并移除任意行的正则表达式列表。
     #[serde(default = "default_regex_patterns")]
     pub regex_patterns: Vec<String>,
+}
+
+impl Default for MetadataStripperOptions {
+    fn default() -> Self {
+        Self {
+            flags: Default::default(),
+            keywords: default_keywords(),
+            regex_patterns: default_regex_patterns(),
+        }
+    }
 }
 
 /// 为 `ferrous_opencc::config::BuiltinConfig` 提供扩展方法
