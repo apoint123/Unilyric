@@ -1,7 +1,7 @@
 use crate::types::AutoSearchSource;
 use directories::ProjectDirs;
 use log::LevelFilter;
-use lyrics_helper_core::LyricFormat;
+use lyrics_helper_core::{LyricFormat, MetadataStripperOptions, SyllableSmoothingOptions};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -39,6 +39,19 @@ impl Default for WebsocketServerSettings {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+pub enum AppAmllMirror {
+    GitHub,
+    #[default]
+    Dimeta,
+    Bikonoo,
+    Custom {
+        index_url: String,
+        lyrics_url_template: String,
+    },
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub log_settings: LogSettings,
@@ -72,6 +85,11 @@ pub struct AppSettings {
     pub batch_auto_pair_enabled: bool,
     pub batch_translation_suffixes: Vec<String>,
     pub batch_romanization_suffixes: Vec<String>,
+    pub metadata_stripper: MetadataStripperOptions,
+    pub syllable_smoothing: SyllableSmoothingOptions,
+    pub auto_apply_metadata_stripper: bool,
+    pub auto_apply_agent_recognizer: bool,
+    pub amll_mirror: AppAmllMirror,
 }
 
 impl Default for AppSettings {
@@ -116,6 +134,11 @@ impl Default for AppSettings {
                 ".romaji".to_string(),
                 ".romanization".to_string(),
             ],
+            metadata_stripper: Default::default(),
+            syllable_smoothing: Default::default(),
+            auto_apply_metadata_stripper: true,
+            auto_apply_agent_recognizer: true,
+            amll_mirror: AppAmllMirror::default(),
         }
     }
 }

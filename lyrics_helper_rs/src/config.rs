@@ -1,7 +1,7 @@
 //! 负责处理应用的持久化配置。
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) mod native {
+pub mod native {
     use serde::{Deserialize, Serialize};
     use std::fs;
     use std::path::PathBuf;
@@ -11,7 +11,7 @@ pub(crate) mod native {
     ///
     /// # 参数
     /// * `filename` - 目标配置文件的名称，例如 "`kugou_config.json`"。
-    pub(crate) fn get_config_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
+    pub fn get_config_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
         if let Some(mut config_dir) = dirs::config_dir() {
             config_dir.push("lyrics-helper");
             fs::create_dir_all(&config_dir)?;

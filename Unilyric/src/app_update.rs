@@ -4,7 +4,7 @@ use tracing::{error, info, warn};
 use crate::amll_connector::ConnectorUpdate;
 use crate::amll_connector::protocol::ClientMessage;
 use crate::amll_connector::protocol_strings::NullString;
-use crate::app::TtmlDbUploadUserAction;
+use crate::app_actions::{PlayerAction, UIAction, UserAction};
 use crate::app_definition::UniLyricApp;
 use crate::error::AppError;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel, ProviderState};
@@ -205,7 +205,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     }
                 }
 
-                app.set_searching_providers_to_not_found();
+                app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
 
             AutoFetchResult::LyricsSuccess {
@@ -243,11 +243,13 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     )));
                 }
 
-                app.set_searching_providers_to_not_found();
+                app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
 
             AutoFetchResult::CoverUpdate(final_cover_data) => {
-                app.player.current_now_playing.cover_data = final_cover_data.clone();
+                app.send_action(UserAction::Player(PlayerAction::UpdateCover(
+                    final_cover_data.clone(),
+                )));
 
                 if let Some(cover_bytes) = final_cover_data
                     && let Some(command_tx) = &app.amll_connector.command_tx
@@ -267,7 +269,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
 
             AutoFetchResult::NotFound => {
                 info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
-                app.set_searching_providers_to_not_found();
+                app.send_action(UserAction::UI(UIAction::StopOtherSearches));
                 if !app.fetcher.current_ui_populated
                     && app.amll_connector.config.lock().unwrap().enabled
                     && let Some(tx) = &app.amll_connector.command_tx
@@ -287,151 +289,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             }
             AutoFetchResult::FetchError(err) => {
                 error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err.to_string());
-                app.set_searching_providers_to_not_found();
-            }
-        }
-    }
-}
-
-pub(super) fn handle_ttml_db_upload_actions(app: &mut UniLyricApp) {
-    match app.ttml_db_upload.action_rx.try_recv() {
-        Ok(action) => match action {
-            TtmlDbUploadUserAction::InProgressUpdate(msg) => {
-                info!("[TTML_DB_Upload_UI] 状态更新: {msg}");
-                app.ui.toasts.add(Toast {
-                    text: msg.into(),
-                    kind: ToastKind::Info,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(2.5)
-                        .show_progress(true)
-                        .show_icon(false),
-                    style: Default::default(),
-                });
-            }
-            TtmlDbUploadUserAction::PasteReadyAndCopied {
-                paste_url,
-                github_issue_url_to_open,
-            } => {
-                info!(
-                    "[TTML_DB_Upload_UI] dpaste链接已就绪: {paste_url}, 将打开Issue页面: {github_issue_url_to_open}"
-                );
-                app.ttml_db_upload.last_paste_url = Some(paste_url.clone());
-
-                let mut clipboard_ok = false;
-                let mut clipboard_toast_message = "dpaste链接已复制到剪贴板!".to_string();
-                let mut clipboard_toast_kind = ToastKind::Success;
-
-                match arboard::Clipboard::new() {
-                    Ok(mut clipboard) => {
-                        if clipboard.set_text(paste_url.clone()).is_ok() {
-                            clipboard_ok = true;
-                            info!("[TTML_DB_Upload_UI] dpaste链接已成功复制到剪贴板。");
-                        } else {
-                            clipboard_toast_message =
-                                "无法自动复制dpaste链接到剪贴板，请手动复制。".to_string();
-                            clipboard_toast_kind = ToastKind::Warning;
-                            warn!(
-                                "[TTML_DB_Upload_UI] 复制dpaste链接到剪贴板失败 (set_text error)。"
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        clipboard_toast_message =
-                            "无法访问系统剪贴板，请手动从通知中复制dpaste链接。".to_string();
-                        clipboard_toast_kind = ToastKind::Error;
-                        error!("[TTML_DB_Upload_UI] 初始化剪贴板失败: {e}");
-                    }
-                }
-                app.ui.toasts.add(Toast {
-                    text: clipboard_toast_message.clone().into(),
-                    kind: clipboard_toast_kind,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(3.5)
-                        .show_icon(true),
-                    style: Default::default(),
-                });
-
-                let final_toast_message: String;
-                let final_toast_kind: ToastKind;
-                let final_toast_duration = 30.0;
-
-                if webbrowser::open(&github_issue_url_to_open).is_ok() {
-                    info!("[TTML_DB_Upload_UI] GitHub Issue页面已在浏览器中打开。");
-                    final_toast_message = format!(
-                        "{}\nGitHub Issue页面已打开。\n\n后续操作指引：\n1. (如果自动复制失败) 从本条通知或日志中复制 dpaste 链接。\n2. 返回已打开的GitHub Issue页面，将链接粘贴到“TTML歌词文件下载直链”。\n3. 填写其他部分（如果需要）并提交。",
-                        if clipboard_ok {
-                            "dpaste链接已复制!"
-                        } else {
-                            "请手动复制dpaste链接。"
-                        }
-                    );
-                    final_toast_kind = if clipboard_ok {
-                        ToastKind::Success
-                    } else {
-                        ToastKind::Warning
-                    };
-                } else {
-                    error!("[TTML_DB_Upload_UI] 在浏览器中打开GitHub Issue页面失败。");
-                    let ttml_db_repo_owner = "Steve-xmh";
-                    let ttml_db_repo_name = "amll-ttml-db";
-                    let repo_url_for_manual_submission = format!(
-                        "https://github.com/{ttml_db_repo_owner}/{ttml_db_repo_name}/issues/new"
-                    );
-                    final_toast_message = format!(
-                        "{}\n但打开Issue页面失败。\n\n请手动：\n1. (如果上面复制失败) 从本条通知或日志中复制 dpaste 链接。\n2. 访问 {}。\n3. 粘贴链接并填写表单提交。",
-                        if clipboard_ok {
-                            "dpaste链接已复制!"
-                        } else {
-                            "请手动复制dpaste链接。"
-                        },
-                        repo_url_for_manual_submission
-                    );
-                    final_toast_kind = ToastKind::Warning;
-                }
-                let final_toast_message_with_url =
-                    format!("{final_toast_message}\n\ndpaste链接: {paste_url}");
-
-                app.ui.toasts.add(Toast {
-                    text: final_toast_message_with_url.into(),
-                    kind: final_toast_kind,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(final_toast_duration)
-                        .show_icon(true)
-                        .show_progress(true),
-                    style: Default::default(),
-                });
-                app.ttml_db_upload.in_progress = false;
-            }
-            TtmlDbUploadUserAction::PreparationError(err_msg) => {
-                error!("[TTML_DB_Upload_UI] 准备阶段错误: {err_msg}");
-                app.ttml_db_upload.in_progress = false;
-            }
-            TtmlDbUploadUserAction::Error(err_msg) => {
-                error!("[Unilyric] 上传过程中发生错误: {err_msg}");
-                app.ui.toasts.add(Toast {
-                    text: format!("上传失败: {err_msg}").into(),
-                    kind: ToastKind::Error,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(5.0)
-                        .show_icon(true),
-                    style: Default::default(),
-                });
-                app.ttml_db_upload.in_progress = false;
-            }
-        },
-        Err(std::sync::mpsc::TryRecvError::Empty) => {}
-        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-            error!("[Unilyric] 上传操作消息通道意外断开!");
-            if app.ttml_db_upload.in_progress {
-                app.ui.toasts.add(Toast {
-                    text: "上传处理通道意外断开，操作可能未完成。".into(),
-                    kind: ToastKind::Error,
-                    options: ToastOptions::default()
-                        .duration_in_seconds(4.0)
-                        .show_icon(true),
-                    style: Default::default(),
-                });
-                app.ttml_db_upload.in_progress = false;
+                app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
         }
     }

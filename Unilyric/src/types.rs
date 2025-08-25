@@ -80,29 +80,6 @@ impl AutoSearchSource {
     }
 }
 
-pub fn search_order_to_string(order: &[AutoSearchSource]) -> String {
-    order
-        .iter()
-        .map(|s| s.display_name())
-        .collect::<Vec<_>>()
-        .join(",")
-}
-
-pub fn string_to_search_order(s: &str) -> Vec<AutoSearchSource> {
-    let mut order = Vec::new();
-    for name in s.split(',') {
-        match name {
-            "本地缓存" => order.push(AutoSearchSource::LocalCache),
-            "QQ音乐" => order.push(AutoSearchSource::QqMusic),
-            "酷狗音乐" => order.push(AutoSearchSource::Kugou),
-            "网易云音乐" => order.push(AutoSearchSource::Netease),
-            "AMLL-DB" => order.push(AutoSearchSource::AmllDb),
-            _ => {}
-        }
-    }
-    order
-}
-
 impl From<String> for AutoSearchSource {
     fn from(s: String) -> Self {
         match s.as_str() {
@@ -193,7 +170,6 @@ pub struct LogEntry {
     pub level: LogLevel,
     pub message: String,
     pub timestamp: DateTime<Local>,
-    pub target: String,
 }
 
 /// 歌词提供商的加载状态

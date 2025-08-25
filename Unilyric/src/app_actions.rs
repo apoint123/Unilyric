@@ -1,12 +1,14 @@
+use std::fmt;
+
 use crate::app_settings::AppSettings;
 use crate::error::AppResult;
 use crate::types::LrcContentType;
+use egui_toast::Toast;
 use lyrics_helper_core::FullConversionResult;
 use lyrics_helper_core::LyricFormat;
 use lyrics_helper_core::LyricsAndMetadata;
 use lyrics_helper_core::SearchResult;
 use lyrics_helper_core::model::track::FullLyricsResult;
-use smtc_suite::SmtcControlCommand;
 
 // 主事件枚举
 #[derive(Debug, Clone)]
@@ -39,7 +41,6 @@ pub enum LyricsAction {
     DownloadCompleted(AppResult<FullLyricsResult>),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
-    MetadataChanged,                         // 元数据被用户编辑
     AddMetadata,                             // 添加新的元数据条目
     DeleteMetadata(usize),                   // 删除指定索引的元数据条目
     UpdateMetadataKey(usize, String),        // 更新指定索引的元数据键
@@ -56,8 +57,6 @@ pub enum LyricsAction {
 
 #[derive(Debug, Clone)]
 pub enum PlayerAction {
-    /// 向 smtc-suite 发送一个媒体控制命令。
-    Control(SmtcControlCommand),
     /// 让 smtc-suite 选择一个新的媒体会话。
     SelectSmtcSession(String),
     /// 保存当前歌词到本地缓存。
@@ -80,7 +79,7 @@ pub enum PanelType {
     AmllConnector,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum UIAction {
     SetPanelVisibility(PanelType, bool),
     SetWrapText(bool),
@@ -88,6 +87,25 @@ pub enum UIAction {
     HidePanel(PanelType),
     ClearLogs,
     StopOtherSearches,
+    ShowToast(Box<Toast>),
+}
+
+impl fmt::Debug for UIAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SetPanelVisibility(panel, is_visible) => f
+                .debug_tuple("SetPanelVisibility")
+                .field(panel)
+                .field(is_visible)
+                .finish(),
+            Self::SetWrapText(wrap) => f.debug_tuple("SetWrapText").field(wrap).finish(),
+            Self::ShowPanel(panel) => f.debug_tuple("ShowPanel").field(panel).finish(),
+            Self::HidePanel(panel) => f.debug_tuple("HidePanel").field(panel).finish(),
+            Self::ClearLogs => write!(f, "ClearLogs"),
+            Self::StopOtherSearches => write!(f, "StopOtherSearches"),
+            Self::ShowToast(_) => f.debug_tuple("ShowToast").field(&"<Box<Toast>>").finish(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,6 +120,8 @@ pub enum AmllConnectorAction {
     Connect,
     Disconnect,
     Retry,
+    CheckIndexUpdate,
+    ReloadProviders,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

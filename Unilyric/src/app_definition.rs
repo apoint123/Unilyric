@@ -23,7 +23,6 @@ use crate::app_ui::SettingsCategory;
 use crate::types::{EditableMetadataEntry, ProviderState};
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
-    app::TtmlDbUploadUserAction,
     app_actions::UserAction,
     app_settings::AppSettings,
     types::{AutoFetchResult, AutoSearchStatus, LocalLyricCacheEntry, LogEntry},
@@ -217,8 +216,6 @@ pub(super) struct AutoFetchState {
 
     pub(super) current_ui_populated: bool,
     pub(super) last_source_format: Option<LyricFormat>,
-    pub(super) last_source_for_stripping_check: Option<crate::types::AutoSearchSource>,
-    pub(super) manual_refetch_request: Option<crate::types::AutoSearchSource>,
     pub(super) local_cache_status: Arc<StdMutex<AutoSearchStatus>>,
     pub(super) qqmusic_status: Arc<StdMutex<AutoSearchStatus>>,
     pub(super) kugou_status: Arc<StdMutex<AutoSearchStatus>>,
@@ -237,8 +234,6 @@ impl AutoFetchState {
             result_tx,
             current_ui_populated: false,
             last_source_format: None,
-            last_source_for_stripping_check: None,
-            manual_refetch_request: None,
             local_cache_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
             qqmusic_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
             kugou_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),
@@ -259,27 +254,6 @@ pub(super) struct LocalCacheState {
     pub(super) dir_path: Option<std::path::PathBuf>,
 }
 
-pub(super) struct TtmlDbUploadState {
-    pub(super) in_progress: bool,
-    pub(super) last_paste_url: Option<String>,
-    pub(super) action_rx: StdReceiver<TtmlDbUploadUserAction>,
-    pub(super) action_tx: StdSender<TtmlDbUploadUserAction>,
-}
-
-impl TtmlDbUploadState {
-    fn new(
-        action_tx: StdSender<TtmlDbUploadUserAction>,
-        action_rx: StdReceiver<TtmlDbUploadUserAction>,
-    ) -> Self {
-        Self {
-            in_progress: false,
-            last_paste_url: None,
-            action_rx,
-            action_tx,
-        }
-    }
-}
-
 pub(super) struct UniLyricApp {
     // --- 状态模块 ---
     pub(super) ui: UiState,
@@ -287,7 +261,6 @@ pub(super) struct UniLyricApp {
     pub(super) player: PlayerState,
     pub(super) fetcher: AutoFetchState,
     pub(super) local_cache: LocalCacheState,
-    pub(super) ttml_db_upload: TtmlDbUploadState,
     pub(super) amll_connector: AmllConnectorState,
 
     // --- 核心依赖与配置 ---
@@ -376,9 +349,7 @@ impl UniLyricApp {
         Self::setup_fonts(&cc.egui_ctx, &settings);
         let tokio_runtime = Self::create_tokio_runtime();
         let (auto_fetch_tx, auto_fetch_rx) = std_channel::<AutoFetchResult>();
-        let (upload_action_tx, upload_action_rx) = std_channel::<TtmlDbUploadUserAction>();
         let auto_fetch_state = AutoFetchState::new(auto_fetch_tx, auto_fetch_rx);
-        let ttml_db_upload_state = TtmlDbUploadState::new(upload_action_tx, upload_action_rx);
         let local_cache = LocalCacheState::default();
 
         let lyric_state = LyricState::new(&settings);
@@ -462,7 +433,6 @@ impl UniLyricApp {
             amll_connector: amll_connector_state,
             fetcher: auto_fetch_state,
             local_cache,
-            ttml_db_upload: ttml_db_upload_state,
             lyrics_helper_state,
             app_settings: Arc::new(StdMutex::new(settings)),
             tokio_runtime,
@@ -597,6 +567,12 @@ impl UniLyricApp {
         if let Some(tx) = &self.amll_connector.command_tx {
             tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
             let _ = tx.try_send(ConnectorCommand::Shutdown);
+        }
+
+        if let Some(handle) = self.amll_connector.actor_handle.take() {
+            tracing::info!("[Shutdown] 正在等待 AMLL connector actor 任务结束...");
+            let _ = self.tokio_runtime.block_on(handle);
+            tracing::info!("[Shutdown] AMLL connector actor 任务已成功结束。");
         }
     }
 }

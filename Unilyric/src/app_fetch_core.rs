@@ -310,7 +310,20 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     .into();
                 info!("常规搜索成功，来源: {:?}。正在转换...", source);
 
-                let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+                let mut lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+
+                if app_settings.auto_apply_metadata_stripper {
+                    lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                        &mut lyrics_and_metadata.lyrics.parsed.lines,
+                        &app_settings.metadata_stripper,
+                    );
+                }
+                if app_settings.auto_apply_agent_recognizer {
+                    lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                        &mut lyrics_and_metadata.lyrics.parsed.lines,
+                    );
+                }
+
 
                 let output_text_result =
                     lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
@@ -401,6 +414,7 @@ pub(super) fn trigger_manual_refetch_for_source(
         .unwrap_or_default();
 
     let target_format = app.lyrics.target_format;
+    let app_settings = app.app_settings.lock().unwrap().clone();
 
     let status_arc_to_update = match source_to_refetch {
         AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),
@@ -460,7 +474,19 @@ pub(super) fn trigger_manual_refetch_for_source(
                     source_to_refetch
                 );
 
-                let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+                let mut lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+
+                if app_settings.auto_apply_metadata_stripper {
+                    lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                        &mut lyrics_and_metadata.lyrics.parsed.lines,
+                        &app_settings.metadata_stripper,
+                    );
+                }
+                if app_settings.auto_apply_agent_recognizer {
+                    lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                        &mut lyrics_and_metadata.lyrics.parsed.lines,
+                    );
+                }
 
                 let output_text_result =
                     lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<

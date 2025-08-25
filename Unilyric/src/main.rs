@@ -41,7 +41,6 @@ where
             level: event.metadata().level().into(),
             message,
             timestamp: chrono::Local::now(),
-            target: event.metadata().target().to_string(),
         };
 
         // 发送到UI，如果失败则打印到stderr

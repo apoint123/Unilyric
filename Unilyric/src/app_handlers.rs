@@ -9,12 +9,13 @@ use crate::app_actions::{
 use crate::app_definition::UniLyricApp;
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
+use crate::app_settings::AppAmllMirror;
 use crate::error::{AppError, AppResult};
 use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
 use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
     ChineseConversionMode, ChineseConversionOptions, ConversionInput, ConversionOptions, InputFile,
-    LyricFormat, SyllableSmoothingOptions, Track,
+    LyricFormat, Track,
 };
 use rand::Rng;
 use smtc_suite::{MediaCommand, TextConversionMode};
@@ -26,6 +27,38 @@ pub enum ActionResult {
     Success,
     Warning(String),
     Error(AppError),
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CoreAmllConfig {
+    mirror: CoreAmllMirror,
+}
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum CoreAmllMirror {
+    GitHub,
+    Dimeta,
+    Bikonoo,
+    Custom {
+        index_url: String,
+        lyrics_url_template: String,
+    },
+}
+impl From<AppAmllMirror> for CoreAmllMirror {
+    fn from(value: AppAmllMirror) -> Self {
+        match value {
+            AppAmllMirror::GitHub => Self::GitHub,
+            AppAmllMirror::Dimeta => Self::Dimeta,
+            AppAmllMirror::Bikonoo => Self::Bikonoo,
+            AppAmllMirror::Custom {
+                index_url,
+                lyrics_url_template,
+            } => Self::Custom {
+                index_url,
+                lyrics_url_template,
+            },
+        }
+    }
 }
 
 impl UniLyricApp {
@@ -81,7 +114,16 @@ impl UniLyricApp {
     }
 
     pub fn trigger_convert(&mut self) {
-        self.dispatch_conversion_task(Default::default());
+        let options = self.build_conversion_options();
+        self.dispatch_conversion_task(options);
+    }
+
+    fn build_conversion_options(&self) -> ConversionOptions {
+        let settings = self.app_settings.lock().unwrap();
+        ConversionOptions {
+            metadata_stripper: settings.metadata_stripper.clone(),
+            ..Default::default()
+        }
     }
 
     fn dispatch_regeneration_task(&mut self) {
@@ -191,12 +233,7 @@ impl UniLyricApp {
         );
 
         let input = ConversionInput {
-            main_lyric: InputFile::new(
-                self.lyrics.input_text.clone(),
-                self.lyrics.source_format,
-                None,
-                None,
-            ),
+            main_lyric,
             translations,
             romanizations,
             target_format: self.lyrics.target_format,
@@ -279,6 +316,13 @@ impl UniLyricApp {
                     tracing::info!("[AMLL Action] 请求断开...");
                     Some(ConnectorCommand::DisconnectWebsocket)
                 }
+                AmllConnectorAction::CheckIndexUpdate => None,
+                AmllConnectorAction::ReloadProviders => {
+                    info!("[AMLL Action] 重新加载提供商...");
+                    self.lyrics_helper_state.provider_state = ProviderState::Uninitialized;
+                    self.trigger_provider_loading();
+                    return ActionResult::Success;
+                }
             };
 
             if let Some(cmd) = command
@@ -287,7 +331,43 @@ impl UniLyricApp {
                 tracing::error!("[AMLL Action] 发送命令到 actor 失败: {}", e);
             }
         }
-        ActionResult::Success
+        match action {
+            AmllConnectorAction::CheckIndexUpdate => {
+                info!("[AMLL Action] 正在检查索引更新...");
+                let helper = self.lyrics_helper_state.helper.clone();
+                let action_tx = self.action_tx.clone();
+
+                self.tokio_runtime.spawn(async move {
+                    let result = helper.lock().await.force_update_amll_index().await;
+
+                    let toast = match result {
+                        Ok(_) => {
+                            info!("[AMLL Update] 索引更新成功。");
+                            egui_toast::Toast {
+                                text: "AMLL 索引检查完成，已更新到最新版本。".into(),
+                                kind: egui_toast::ToastKind::Success,
+                                options: egui_toast::ToastOptions::default()
+                                    .duration_in_seconds(3.0),
+                                style: Default::default(),
+                            }
+                        }
+                        Err(e) => {
+                            error!("[AMLL Update] 索引更新失败: {}", e);
+                            egui_toast::Toast {
+                                text: format!("AMLL 索引更新失败: {}", e).into(),
+                                kind: egui_toast::ToastKind::Error,
+                                options: egui_toast::ToastOptions::default()
+                                    .duration_in_seconds(5.0),
+                                style: Default::default(),
+                            }
+                        }
+                    };
+                    let _ = action_tx.send(UserAction::UI(UIAction::ShowToast(Box::new(toast))));
+                });
+                ActionResult::Success
+            }
+            _ => ActionResult::Success,
+        }
     }
 
     /// 子事件处理器
@@ -355,14 +435,13 @@ impl UniLyricApp {
                     return ActionResult::Warning("没有歌词内容可以转换".to_string());
                 }
 
-                let options = ConversionOptions {
-                    chinese_conversion: ChineseConversionOptions {
-                        config: Some(variant),
-                        mode: ChineseConversionMode::Replace,
-                        ..Default::default()
-                    },
+                let mut options = self.build_conversion_options();
+                options.chinese_conversion = ChineseConversionOptions {
+                    config: Some(variant),
+                    mode: ChineseConversionMode::Replace,
                     ..Default::default()
                 };
+
                 self.dispatch_conversion_task(options);
                 ActionResult::Success
             }
@@ -550,10 +629,6 @@ impl UniLyricApp {
                     }
                 }
             }
-            LyricsAction::MetadataChanged => {
-                self.lyrics.metadata_manager.sync_store_from_ui_entries();
-                ActionResult::Success
-            }
             LyricsAction::AddMetadata => {
                 let new_entry_id_num = self.lyrics.metadata_manager.ui_entries.len() as u32
                     + rand::rng().random::<u32>();
@@ -575,41 +650,45 @@ impl UniLyricApp {
             LyricsAction::DeleteMetadata(index) => {
                 if index < self.lyrics.metadata_manager.ui_entries.len() {
                     self.lyrics.metadata_manager.ui_entries.remove(index);
-                    self.trigger_convert();
-                    ActionResult::Success
+                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
+                    self.dispatch_regeneration_task();
                 } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
+                    "无效的元数据索引".to_string();
                 }
+                ActionResult::Success
             }
             LyricsAction::UpdateMetadataKey(index, new_key) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.key = new_key;
                     entry.is_from_file = false;
-                    self.trigger_convert();
-                    ActionResult::Success
+                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
+                    self.dispatch_regeneration_task();
                 } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
+                    "无效的元数据索引".to_string();
                 }
+                ActionResult::Success
             }
             LyricsAction::UpdateMetadataValue(index, new_value) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.value = new_value;
                     entry.is_from_file = false;
-                    self.trigger_convert();
-                    ActionResult::Success
+                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
+                    self.dispatch_regeneration_task();
                 } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
+                    "无效的元数据索引".to_string();
                 }
+                ActionResult::Success
             }
             LyricsAction::ToggleMetadataPinned(index) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.is_pinned = !entry.is_pinned;
                     entry.is_from_file = false;
-                    self.trigger_convert();
-                    ActionResult::Success
+                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
+                    self.dispatch_regeneration_task();
                 } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
+                    "无效的元数据索引".to_string();
                 }
+                ActionResult::Success
             }
             LyricsAction::LoadFetchedResult(result) => {
                 // 手动加载的逻辑，无条件执行
@@ -694,17 +773,25 @@ impl UniLyricApp {
 
                 info!("[Processor] 应用后处理器: {:?}", processor);
 
+                let (stripper_options, smoother_options) = {
+                    let settings = self.app_settings.lock().unwrap();
+                    (
+                        settings.metadata_stripper.clone(),
+                        settings.syllable_smoothing,
+                    )
+                };
+
                 match processor {
                     ProcessorType::MetadataStripper => {
                         lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
                             &mut parsed_data.lines,
-                            &Default::default(),
+                            &stripper_options,
                         );
                     }
                     ProcessorType::SyllableSmoother => {
                         lyrics_helper_rs::converter::processors::syllable_smoothing::apply_smoothing(
                             &mut parsed_data.lines,
-                            &SyllableSmoothingOptions::default(),
+                            &smoother_options,
                         );
                     }
                     ProcessorType::AgentRecognizer => {
@@ -825,6 +912,10 @@ impl UniLyricApp {
                 self.set_searching_providers_to_not_found();
                 ActionResult::Success
             }
+            UIAction::ShowToast(toast) => {
+                self.ui.toasts.add(*toast);
+                ActionResult::Success
+            }
         }
     }
 
@@ -837,10 +928,6 @@ impl UniLyricApp {
         };
 
         let send_result = match action {
-            PlayerAction::Control(control_command) => {
-                tracing::debug!("[PlayerAction] 发送媒体控制命令: {:?}", control_command);
-                command_tx.try_send(MediaCommand::Control(control_command))
-            }
             PlayerAction::SelectSmtcSession(session_id) => {
                 let session_id_for_state: Option<String> = if session_id.is_empty() {
                     tracing::info!("[PlayerAction] 自动选择会话。");
@@ -963,6 +1050,38 @@ impl UniLyricApp {
         match action {
             SettingsAction::Save(settings) => match settings.save() {
                 Ok(_) => {
+                    let mut mirror_changed = false;
+
+                    {
+                        let old_settings = self.app_settings.lock().unwrap();
+                        let new_mirror = &settings.amll_mirror;
+                        if &old_settings.amll_mirror != new_mirror {
+                            let core_config = CoreAmllConfig {
+                                mirror: new_mirror.clone().into(),
+                            };
+                            match serde_json::to_string_pretty(&core_config) {
+                                Ok(json_string) => {
+                                    if let Ok(config_path) =
+                                        lyrics_helper_rs::config::native::get_config_file_path(
+                                            "amll_config.json",
+                                        )
+                                    {
+                                        if let Err(e) = std::fs::write(&config_path, json_string) {
+                                            error!("[Settings] 写入 amll_config.json 失败: {}", e);
+                                        } else {
+                                            mirror_changed = true;
+                                        }
+                                    } else {
+                                        error!("[Settings] 无法获取 amll_config.json 的路径");
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[Settings] 序列化核心库 AMLL 配置失败: {}", e);
+                                }
+                            }
+                        }
+                    }
+
                     let old_audio_capture_setting =
                         self.app_settings.lock().unwrap().send_audio_data_to_player;
 
@@ -1036,6 +1155,18 @@ impl UniLyricApp {
                     }
 
                     *self.amll_connector.config.lock().unwrap() = new_mc_config_from_settings;
+
+                    if mirror_changed {
+                        let toast = egui_toast::Toast {
+                            text: "AMLL 镜像设置已保存。\n需要重新启动才能生效。".into(),
+                            kind: egui_toast::ToastKind::Info,
+                            options: egui_toast::ToastOptions::default()
+                                .duration_in_seconds(10.0)
+                                .show_progress(true),
+                            style: Default::default(),
+                        };
+                        self.ui.toasts.add(toast);
+                    }
 
                     self.ui.show_settings_window = false;
                     ActionResult::Success

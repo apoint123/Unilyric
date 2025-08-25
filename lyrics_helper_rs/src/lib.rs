@@ -98,8 +98,6 @@ use std::{
 
 use crate::http::{HttpClient, ReqwestClient};
 
-#[cfg(not(target_arch = "wasm32"))]
-use futures::FutureExt;
 use futures::{Future, future};
 use lyrics_helper_core::{
     ComprehensiveSearchResult, ConversionInput, ConversionOptions, CoverSize, FullConversionResult,
@@ -775,6 +773,18 @@ impl LyricsHelper {
             tracing::info!("遍历完所有候选项都无法获取到封面");
             None
         })
+    }
+
+    /// 强制重新检查并更新 AMLL TTML 数据库的索引。
+    pub async fn force_update_amll_index(&mut self) -> Result<()> {
+        tracing::info!("[LyricsHelper] 正在更新 AMLL 索引...");
+        let new_amll_provider =
+            AmllTtmlDatabase::with_http_client(self.http_client.clone()).await?;
+        let new_provider_arc = Arc::new(new_amll_provider);
+        self.providers.retain(|p| p.name() != "amll-ttml-database");
+        self.providers.push(new_provider_arc);
+        tracing::info!("[LyricsHelper] AMLL 索引更新流程完成。");
+        Ok(())
     }
 }
 
