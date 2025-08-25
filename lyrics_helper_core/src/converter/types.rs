@@ -437,6 +437,8 @@ pub struct LyricSyllable {
     #[builder(setter(strip_option))]
     pub duration_ms: Option<u64>,
     /// 指示该音节后是否应有空格。
+    ///
+    /// **重要**: 必须根据此标志在音节后附加空格。`text` 内容中不会包含空格。
     pub ends_with_space: bool,
 }
 

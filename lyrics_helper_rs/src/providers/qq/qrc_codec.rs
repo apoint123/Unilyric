@@ -254,7 +254,7 @@ mod qrc_logic {
         #[rustfmt::skip]
         const SBOX2: [u8; 64] = [
             15,  1,  8, 14,  6, 11,  3,  4,  9,  7,  2, 13, 12,  0,  5, 10,
-             3, 13,  4,  7, 15,  2,  8, 15, 12,  0,  1, 10,  6,  9, 11,  5,
+             3, 13,  4,  7, 15,  2,  8, 15, 12,  0,  1, 10,  6,  9, 11,  5, // 非标准: 15 出现了两次
              0, 14,  7, 11, 10,  4, 13,  1,  5,  8, 12,  6,  9,  3,  2, 15,
             13,  8, 10,  1,  3, 15,  4,  2, 11,  6,  7, 12,  0,  5, 14,  9,
         ];
@@ -272,7 +272,7 @@ mod qrc_logic {
              7, 13, 14,  3,  0,  6,  9, 10,  1,  2,  8,  5, 11, 12,  4, 15,
             13,  8, 11,  5,  6, 15,  0,  3,  4,  7,  2, 12,  1, 10, 14,  9,
             10,  6,  9,  0, 12, 11,  7, 13, 15,  1,  3, 14,  5,  2,  8,  4,
-             3, 15,  0,  6, 10, 10, 13,  8,  9,  4,  5, 11, 12,  7,  2, 14,
+             3, 15,  0,  6, 10, 10, 13,  8,  9,  4,  5, 11, 12,  7,  2, 14, // 非标准: 10 出现了两次
         ];
 
         #[rustfmt::skip]
@@ -357,7 +357,7 @@ mod qrc_logic {
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-        /// 对一个 32 位整数应用非标准的 P 盒置换规则。
+        /// 对一个 32 位整数应用 P 盒置换规则。
         ///
         /// # 参数
         /// * `input` - S-盒代换后的 32 位中间结果。
@@ -379,7 +379,7 @@ mod qrc_logic {
                 })
         }
 
-        /// 计算 DES S-盒的查找索引。
+        /// 非标准: 计算 DES S-盒的查找索引。
         ///
         /// # 参数
         ///
@@ -400,6 +400,7 @@ mod qrc_logic {
         /// * `key` - 8字节的密钥数组。
         /// * `table` - 0-based 的位索引置换表。
         fn permute_from_key_bytes(key: [u8; 8], table: &[usize]) -> u64 {
+            // 非标准: 分别将前后 4 个字节按小端序解释，然后按大端序拼起来
             let word1 = u32::from_le_bytes(key[0..4].try_into().unwrap());
             let word2 = u32::from_le_bytes(key[4..8].try_into().unwrap());
             let key = (u64::from(word1) << 32) | u64::from(word2);
@@ -442,6 +443,8 @@ mod qrc_logic {
         /// * `mode` - 加密 (`Encrypt`) 或解密 (`Decrypt`) 模式。解密时轮密钥的使用顺序相反。
         #[allow(clippy::cast_possible_truncation)]
         pub(crate) fn key_schedule(key: &[u8], schedule: &mut [[u8; 6]; 16], mode: Mode) {
+            // 这几个表是标准的
+
             // 每轮循环左移的位数表
             #[rustfmt::skip]
             const KEY_RND_SHIFT: [u32; 16] = [
@@ -501,7 +504,7 @@ mod qrc_logic {
                     let bit = if pos < 28 {
                         (c >> (31 - pos)) & 1
                     } else {
-                        // QQ 音乐特有的怪癖，该算法的规则就是pos - 27
+                        // 非标准: QQ 音乐特有的怪癖，该算法的规则就是pos - 27
                         (d >> (31 - (pos - 27))) & 1
                     };
 
@@ -528,6 +531,8 @@ mod qrc_logic {
             #[allow(clippy::cast_possible_truncation)]
             fn new() -> Self {
                 /// 初始置换规则。
+                /// 
+                /// 非标准: 它们全都是不标准的。
                 #[rustfmt::skip]
                 const IP_RULE: [u8; 64] = [
                     34, 42, 50, 58, 2, 10, 18, 26,
@@ -541,6 +546,8 @@ mod qrc_logic {
                 ];
 
                 /// 逆初始置换规则。
+                /// 
+                /// 非标准: 它们全都是不标准的。
                 #[rustfmt::skip]
                 const INV_IP_RULE: [u8; 64] = [
                     37, 5, 45, 13, 53, 21, 61, 29,
@@ -682,37 +689,27 @@ mod qrc_logic {
         }
 
         /// DES 加密/解密单个64位数据块。
-        ///
-        /// # 参数
-        /// * `input` - 8字节的输入数据块 (明文或密文)。
-        /// * `output` - 8字节的可变切片，用于存储输出数据块 (密文或明文)。
-        /// * `key` - 一个包含16个轮密钥的向量的引用，每个轮密钥是6字节。
         pub(super) fn des_crypt(
             input: &[u8],
             output: &mut [u8],
             key: &[[u8; super::SUB_KEY_SIZE]; super::ROUNDS],
         ) {
-            let mut state = [0u32; 2]; // 存储64位数据的左右两半 (L, R)
+            // 初始置换
+            let mut state = [0u32; 2];
+            initial_permutation(&mut state, input);
 
-            // 初始置换 (IP)
-            initial_permutation(&mut state, input); // state[0] = L0, state[1] = R0
-
-            // 16轮 Feistel 网络
-            // 对于前15轮，执行标准的Feistel轮：
-            // L_i = R_i-1; R_i = L_i-1 XOR f(R_i-1, K_i)
+            // Feistel 网络迭代
             for round_key in key.iter().take(15) {
-                let prev_right = state[1]; // R_i-1
-                let prev_left = state[0]; // L_i-1
-
-                // 计算新的右半部分
-                state[1] = prev_left ^ f_function(prev_right, round_key); // R_i
-                // 新的左半部分就是旧的右半部分
-                state[0] = prev_right; // L_i
+                let prev_right = state[1];
+                let prev_left = state[0];
+                state[1] = prev_left ^ f_function(prev_right, round_key);
+                state[0] = prev_right;
             }
 
-            // 计算 R16 = L15 ^ f(R15, K16)，
-            // 并将其结果直接与 L15 (即 state[0] 的当前值) 异或。
-            // 相当于 L16 = R15, R16 = L15 ^ f(R15, K16)
+            // 最后一轮
+            // 与前15轮类似，但处理后不再交换左右两半。
+            // 右半部分 (state[1]) 不变，成为最终的左半部分。
+            // 左半部分 (state[0]) 与 f 函数的结果异或，成为最终的右半部分。
             state[0] ^= f_function(state[1], &key[15]);
 
             // 逆初始置换

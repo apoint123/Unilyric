@@ -50,6 +50,7 @@ pub enum LyricsAction {
     ClearAllData,
     LoadFetchedResult(FullLyricsResult),
     ApplyFetchedLyrics(Box<LyricsAndMetadata>), // 应用获取到的歌词
+    LoadFileContent(String, std::path::PathBuf),
 }
 
 #[derive(Debug, Clone)]

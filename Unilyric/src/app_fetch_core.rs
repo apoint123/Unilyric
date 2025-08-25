@@ -3,14 +3,14 @@ use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus};
 use image_hasher::HasherConfig;
 use lyrics_helper_core::model::track::FullLyricsResult;
 use lyrics_helper_core::{
-    ConversionInput, ConversionOptions, InputFile, LyricFormat, RawLyrics, SearchResult,
+    ConversionInput, ConversionOptions, InputFile, LyricFormat, MatchType, RawLyrics, SearchResult,
 };
 use lyrics_helper_rs::SearchMode;
 use smtc_suite::NowPlayingInfo;
 
 use lyrics_helper_core::model::track::{LyricsAndMetadata, Track};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 const COVER_SIMILARITY_THRESHOLD: u32 = 10;
 
@@ -206,60 +206,66 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             };
 
             if let Ok(Some(comprehensive_result)) = amll_search_result {
-                info!("[AutoFetch] AMLL DB 搜索成功，正在处理结果...");
-                let source: AutoSearchSource = comprehensive_result
+                let match_type = comprehensive_result
                     .primary_lyric_result
                     .source_track
-                    .provider_name
-                    .clone()
-                    .into();
+                    .match_type;
 
-                let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+                if match_type >= MatchType::High {
+                    let source: AutoSearchSource = comprehensive_result
+                        .primary_lyric_result
+                        .source_track
+                        .provider_name
+                        .clone()
+                        .into();
 
-                let output_text_result =
-                    lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
-                        std::hash::RandomState,
-                    >(
-                        lyrics_and_metadata.lyrics.parsed.clone(),
-                        target_format,
-                        Default::default(),
-                        None,
+                    let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+
+                    let output_text_result =
+                        lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
+                            std::hash::RandomState,
+                        >(
+                            lyrics_and_metadata.lyrics.parsed.clone(),
+                            target_format,
+                            Default::default(),
+                            None,
+                        )
+                        .await;
+
+                    let output_text = match output_text_result {
+                        Ok(res) => res.output_lyrics,
+                        Err(e) => {
+                            error!("[AutoFetch] AMLL DB 结果前置转换失败: {}", e);
+                            String::new()
+                        }
+                    };
+
+                    let lyrics_result = AutoFetchResult::LyricsReady {
+                        source,
+                        lyrics_and_metadata: Box::new(lyrics_and_metadata),
+                        output_text,
+                    };
+
+                    if result_tx.send(lyrics_result).is_err() {
+                        error!("[AutoFetch Task] 发送 AMLL DB LyricsReady 结果到主线程失败。");
+                        return;
+                    }
+
+                    let final_cover_data = fetch_and_validate_cover(
+                        helper.clone(),
+                        &comprehensive_result.all_search_candidates,
+                        smtc_cover_data,
+                        "AMLL DB",
                     )
                     .await;
 
-                let output_text = match output_text_result {
-                    Ok(res) => res.output_lyrics,
-                    Err(e) => {
-                        error!("[AutoFetch] AMLL DB 结果前置转换失败: {}", e);
-                        String::new()
+                    let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
+
+                    if result_tx.send(cover_result).is_err() {
+                        error!("[AutoFetch Task] 发送 AMLL DB 封面更新结果到主线程失败。");
                     }
-                };
-
-                let lyrics_result = AutoFetchResult::LyricsReady {
-                    source,
-                    lyrics_and_metadata: Box::new(lyrics_and_metadata),
-                    output_text,
-                };
-
-                if result_tx.send(lyrics_result).is_err() {
-                    error!("[AutoFetch Task] 发送 AMLL DB LyricsReady 结果到主线程失败。");
                     return;
                 }
-
-                let final_cover_data = fetch_and_validate_cover(
-                    helper.clone(),
-                    &comprehensive_result.all_search_candidates,
-                    smtc_cover_data,
-                    "AMLL DB",
-                )
-                .await;
-
-                let cover_result = AutoFetchResult::CoverUpdate(final_cover_data);
-
-                if result_tx.send(cover_result).is_err() {
-                    error!("[AutoFetch Task] 发送 AMLL DB 封面更新结果到主线程失败。");
-                }
-                return;
             }
         }
 
@@ -302,7 +308,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                     .provider_name
                     .clone()
                     .into();
-                info!("常规搜索成功，来源: {:?}。正在进行前置转换...", source);
+                info!("常规搜索成功，来源: {:?}。正在转换...", source);
 
                 let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
 
@@ -320,7 +326,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 let output_text = match output_text_result {
                     Ok(res) => res.output_lyrics,
                     Err(e) => {
-                        error!("[AutoFetch] 常规搜索结果前置转换失败: {}", e);
+                        error!("[AutoFetch] 搜索结果转换失败: {}", e);
                         String::new()
                     }
                 };
@@ -470,7 +476,7 @@ pub(super) fn trigger_manual_refetch_for_source(
                 let output_text = match output_text_result {
                     Ok(conversion_result) => conversion_result.output_lyrics,
                     Err(e) => {
-                        error!("[ManualRefetch] 前置转换失败: {}", e);
+                        error!("[ManualRefetch] 转换失败: {}", e);
                         String::new()
                     }
                 };
@@ -542,7 +548,7 @@ fn are_images_similar(image_data1: &[u8], image_data2: &[u8]) -> bool {
     match check() {
         Ok(is_similar) => is_similar,
         Err(e) => {
-            warn!("图片相似度对比失败: {}，使用 SMTC 封面", e);
+            info!("图片相似度对比失败: {}，使用 SMTC 封面", e);
             false
         }
     }
@@ -563,10 +569,10 @@ async fn fetch_and_validate_cover(
     match (provider_cover, smtc_cover_data) {
         (Some(provider_bytes), Some(smtc_bytes)) => {
             if are_images_similar(&provider_bytes, &smtc_bytes) {
-                info!("{}: 封面验证成功，使用提供商的高清封面。", log_prefix);
+                info!("{}: 封面验证成功，使用提供商的封面。", log_prefix);
                 Some(provider_bytes)
             } else {
-                warn!(
+                info!(
                     "{}: 封面验证失败（不匹配），回退使用SMTC缩略图。",
                     log_prefix
                 );

@@ -235,7 +235,7 @@ impl Provider for AmllTtmlDatabase {
                 let match_type = compare_track(track, &temp_search_result);
                 (entry, match_type)
             })
-            .filter(|(_, match_type)| *match_type != MatchType::None)
+            .filter(|(_, match_type)| *match_type >= MatchType::PrettyHigh)
             .collect();
 
         scored_results.sort_by(|a, b| b.1.get_score().cmp(&a.1.get_score()));
@@ -550,10 +550,9 @@ mod tests {
         assert_eq!(results3.len(), 1, "大小写不敏感的搜索应该工作");
 
         // --- 案例 4: 艺术家不匹配，但标题匹配 ---
-        // 新逻辑：因为标题匹配，仍然会返回一个低分结果，而不是空列表。
         let search_query4 = Track {
             title: Some("明明"),
-            artists: Some(&["周杰伦"]), // 错误的艺术家
+            artists: Some(&["周杰伦"]),
             album: None,
             duration: None,
         };

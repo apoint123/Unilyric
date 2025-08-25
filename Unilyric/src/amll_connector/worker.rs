@@ -28,6 +28,7 @@ struct ActorState {
     config: AMLLConnectorConfig,
     actor_settings: ActorSettings,
     websocket_client: Option<WebSocketClientState>,
+    websocket_status: WebsocketStatus,
     last_track_info: Option<smtc_suite::NowPlayingInfo>,
     last_audio_sent_time: Option<Instant>,
 }
@@ -201,6 +202,7 @@ pub async fn amll_connector_actor(
         config: initial_config,
         actor_settings: ActorSettings {},
         websocket_client: None,
+        websocket_status: WebsocketStatus::断开,
         last_track_info: None,
         last_audio_sent_time: None,
     };
@@ -247,6 +249,7 @@ pub async fn amll_connector_actor(
             },
 
             Some(status) = ws_status_rx.recv() => {
+                state.websocket_status = status.clone();
                 handle_websocket_status(status, &update_tx, &smtc_command_tx).await;
             },
 
@@ -263,7 +266,9 @@ pub async fn amll_connector_actor(
 
 fn handle_new_song(new_info: &smtc_suite::NowPlayingInfo, state: &ActorState) {
     tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
-    if let Some(client) = &state.websocket_client {
+    if let (Some(client), WebsocketStatus::已连接) =
+        (&state.websocket_client, &state.websocket_status)
+    {
         send_music_info_to_ws(client, new_info);
         if let Some(ref cover_data) = new_info.cover_data {
             send_cover_to_ws(client, cover_data);
@@ -275,7 +280,9 @@ fn handle_progress_update(new_info: &smtc_suite::NowPlayingInfo, state: &ActorSt
     let mut repaint_needed = false;
     let last_info = state.last_track_info.as_ref();
 
-    if let Some(client) = &state.websocket_client {
+    if let (Some(client), WebsocketStatus::已连接) =
+        (&state.websocket_client, &state.websocket_status)
+    {
         let cover_changed = new_info.cover_data.is_some()
             && new_info.cover_data != last_info.and_then(|i| i.cover_data.as_ref()).cloned();
         if cover_changed {
@@ -318,7 +325,9 @@ fn handle_smtc_update(
             return false;
         }
 
-        if let Some(client) = &state.websocket_client {
+        if let (Some(client), WebsocketStatus::已连接) =
+            (&state.websocket_client, &state.websocket_status)
+        {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
 
             let msg = ClientMessage::OnAudioData {
@@ -437,6 +446,7 @@ async fn handle_app_command(
             }
 
             state.last_track_info = None;
+            state.websocket_status = WebsocketStatus::断开;
 
             let update = UiUpdate {
                 payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
@@ -450,7 +460,9 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::SendLyric(parsed_data) => {
-            if let Some(client) = &state.websocket_client {
+            if let (Some(client), WebsocketStatus::已连接) =
+                (&state.websocket_client, &state.websocket_status)
+            {
                 let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
                 let body = ClientMessage::SetLyric {
                     data: protocol_lyrics,
@@ -461,7 +473,9 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::SendClientMessage(message) => {
-            if let Some(client) = &state.websocket_client {
+            if let (Some(client), WebsocketStatus::已连接) =
+                (&state.websocket_client, &state.websocket_status)
+            {
                 handle_websocket_send_error(
                     client.outgoing_tx().try_send(message),
                     "ClientMessage",
@@ -471,7 +485,9 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::SendCover(cover_data) => {
-            if let Some(client) = &state.websocket_client {
+            if let (Some(client), WebsocketStatus::已连接) =
+                (&state.websocket_client, &state.websocket_status)
+            {
                 tracing::info!(
                     "[AMLL Actor] 发送封面到 WebSocket，大小: {} bytes",
                     cover_data.len()

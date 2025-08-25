@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::sync::{
@@ -6,9 +7,10 @@ use std::sync::{
 };
 
 use egui_toast::Toasts;
-use lyrics_helper_core::{FullConversionResult, LyricFormat, ParsedSourceData};
+use lyrics_helper_core::{FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData};
 use lyrics_helper_core::{SearchResult, model::track::FullLyricsResult};
 use lyrics_helper_rs::LyricsHelperError;
+use rand::Rng;
 use smtc_suite::{MediaCommand, NowPlayingInfo, SmtcSessionInfo, TextConversionMode};
 use tokio::{
     sync::Mutex as TokioMutex,
@@ -17,7 +19,7 @@ use tokio::{
 };
 
 use crate::amll_connector::types::UiUpdate;
-use crate::types::ProviderState;
+use crate::types::{EditableMetadataEntry, ProviderState};
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
     app::TtmlDbUploadUserAction,
@@ -81,8 +83,7 @@ pub(super) struct LyricState {
     pub(super) parsed_lyric_data: Option<ParsedSourceData>,
     pub(super) loaded_translation_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
     pub(super) loaded_romanization_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
-    pub(super) editable_metadata: Vec<crate::types::EditableMetadataEntry>,
-    pub(super) metadata_is_user_edited: bool,
+    pub(super) metadata_manager: UiMetadataManager,
     pub(super) metadata_source_is_download: bool,
     pub(super) current_markers: Vec<(usize, String)>,
     pub(super) source_format: LyricFormat,
@@ -116,8 +117,7 @@ impl LyricState {
             parsed_lyric_data: None,
             loaded_translation_lrc: None,
             loaded_romanization_lrc: None,
-            editable_metadata: Vec::new(),
-            metadata_is_user_edited: false,
+            metadata_manager: UiMetadataManager::default(),
             metadata_source_is_download: false,
             current_markers: Vec::new(),
             source_format: LyricFormat::Lrc,
@@ -159,9 +159,9 @@ pub(super) struct PlayerState {
 }
 
 impl PlayerState {
-    fn new(_settings: &AppSettings, command_tx: TokioSender<MediaCommand>) -> Self {
+    fn new(_settings: &AppSettings, command_tx: Option<TokioSender<MediaCommand>>) -> Self {
         Self {
-            command_tx: Some(command_tx),
+            command_tx,
             current_now_playing: NowPlayingInfo::default(),
             available_sessions: Vec::new(),
             smtc_time_offset_ms: 0,
@@ -191,6 +191,19 @@ impl AmllConnectorState {
             status: Arc::new(StdMutex::new(WebsocketStatus::default())),
             config: Arc::new(StdMutex::new(config)),
             update_rx,
+        }
+    }
+    fn new_disabled() -> Self {
+        let (_tx, rx) = std_channel();
+        Self {
+            command_tx: None,
+            actor_handle: None,
+            status: Arc::new(StdMutex::new(WebsocketStatus::断开)),
+            config: Arc::new(StdMutex::new(AMLLConnectorConfig {
+                enabled: false,
+                ..Default::default()
+            })),
+            update_rx: rx,
         }
     }
 }
@@ -291,6 +304,63 @@ pub(super) struct UniLyricApp {
     pub(super) auto_fetch_trigger_time: Option<std::time::Instant>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct UiMetadataManager {
+    pub(super) store: MetadataStore,
+    pub(super) ui_entries: Vec<EditableMetadataEntry>,
+}
+
+impl UiMetadataManager {
+    pub fn load_from_parsed_data(&mut self, parsed: &ParsedSourceData) {
+        self.store.clear();
+        self.store.load_from_raw(&parsed.raw_metadata);
+        self.rebuild_ui_entries();
+    }
+
+    pub fn sync_store_from_ui_entries(&mut self) {
+        self.store.clear();
+        let mut grouped_by_key = HashMap::<String, Vec<String>>::new();
+        for entry in &self.ui_entries {
+            if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
+                grouped_by_key
+                    .entry(entry.key.clone())
+                    .or_default()
+                    .push(entry.value.clone());
+            }
+        }
+
+        for (key, values) in grouped_by_key {
+            self.store.set_multiple(&key, values);
+        }
+    }
+
+    fn rebuild_ui_entries(&mut self) {
+        let old_ui_state: HashMap<String, (bool, bool)> = self
+            .ui_entries
+            .iter()
+            .map(|e| (e.key.clone(), (e.is_pinned, e.is_from_file)))
+            .collect();
+
+        self.ui_entries.clear();
+
+        for (key, values) in self.store.get_all_data() {
+            let key_str = key.to_string();
+            let (is_pinned, is_from_file) =
+                old_ui_state.get(&key_str).copied().unwrap_or((false, true));
+
+            for value in values {
+                self.ui_entries.push(EditableMetadataEntry {
+                    key: key_str.clone(),
+                    value: value.clone(),
+                    is_pinned,
+                    is_from_file,
+                    id: egui::Id::new(format!("meta_entry_{}", rand::rng().random::<u64>())),
+                });
+            }
+        }
+    }
+}
+
 impl UniLyricApp {
     pub(super) fn new(
         cc: &eframe::CreationContext,
@@ -302,67 +372,65 @@ impl UniLyricApp {
         let egui_ctx = cc.egui_ctx.clone();
         Self::setup_fonts(&cc.egui_ctx, &settings);
         let tokio_runtime = Self::create_tokio_runtime();
-        let (smtc_controller, smtc_update_rx) =
-            smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
-
         let (auto_fetch_tx, auto_fetch_rx) = std_channel::<AutoFetchResult>();
         let (upload_action_tx, upload_action_rx) = std_channel::<TtmlDbUploadUserAction>();
-        let (amll_update_tx, amll_update_rx) = std_channel::<UiUpdate>();
-        let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
-
-        let lyric_state = LyricState::new(&settings);
-        let player_state = PlayerState::new(&settings, smtc_controller.command_tx.clone());
-
-        let conversion_mode = if settings.enable_t2s_for_auto_search {
-            TextConversionMode::TraditionalToSimplified
-        } else {
-            TextConversionMode::Off
-        };
-        let t2s_command = MediaCommand::SetTextConversion(conversion_mode);
-        if let Err(e) = smtc_controller.command_tx.try_send(t2s_command) {
-            tracing::warn!("[App::new] 启动时设置简繁转换失败: {}", e);
-        } else {
-            tracing::info!("[App::new] 设置简繁转换模式为: {:?}", conversion_mode);
-        }
-
-        let audio_capture_command = if settings.send_audio_data_to_player {
-            MediaCommand::StartAudioCapture
-        } else {
-            MediaCommand::StopAudioCapture
-        };
-        if let Err(e) = smtc_controller
-            .command_tx
-            .try_send(audio_capture_command.clone())
-        {
-            tracing::warn!("[App::new] 启动时设置音频捕获失败: {}", e);
-        } else {
-            tracing::info!("[App::new] 设置音频捕获命令为: {:?}", audio_capture_command);
-        }
-
         let auto_fetch_state = AutoFetchState::new(auto_fetch_tx, auto_fetch_rx);
         let ttml_db_upload_state = TtmlDbUploadState::new(upload_action_tx, upload_action_rx);
-        let local_cache = LocalCacheState::default(); // 先用默认值，等下加载数据
+        let local_cache = LocalCacheState::default();
 
-        let mc_config = AMLLConnectorConfig {
-            enabled: settings.amll_connector_enabled,
-            websocket_url: settings.amll_connector_websocket_url.clone(),
-        };
+        let lyric_state = LyricState::new(&settings);
+        let player_state;
+        let amll_connector_state;
 
-        let amll_actor_handle =
-            tokio_runtime.spawn(crate::amll_connector::worker::amll_connector_actor(
-                amll_command_rx,
-                amll_update_tx,
-                mc_config.clone(),
-                smtc_controller.command_tx.clone(),
-                smtc_update_rx,
-            ));
+        if settings.amll_connector_enabled {
+            let (smtc_controller, smtc_update_rx) =
+                smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
 
-        let amll_connector_state = AmllConnectorState::new(
-            amll_command_tx,
-            amll_update_rx,
-            amll_actor_handle,
-            mc_config,
-        );
+            player_state = PlayerState::new(&settings, Some(smtc_controller.command_tx.clone()));
+
+            let conversion_mode = if settings.enable_t2s_for_auto_search {
+                TextConversionMode::TraditionalToSimplified
+            } else {
+                TextConversionMode::Off
+            };
+            let _ = smtc_controller
+                .command_tx
+                .try_send(MediaCommand::SetTextConversion(conversion_mode));
+
+            let audio_capture_command = if settings.send_audio_data_to_player {
+                MediaCommand::StartAudioCapture
+            } else {
+                MediaCommand::StopAudioCapture
+            };
+            let _ = smtc_controller.command_tx.try_send(audio_capture_command);
+
+            let mc_config = AMLLConnectorConfig {
+                enabled: settings.amll_connector_enabled,
+                websocket_url: settings.amll_connector_websocket_url.clone(),
+            };
+
+            let (amll_update_tx, amll_update_rx) = std_channel::<UiUpdate>();
+            let (amll_command_tx, amll_command_rx) = tokio_channel::<ConnectorCommand>(32);
+
+            let amll_actor_handle =
+                tokio_runtime.spawn(crate::amll_connector::worker::amll_connector_actor(
+                    amll_command_rx,
+                    amll_update_tx,
+                    mc_config.clone(),
+                    smtc_controller.command_tx.clone(),
+                    smtc_update_rx,
+                ));
+
+            amll_connector_state = AmllConnectorState::new(
+                amll_command_tx,
+                amll_update_rx,
+                amll_actor_handle,
+                mc_config,
+            );
+        } else {
+            player_state = PlayerState::new(&settings, None);
+            amll_connector_state = AmllConnectorState::new_disabled();
+        }
 
         let mut db = fontdb::Database::new();
         db.load_system_fonts();

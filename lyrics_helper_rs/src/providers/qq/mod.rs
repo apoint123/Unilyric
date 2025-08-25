@@ -482,6 +482,10 @@ impl QQMusic {
             let business_code: models::BusinessCode =
                 serde_json::from_value(business_object.clone())?;
 
+            if business_code.code == 24001 {
+                return Err(LyricsHelperError::LyricNotFound);
+            }
+
             if expected_codes.contains(&business_code.code) {
                 Ok(business_object)
             } else {

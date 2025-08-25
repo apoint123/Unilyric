@@ -210,10 +210,12 @@ where
     let list1: Vec<String> = list1_raw
         .iter()
         .map(|s| convert(s.as_ref(), BuiltinConfig::T2s).to_lowercase())
+        .filter(|s| !s.is_empty())
         .collect();
     let list2: Vec<String> = list2_raw
         .iter()
         .map(|s| convert(s.as_ref(), BuiltinConfig::T2s).to_lowercase())
+        .filter(|s| !s.is_empty())
         .collect();
 
     let is_l1_various = list1
@@ -303,12 +305,12 @@ mod tests {
             .collect();
         let intersection_size = set1.intersection(&set2).count();
         let union_size = set1.union(&set2).count();
-        let intersection_size_f66 = f64::from(u32::try_from(intersection_size).unwrap_or(u32::MAX));
-        let union_size_f66 = f64::from(u32::try_from(union_size).unwrap_or(u32::MAX));
+        let intersection_size_f64 = f64::from(u32::try_from(intersection_size).unwrap_or(u32::MAX));
+        let union_size_f64 = f64::from(u32::try_from(union_size).unwrap_or(u32::MAX));
         let jaccard_score = if union_size == 0 {
             1.0
         } else {
-            intersection_size_f66 / union_size_f66
+            intersection_size_f64 / union_size_f64
         };
 
         assert_eq!(

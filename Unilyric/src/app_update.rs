@@ -180,7 +180,9 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     app.fetcher.last_source_format = Some(source_format);
                     app.fetcher.current_ui_populated = true;
 
-                    app.sync_ui_from_parsed_data();
+                    app.lyrics
+                        .metadata_manager
+                        .load_from_parsed_data(&lyrics_and_metadata.lyrics.parsed);
                 }
 
                 if app.amll_connector.config.lock().unwrap().enabled {
@@ -527,6 +529,10 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
             if let Some(path) = &file.path {
                 crate::io::load_file_and_convert(app, path.clone());
             } else if let Some(bytes) = &file.bytes {
+                warn!(
+                    "[FileDrop] 文件路径不存在，但检测到字节数据 ({} bytes)。",
+                    bytes.len()
+                );
                 if let Ok(text_content) = String::from_utf8(bytes.to_vec()) {
                     app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                         crate::app_actions::LyricsAction::ClearAllData,
@@ -537,8 +543,10 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
                         crate::app_actions::LyricsAction::Convert,
                     )));
                 } else {
-                    warn!("[Unilyric] 拖放的字节数据不是有效的UTF-8文本。");
+                    warn!("[FileDrop] 拖放的字节数据不是有效的UTF-8文本。");
                 }
+            } else {
+                warn!("[FileDrop] 文件既没有路径也没有字节数据。");
             }
         }
     } else if !ctx.input(|i| i.raw.hovered_files.is_empty()) {

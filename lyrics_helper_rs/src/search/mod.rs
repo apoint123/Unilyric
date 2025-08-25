@@ -2,17 +2,11 @@
 
 use std::collections::HashMap;
 
-#[cfg(test)]
-use std::sync::Arc;
-
 use futures::future;
 use lyrics_helper_core::{MatchType, SearchResult, Track};
 use tracing::{debug, info, warn};
 
 use crate::{error::Result, providers::Provider};
-
-#[cfg(test)]
-use crate::http::HttpClient;
 
 pub(crate) mod matcher;
 use matcher::compare_track;
@@ -205,8 +199,10 @@ fn finalize_single_provider_results(results: Vec<SearchResult>) -> Vec<SearchRes
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::sync::Arc;
 
     use super::*;
+    use crate::http::HttpClient;
     use crate::providers::Provider;
     use crate::providers::qq::QQMusic;
     use async_trait::async_trait;
@@ -409,7 +405,7 @@ mod tests {
             title: Some("我怕来者不是你"),
             artists: Some(&["小蓝背心"]),
             album: Some("我怕来者不是你"),
-            duration: None,
+            duration: Some(211_000),
         };
 
         let results = search_track(provider, &track, true).await.unwrap();

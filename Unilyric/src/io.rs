@@ -1,5 +1,3 @@
-use lyrics_helper_core::LyricFormat;
-
 use crate::app_definition::UniLyricApp;
 use crate::types::LrcContentType;
 use std::fs;
@@ -64,24 +62,10 @@ pub fn handle_open_lrc_file(app: &mut UniLyricApp, content_type: LrcContentType)
 
 /// 从路径加载文件并触发转换。
 pub fn load_file_and_convert(app: &mut UniLyricApp, path: PathBuf) {
-    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-        crate::app_actions::LyricsAction::ClearAllData,
-    )));
-    app.lyrics.last_opened_file_path = Some(path.clone());
-
     if let Ok(content) = fs::read_to_string(&path) {
-        app.lyrics.input_text = content;
-        // 尝试从文件扩展名推断源格式
-        if let Some(ext) = path.extension().and_then(|s| s.to_str())
-            && let Some(format) = LyricFormat::from_string(ext)
-        {
-            app.lyrics.source_format = format;
-        }
         app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-            crate::app_actions::LyricsAction::Convert,
+            crate::app_actions::LyricsAction::LoadFileContent(content, path),
         )));
-
-        // sync_ui_from_parsed_data 会在转换完成后自动调用
     } else {
         tracing::error!("无法读取文件内容: {path:?}");
     }

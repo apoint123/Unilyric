@@ -10,7 +10,7 @@ use crate::app_definition::UniLyricApp;
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
 use crate::error::{AppError, AppResult};
-use crate::types::{AutoSearchStatus, EditableMetadataEntry, LrcContentType, ProviderState};
+use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
 use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
     ChineseConversionMode, ChineseConversionOptions, ConversionInput, ConversionOptions, InputFile,
@@ -134,32 +134,24 @@ impl UniLyricApp {
         };
 
         // 4. 准备用户手动输入的元数据
-        let metadata_overrides = if self.lyrics.metadata_is_user_edited {
-            let mut overrides = std::collections::HashMap::new();
-            for entry in &self.lyrics.editable_metadata {
-                if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                    let values = entry
-                        .value
-                        .split(';')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect::<Vec<String>>();
-                    if !values.is_empty() {
-                        overrides.insert(entry.key.clone(), values);
-                    }
-                }
-            }
-            if overrides.is_empty() {
-                None
-            } else {
-                Some(overrides)
-            }
-        } else {
-            None
-        };
+        self.lyrics.metadata_manager.sync_store_from_ui_entries();
+        let metadata_overrides = Some(
+            self.lyrics
+                .metadata_manager
+                .store
+                .get_all_data()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        );
 
         let input = ConversionInput {
-            main_lyric,
+            main_lyric: InputFile::new(
+                self.lyrics.input_text.clone(),
+                self.lyrics.source_format,
+                None,
+                None,
+            ),
             translations,
             romanizations,
             target_format: self.lyrics.target_format,
@@ -256,6 +248,19 @@ impl UniLyricApp {
     /// 子事件处理器
     fn handle_lyrics_action(&mut self, action: LyricsAction) -> ActionResult {
         match action {
+            LyricsAction::LoadFileContent(content, path) => {
+                self.clear_lyrics_state_for_new_song_internal();
+                self.lyrics.last_opened_file_path = Some(path.clone());
+                self.lyrics.metadata_source_is_download = false;
+                self.lyrics.input_text = content;
+                if let Some(ext) = path.extension().and_then(|s| s.to_str())
+                    && let Some(format) = LyricFormat::from_string(ext)
+                {
+                    self.lyrics.source_format = format;
+                }
+                self.trigger_convert();
+                ActionResult::Success
+            }
             LyricsAction::Convert => {
                 self.trigger_convert();
                 ActionResult::Success
@@ -264,13 +269,12 @@ impl UniLyricApp {
                 self.lyrics.conversion_in_progress = false;
                 match result {
                     Ok(full_result) => {
-                        info!("[Convert Result] 转换任务成功完成。");
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
 
-                        if !self.lyrics.metadata_is_user_edited {
-                            self.sync_ui_from_parsed_data();
-                        }
+                        self.lyrics
+                            .metadata_manager
+                            .load_from_parsed_data(&full_result.source_data);
 
                         if self.amll_connector.config.lock().unwrap().enabled {
                             if let Some(tx) = &self.amll_connector.command_tx {
@@ -502,33 +506,30 @@ impl UniLyricApp {
                 }
             }
             LyricsAction::MetadataChanged => {
-                self.lyrics.metadata_is_user_edited = true;
+                self.lyrics.metadata_manager.sync_store_from_ui_entries();
                 ActionResult::Success
             }
             LyricsAction::AddMetadata => {
-                use rand::Rng;
-                // 为新条目生成一个相对唯一的ID
-                let new_entry_id_num =
-                    self.lyrics.editable_metadata.len() as u32 + rand::rng().random::<u32>();
+                let new_entry_id_num = self.lyrics.metadata_manager.ui_entries.len() as u32
+                    + rand::rng().random::<u32>();
 
                 let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
                 self.lyrics
-                    .editable_metadata
+                    .metadata_manager
+                    .ui_entries
                     .push(crate::types::EditableMetadataEntry {
-                        key: format!("新键_{}", new_entry_id_num % 100), // 默认键名
-                        value: "".to_string(),                           // 默认空值
-                        is_pinned: false,                                // 默认不固定
-                        is_from_file: false,                             // 新添加的不是来自文件
-                        id: new_id,                                      // UI ID
+                        key: format!("新键_{}", new_entry_id_num % 100),
+                        value: "".to_string(),
+                        is_pinned: false,
+                        is_from_file: false,
+                        id: new_id,
                     });
-                self.lyrics.metadata_is_user_edited = true;
                 self.trigger_convert();
                 ActionResult::Success
             }
             LyricsAction::DeleteMetadata(index) => {
-                if index < self.lyrics.editable_metadata.len() {
-                    self.lyrics.editable_metadata.remove(index);
-                    self.lyrics.metadata_is_user_edited = true;
+                if index < self.lyrics.metadata_manager.ui_entries.len() {
+                    self.lyrics.metadata_manager.ui_entries.remove(index);
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
@@ -536,10 +537,9 @@ impl UniLyricApp {
                 }
             }
             LyricsAction::UpdateMetadataKey(index, new_key) => {
-                if let Some(entry) = self.lyrics.editable_metadata.get_mut(index) {
+                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.key = new_key;
                     entry.is_from_file = false;
-                    self.lyrics.metadata_is_user_edited = true;
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
@@ -547,10 +547,9 @@ impl UniLyricApp {
                 }
             }
             LyricsAction::UpdateMetadataValue(index, new_value) => {
-                if let Some(entry) = self.lyrics.editable_metadata.get_mut(index) {
+                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.value = new_value;
                     entry.is_from_file = false;
-                    self.lyrics.metadata_is_user_edited = true;
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
@@ -558,9 +557,9 @@ impl UniLyricApp {
                 }
             }
             LyricsAction::ToggleMetadataPinned(index) => {
-                if let Some(entry) = self.lyrics.editable_metadata.get_mut(index) {
+                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
                     entry.is_pinned = !entry.is_pinned;
-                    self.lyrics.metadata_is_user_edited = true;
+                    entry.is_from_file = false;
                     self.trigger_convert();
                     ActionResult::Success
                 } else {
@@ -613,56 +612,29 @@ impl UniLyricApp {
                 self.trigger_convert();
                 ActionResult::Success
             }
-            LyricsAction::MainInputChanged(_text) => {
-                // 主输入文本框内容改变，触发转换
-                // 但只有在不是转换过程中时才触发，避免无限循环
+            LyricsAction::MainInputChanged(text) => {
+                self.lyrics.input_text = text;
+                self.lyrics.metadata_manager.store.clear();
+                self.lyrics.metadata_manager.ui_entries.clear();
+
                 if !self.lyrics.conversion_in_progress && !self.lyrics.input_text.trim().is_empty()
                 {
                     self.trigger_convert();
                 }
                 ActionResult::Success
             }
+
             LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata) => {
                 if self.lyrics.conversion_in_progress {
                     return ActionResult::Warning("转换正在进行中".to_string());
                 }
 
                 self.fetcher.current_ui_populated = true;
-                self.clear_lyrics_state_for_new_song_internal();
 
-                let parsed_data = lyrics_and_metadata.lyrics.parsed;
                 let raw_data = lyrics_and_metadata.lyrics.raw;
-
                 self.lyrics.input_text = raw_data.content;
-                self.lyrics.source_format = parsed_data.source_format;
-                self.fetcher.last_source_format = Some(parsed_data.source_format);
-                self.lyrics.metadata_source_is_download = true;
 
-                let (tx, rx) = std::sync::mpsc::channel();
-                self.lyrics.conversion_result_rx = Some(rx);
-                self.lyrics.conversion_in_progress = true;
-
-                let target_format = self.lyrics.target_format;
-
-                let user_metadata_overrides: Option<
-                    std::collections::HashMap<String, Vec<String>>,
-                > = None;
-                let options = ConversionOptions::default();
-
-                self.tokio_runtime.spawn(async move {
-                    let result = lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed(
-                        parsed_data,
-                        target_format,
-                        options,
-                        user_metadata_overrides,
-                    )
-                    .await;
-
-                    let converted_result = result.map_err(|e| e.to_string());
-                    if tx.send(Ok(converted_result.unwrap())).is_err() {
-                        warn!("[Generate Task] 发送结果失败，UI可能已关闭。");
-                    }
-                });
+                self.trigger_convert();
 
                 ActionResult::Success
             }
@@ -679,19 +651,15 @@ impl UniLyricApp {
         self.lyrics.loaded_translation_lrc = None;
         self.lyrics.loaded_romanization_lrc = None;
         self.lyrics.current_markers.clear();
-        self.lyrics.metadata_is_user_edited = false;
-
-        self.lyrics
-            .editable_metadata
-            .retain(|entry| entry.is_pinned);
-        for entry in &mut self.lyrics.editable_metadata {
-            entry.is_from_file = false;
-        }
+        self.lyrics.metadata_manager.ui_entries.clear();
+        self.lyrics.metadata_manager.store.clear();
     }
 
     fn handle_file_action(&mut self, action: FileAction) -> ActionResult {
         match action {
             FileAction::Open => {
+                self.clear_lyrics_state_for_new_song_internal();
+                self.lyrics.metadata_source_is_download = false;
                 crate::io::handle_open_file(self);
                 ActionResult::Success
             }
@@ -1008,44 +976,6 @@ impl UniLyricApp {
                 self.ui.temp_edit_settings = self.app_settings.lock().unwrap().clone();
                 ActionResult::Success
             }
-        }
-    }
-
-    /// 从解析后的数据（`self.lyrics.parsed_lyric_data`）同步UI相关的状态。
-    /// 例如，更新元数据编辑器。
-    pub fn sync_ui_from_parsed_data(&mut self) {
-        if let Some(data) = &self.lyrics.parsed_lyric_data {
-            info!("正在根据最新的转换结果同步元数据UI...");
-
-            // 步骤 1: 保留所有被用户固定的条目
-            let mut new_metadata: Vec<EditableMetadataEntry> = self
-                .lyrics
-                .editable_metadata
-                .iter()
-                .filter(|entry| entry.is_pinned)
-                .cloned()
-                .collect();
-
-            // 步骤 2: 获取已固定条目的键，避免重复添加
-            let pinned_keys: std::collections::HashSet<String> =
-                new_metadata.iter().map(|entry| entry.key.clone()).collect();
-
-            // 步骤 3: 遍历从新数据中解析出的元数据
-            for (key, values) in &data.raw_metadata {
-                // 如果这个键没有被固定，就添加它
-                if !pinned_keys.contains(key) {
-                    new_metadata.push(EditableMetadataEntry {
-                        key: key.clone(),
-                        value: values.join("; "),
-                        is_pinned: false,
-                        is_from_file: true,
-                        id: egui::Id::new(format!("meta_entry_{}", rand::rng().random::<u64>())),
-                    });
-                }
-            }
-
-            // 步骤 4: 用合并后的新列表替换旧列表
-            self.lyrics.editable_metadata = new_metadata;
         }
     }
 

@@ -690,36 +690,25 @@ impl UniLyricApp {
             self.ui.show_settings_window = false;
         }
     }
-    /// 绘制元数据编辑器窗口的内容。
-    ///
-    /// # Arguments
-    /// * `ui` - `egui::Ui` 的可变引用，用于绘制UI元素。
-    /// * `_open` - (当前未使用) 通常用于 `egui::Window` 的打开状态，但这里窗口的打开状态由 `self.ui.show_metadata_panel` 控制。
+
     pub fn draw_metadata_editor_window_contents(&mut self, ui: &mut egui::Ui, _open: &mut bool) {
-        // 使用可滚动的区域来显示元数据列表
-        let scroll_response = egui::ScrollArea::vertical().show(ui, |scroll_ui| {
-            if self.lyrics.editable_metadata.is_empty() {
-                // 如果没有元数据可编辑
+        let mut has_changes = false;
+
+        egui::ScrollArea::vertical().show(ui, |scroll_ui| {
+            if self.lyrics.metadata_manager.ui_entries.is_empty() {
                 scroll_ui.label(
                     egui::RichText::new("无元数据可编辑。\n可从文件加载，或手动添加。").weak(),
                 );
-                return Vec::new();
+                return;
             }
 
-            let mut local_actions = Vec::new();
-
-            // 遍历可编辑的元数据条目
-            for (index, entry) in self.lyrics.editable_metadata.iter().enumerate() {
-                let item_id = entry.id; // 每个条目有唯一的 egui::Id，用于区分UI控件状态
+            for entry in self.lyrics.metadata_manager.ui_entries.iter_mut() {
+                let item_id = entry.id;
 
                 scroll_ui.horizontal(|row_ui| {
-                    // 每条元数据占一行
-                    // "固定" 复选框，用于标记该元数据是否在加载新文件时保留
-                    let mut is_pinned = entry.is_pinned;
-                    if row_ui.checkbox(&mut is_pinned, "").changed() {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::ToggleMetadataPinned(index),
-                        )));
+                    if row_ui.checkbox(&mut entry.is_pinned, "").changed() {
+                        has_changes = true;
+                        entry.is_from_file = false;
                     }
                     row_ui
                         .label("固定")
@@ -727,62 +716,53 @@ impl UniLyricApp {
 
                     row_ui.add_space(5.0);
                     row_ui.label("键:");
-                    // 元数据键的文本编辑框
-                    let mut key = entry.key.clone();
                     if row_ui
                         .add_sized(
-                            [row_ui.available_width() * 0.3, 0.0], // 占据可用宽度的30%
-                            egui::TextEdit::singleline(&mut key)
-                                .id_salt(item_id.with("key_edit")) // 控件ID
-                                .hint_text("元数据键"), // 输入提示
+                            [row_ui.available_width() * 0.3, 0.0],
+                            egui::TextEdit::singleline(&mut entry.key)
+                                .id_salt(item_id.with("key_edit"))
+                                .hint_text("元数据键"),
                         )
                         .changed()
                     {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::UpdateMetadataKey(index, key),
-                        )));
+                        has_changes = true;
+                        entry.is_from_file = false;
                     }
 
                     row_ui.add_space(5.0);
                     row_ui.label("值:");
-                    // 元数据值的文本编辑框
-                    let mut value = entry.value.clone();
                     if row_ui
                         .add(
-                            egui::TextEdit::singleline(&mut value)
+                            egui::TextEdit::singleline(&mut entry.value)
                                 .id_salt(item_id.with("value_edit"))
                                 .hint_text("元数据值"),
                         )
                         .changed()
                     {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::UpdateMetadataValue(index, value),
-                        )));
+                        has_changes = true;
+                        entry.is_from_file = false;
                     }
 
-                    // 删除按钮
                     if row_ui.button("🗑").on_hover_text("删除此条元数据").clicked() {
-                        local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::DeleteMetadata(index),
-                        )));
+                        entry.key = "___TO_BE_DELETED___".to_string();
+                        has_changes = true;
                     }
                 });
-                scroll_ui.separator(); // 每行后的分割线
+                scroll_ui.separator();
             }
 
-            // "添加新元数据" 按钮
             if scroll_ui.button("添加新元数据").clicked() {
-                local_actions.push(crate::app_actions::UserAction::Lyrics(Box::new(
-                    crate::app_actions::LyricsAction::AddMetadata,
-                )));
+                self.send_action(UserAction::Lyrics(Box::new(LyricsAction::AddMetadata)));
             }
+        });
 
-            local_actions
-        }); // ScrollArea 结束
-
-        // 发送所有收集的动作
-        for action in scroll_response.inner {
-            self.send_action(action);
+        if has_changes {
+            self.lyrics
+                .metadata_manager
+                .ui_entries
+                .retain(|e| e.key != "___TO_BE_DELETED___");
+            self.send_action(UserAction::Lyrics(Box::new(LyricsAction::MetadataChanged)));
+            self.trigger_convert();
         }
     }
 
@@ -1640,6 +1620,13 @@ impl UniLyricApp {
             return;
         }
 
+        if matches!(
+            self.lyrics_helper_state.provider_state,
+            crate::types::ProviderState::Uninitialized
+        ) {
+            self.trigger_provider_loading();
+        }
+
         let mut is_open = self.ui.show_search_window;
 
         let available_rect = ctx.available_rect();
@@ -1659,15 +1646,26 @@ impl UniLyricApp {
                             .hint_text("输入歌曲名或“歌曲 - 歌手”")
                             .desired_width(h_ui.available_width() - 50.0),
                     );
-                    if response.lost_focus() && h_ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::Search,
-                        )));
+
+                    let providers_ready = matches!(
+                        self.lyrics_helper_state.provider_state,
+                        crate::types::ProviderState::Ready
+                    );
+                    let search_enabled = !self.lyrics.search_in_progress && providers_ready;
+                    let search_button = h_ui.add_enabled(search_enabled, egui::Button::new("搜索"));
+
+                    if !providers_ready {
+                        let hover_text = match self.lyrics_helper_state.provider_state {
+                            crate::types::ProviderState::Uninitialized
+                            | crate::types::ProviderState::Loading => "正在初始化...",
+                            crate::types::ProviderState::Failed(_) => "搜索功能初始化失败",
+                            _ => "",
+                        };
+                        search_button.clone().on_disabled_hover_text(hover_text);
                     }
 
-                    if h_ui
-                        .add_enabled(!self.lyrics.search_in_progress, egui::Button::new("搜索"))
-                        .clicked()
+                    if response.lost_focus() && h_ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        || search_button.clicked()
                     {
                         self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                             crate::app_actions::LyricsAction::Search,
@@ -1677,16 +1675,31 @@ impl UniLyricApp {
 
                 ui.separator();
 
-                if self.lyrics.search_in_progress {
-                    ui.horizontal(|h_ui| {
-                        h_ui.spinner();
-                        h_ui.label("正在搜索...");
-                    });
-                } else if self.lyrics.download_in_progress {
-                    ui.horizontal(|h_ui| {
-                        h_ui.spinner();
-                        h_ui.label("正在下载歌词...");
-                    });
+                match &self.lyrics_helper_state.provider_state {
+                    crate::types::ProviderState::Uninitialized
+                    | crate::types::ProviderState::Loading => {
+                        ui.horizontal(|h_ui| {
+                            h_ui.spinner();
+                            h_ui.label("正在初始化...");
+                        });
+                    }
+                    crate::types::ProviderState::Failed(err) => {
+                        ui.colored_label(Color32::RED, "初始化失败");
+                        ui.small(err);
+                    }
+                    crate::types::ProviderState::Ready => {
+                        if self.lyrics.search_in_progress {
+                            ui.horizontal(|h_ui| {
+                                h_ui.spinner();
+                                h_ui.label("正在搜索...");
+                            });
+                        } else if self.lyrics.download_in_progress {
+                            ui.horizontal(|h_ui| {
+                                h_ui.spinner();
+                                h_ui.label("正在下载歌词...");
+                            });
+                        }
+                    }
                 }
 
                 egui::ScrollArea::vertical()
