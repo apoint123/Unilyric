@@ -635,10 +635,10 @@ impl UniLyricApp {
                     self.lyrics.metadata_manager.ui_entries.remove(index);
                     self.lyrics.metadata_manager.sync_store_from_ui_entries();
                     self.dispatch_regeneration_task();
+                    ActionResult::Success
                 } else {
-                    "无效的元数据索引".to_string();
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
-                ActionResult::Success
             }
             LyricsAction::UpdateMetadataKey(index, new_key) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
@@ -646,10 +646,10 @@ impl UniLyricApp {
                     entry.is_from_file = false;
                     self.lyrics.metadata_manager.sync_store_from_ui_entries();
                     self.dispatch_regeneration_task();
+                    ActionResult::Success
                 } else {
-                    "无效的元数据索引".to_string();
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
-                ActionResult::Success
             }
             LyricsAction::UpdateMetadataValue(index, new_value) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
@@ -657,10 +657,10 @@ impl UniLyricApp {
                     entry.is_from_file = false;
                     self.lyrics.metadata_manager.sync_store_from_ui_entries();
                     self.dispatch_regeneration_task();
+                    ActionResult::Success
                 } else {
-                    "无效的元数据索引".to_string();
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
-                ActionResult::Success
             }
             LyricsAction::ToggleMetadataPinned(index) => {
                 if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
@@ -668,10 +668,10 @@ impl UniLyricApp {
                     entry.is_from_file = false;
                     self.lyrics.metadata_manager.sync_store_from_ui_entries();
                     self.dispatch_regeneration_task();
+                    ActionResult::Success
                 } else {
-                    "无效的元数据索引".to_string();
+                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
-                ActionResult::Success
             }
             LyricsAction::LoadFetchedResult(result) => {
                 // 手动加载的逻辑，无条件执行

@@ -151,7 +151,7 @@ fn compare_name(name1_opt: Option<&str>, name2_opt: Option<&str>) -> Option<Name
             && !name1.contains('(')
             && name1 == name2.split('(').next().unwrap_or("").trim())
     {
-        return Some(NameMatchType::Medium);
+        return Some(NameMatchType::Low);
     }
 
     if name1.chars().count() == name2.chars().count() {
