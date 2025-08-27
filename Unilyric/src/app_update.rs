@@ -149,7 +149,15 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             } => {
                 let now_playing = &app.player.current_now_playing;
                 let current_title = now_playing.title.as_deref().unwrap_or_default();
-                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
+                let current_artist = now_playing
+                    .artist
+                    .as_deref()
+                    .unwrap_or_default()
+                    .split(['/', '、', ',', ';'])
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/");
 
                 if current_title != title || current_artist != artist {
                     debug!(
@@ -194,6 +202,10 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     app.lyrics.metadata_source_is_download = true;
                     app.fetcher.last_source_format = Some(source_format);
                     app.fetcher.current_ui_populated = true;
+                    app.lyrics.display_translation_lrc_output =
+                        app.generate_lrc_from_aux_track(&lyrics_and_metadata.lyrics.parsed, true);
+                    app.lyrics.display_romanization_lrc_output =
+                        app.generate_lrc_from_aux_track(&lyrics_and_metadata.lyrics.parsed, false);
 
                     app.lyrics
                         .metadata_manager
@@ -230,7 +242,15 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             } => {
                 let now_playing = &app.player.current_now_playing;
                 let current_title = now_playing.title.as_deref().unwrap_or_default();
-                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
+                let current_artist = now_playing
+                    .artist
+                    .as_deref()
+                    .unwrap_or_default()
+                    .split(['/', '、', ',', ';'])
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/");
 
                 if current_title != title || current_artist != artist {
                     debug!(
@@ -281,7 +301,15 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             } => {
                 let now_playing = &app.player.current_now_playing;
                 let current_title = now_playing.title.as_deref().unwrap_or_default();
-                let current_artist = now_playing.artist.as_deref().unwrap_or_default();
+                let current_artist = now_playing
+                    .artist
+                    .as_deref()
+                    .unwrap_or_default()
+                    .split(['/', '、', ',', ';'])
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("/");
 
                 if current_title == title && current_artist == artist {
                     app.player.current_now_playing.cover_data = cover_data.clone();

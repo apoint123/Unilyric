@@ -18,6 +18,7 @@ use lyrics_helper_core::{
     Artist, ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, Language,
     LyricFormat, ParsedSourceData, RawLyrics, SearchResult, Track, model::generic,
 };
+use quick_xml::{Reader, events::Event};
 use serde_json::json;
 use tracing::{info, trace, warn};
 use uuid::Uuid;
@@ -66,11 +67,6 @@ static QRC_LYRIC_RE: LazyLock<Regex> =
 
 static AMP_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"&(?![a-zA-Z]{2,6};|#[0-9]{2,4};)").unwrap());
-
-static QUOT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?P<attr>\s+[\w:.-]+\s*=\s*")(?P<value>(?:[^"]|"(?!\s+[\w:.-]+\s*=\s*"|\s*(?:/?|\?)>))*)"#)
-        .unwrap()
-});
 
 static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").unwrap());
 
@@ -645,22 +641,72 @@ impl QQMusic {
             return decrypted_text.to_string();
         }
 
-        // 修复独立的 '&' 符号
-        let replaced_amp = AMP_RE.replace_all(decrypted_text, "&amp;");
+        trace!("原始解密后的 QRC 文本:\n{}", decrypted_text);
 
-        // 修复未转义的双引号
-        let fixed_text = QUOT_RE.replace_all(&replaced_amp, |caps: &fancy_regex::Captures| {
-            let attr = &caps["attr"];
-            let value = &caps["value"];
-            format!("{}{}\"", attr, value.replace('"', "&quot;"))
-        });
+        let try_parse = |text: &str| -> Option<String> {
+            let mut reader = Reader::from_str(text);
+            let mut buf = Vec::new();
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(e) | Event::Empty(e)) => {
+                        if let Ok(Some(attr)) = e.try_get_attribute("LyricContent")
+                            && let Ok(value) = attr.decode_and_unescape_value(reader.decoder())
+                        {
+                            return Some(value.to_string());
+                        }
+                    }
+                    Err(e) => {
+                        info!("quick-xml 解析失败: {e}");
+                        return None;
+                    }
+                    Ok(Event::Eof) => return None,
+                    _ => (),
+                }
+                buf.clear();
+            }
+        };
+
+        if let Some(content) = try_parse(decrypted_text) {
+            return content;
+        }
+
+        let fixed_amp_text = AMP_RE.replace_all(decrypted_text, "&amp;").to_string();
+
+        let fixed_text = if let Some(start_idx) = fixed_amp_text.find("LyricContent=\"") {
+            let content_start = start_idx + "LyricContent=\"".len();
+            if let Some(end_idx) = fixed_amp_text[content_start..].rfind('"') {
+                let content_end = content_start + end_idx;
+                let prefix = &fixed_amp_text[..content_start];
+                let content_to_fix = &fixed_amp_text[content_start..content_end];
+                let suffix = &fixed_amp_text[content_end..];
+
+                let fixed_content = content_to_fix.replace('"', "&quot;");
+                let result = format!("{prefix}{fixed_content}{suffix}");
+                result
+            } else {
+                fixed_amp_text
+            }
+        } else {
+            fixed_amp_text
+        };
+
+        if let Some(content) = try_parse(&fixed_text) {
+            return content;
+        }
 
         if let Ok(Some(caps)) = QRC_LYRIC_RE.captures(&fixed_text)
             && let Some(content) = caps.get(1)
         {
-            return content.as_str().to_string();
+            return content
+                .as_str()
+                .replace("&quot;", "\"")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&apos;", "'");
         }
 
+        warn!("所有提取歌词的方法均失败，返回原始文本。");
         decrypted_text.to_string()
     }
 

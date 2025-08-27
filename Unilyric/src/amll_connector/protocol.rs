@@ -17,6 +17,7 @@ pub struct LyricWord {
     pub start_time: u64,
     pub end_time: u64,
     pub word: NullString,
+    // pub roman_word: NullString,
 }
 
 #[binrw]
@@ -183,11 +184,13 @@ mod tests {
                         start_time: 1000,
                         end_time: 2000,
                         word: "Hello".into(),
+                        // roman_word: "Konnichiwa".into(),
                     },
                     LyricWord {
                         start_time: 2000,
                         end_time: 4000,
                         word: "World".into(),
+                        // roman_word: "Sekai".into(),
                     },
                 ],
                 translated_lyric: "你好世界".into(),

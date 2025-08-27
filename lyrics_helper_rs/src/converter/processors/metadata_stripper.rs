@@ -52,14 +52,7 @@ fn get_plain_text_from_new_lyric_line(line: &LyricLine) -> String {
         .iter()
         .find(|t| t.content_type == ContentType::Main)
     {
-        let text = main_track
-            .content
-            .words
-            .iter()
-            .flat_map(|word| &word.syllables)
-            .map(|syllable| syllable.text.as_str())
-            .collect::<String>();
-        return text.trim().to_string();
+        return main_track.content.text().trim().to_string();
     }
     String::new()
 }

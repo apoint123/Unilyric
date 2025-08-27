@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::sync::Arc;
 
 use crate::amll_connector::types::ActorSettings;
@@ -14,8 +15,8 @@ use crate::error::{AppError, AppResult};
 use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
 use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
-    ChineseConversionMode, ChineseConversionOptions, ConversionInput, ConversionOptions, InputFile,
-    LyricFormat, Track,
+    ChineseConversionMode, ChineseConversionOptions, ContentType, ConversionInput,
+    ConversionOptions, InputFile, LyricFormat, LyricTrack, Track,
 };
 use rand::Rng;
 use smtc_suite::{MediaCommand, TextConversionMode};
@@ -373,6 +374,11 @@ impl UniLyricApp {
                     Ok(full_result) => {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
+
+                        self.lyrics.display_translation_lrc_output =
+                            self.generate_lrc_from_aux_track(&full_result.source_data, true);
+                        self.lyrics.display_romanization_lrc_output =
+                            self.generate_lrc_from_aux_track(&full_result.source_data, false);
 
                         self.lyrics
                             .metadata_manager
@@ -1248,5 +1254,46 @@ impl UniLyricApp {
                 *guard = AutoSearchStatus::NotFound;
             }
         }
+    }
+
+    pub(super) fn generate_lrc_from_aux_track(
+        &self,
+        parsed_data: &lyrics_helper_core::ParsedSourceData,
+        is_translation: bool,
+    ) -> String {
+        let mut lrc_output = String::new();
+
+        for line in &parsed_data.lines {
+            if let Some(main_track) = line
+                .tracks
+                .iter()
+                .find(|t| t.content_type == ContentType::Main)
+            {
+                let aux_tracks: &Vec<LyricTrack> = if is_translation {
+                    &main_track.translations
+                } else {
+                    &main_track.romanizations
+                };
+
+                if let Some(first_aux_track) = aux_tracks.first() {
+                    let text: String = first_aux_track
+                        .words
+                        .iter()
+                        .flat_map(|w| &w.syllables)
+                        .map(|s| s.text.as_str())
+                        .collect();
+
+                    if !text.is_empty() {
+                        let minutes = line.start_ms / 60000;
+                        let seconds = (line.start_ms % 60000) / 1000;
+                        let millis = (line.start_ms % 1000) / 10;
+                        let timestamp = format!("[{:02}:{:02}.{:02}]", minutes, seconds, millis);
+
+                        let _ = writeln!(&mut lrc_output, "{}{}", timestamp, text);
+                    }
+                }
+            }
+        }
+        lrc_output
     }
 }

@@ -28,9 +28,45 @@ fn extract_line_components(
     romanizations: &[helper_types::LyricTrack],
     is_instrumental: bool,
 ) -> (Vec<protocol::LyricWord>, String, String) {
+    let roman_syllables: Vec<_> = romanizations
+        .first()
+        .map(|track| {
+            track
+                .words
+                .iter()
+                .flat_map(|w| &w.syllables)
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut roman_groups: Vec<Vec<String>> = vec![Vec::new(); syllables.len()];
+
+    if !roman_syllables.is_empty() && !syllables.is_empty() {
+        for roman_syl in &roman_syllables {
+            let mut best_match_index = None;
+            let mut max_overlap: i64 = 0;
+
+            for (i, main_syl) in syllables.iter().enumerate() {
+                let overlap = std::cmp::min(main_syl.end_ms, roman_syl.end_ms) as i64
+                    - std::cmp::max(main_syl.start_ms, roman_syl.start_ms) as i64;
+
+                if overlap > max_overlap {
+                    max_overlap = overlap;
+                    best_match_index = Some(i);
+                }
+            }
+
+            if let Some(index) = best_match_index {
+                roman_groups[index].push(roman_syl.text.clone());
+            }
+        }
+    }
+
     let words = syllables
         .iter()
-        .map(|syllable| {
+        .enumerate()
+        .map(|(i, syllable)| {
             let word_text = if syllable.ends_with_space {
                 format!("{} ", syllable.text)
             } else {
@@ -44,10 +80,13 @@ fn extract_line_components(
                 syllable.end_ms
             };
 
+            let roman_word_text = roman_groups[i].join("");
+
             protocol::LyricWord {
                 start_time: syllable.start_ms,
                 end_time,
                 word: NullString(word_text),
+                // roman_word: NullString(roman_word_text),
             }
         })
         .collect();
@@ -66,7 +105,7 @@ fn extract_line_components(
         translation = String::new();
     }
 
-    let romanization = romanizations.first().map_or(String::new(), get_track_text);
+    let romanization = String::new();
 
     (words, translation, romanization)
 }
@@ -217,4 +256,100 @@ pub(super) fn convert_to_protocol_lyrics(
             main_line_iter.chain(background_line_iter)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lyrics_helper_rs::converter::parsers::qrc_parser;
+
+    #[test]
+    fn test_romanization_alignment() {
+        let main_qrc_content = include_str!("../../test_data/main.qrc");
+        let roma_qrc_content = include_str!("../../test_data/roma.qrc");
+
+        let mut main_data = qrc_parser::parse_qrc(main_qrc_content).unwrap();
+        let roma_data = qrc_parser::parse_qrc(roma_qrc_content).unwrap();
+
+        const TIMESTAMP_TOLERANCE_MS: i64 = 30;
+        let mut matched_roma_indices = vec![false; roma_data.lines.len()];
+
+        for main_line in main_data.lines.iter_mut() {
+            let best_match = roma_data
+                .lines
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !matched_roma_indices[*i])
+                .min_by_key(|(_, roma_line)| {
+                    (roma_line.start_ms as i64 - main_line.start_ms as i64).abs()
+                });
+
+            if let Some((roma_index, roma_line)) = best_match
+                && (roma_line.start_ms as i64 - main_line.start_ms as i64).abs()
+                    <= TIMESTAMP_TOLERANCE_MS
+                && let Some(main_annotated_track) = main_line
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.content_type == helper_types::ContentType::Main)
+                && let Some(roma_annotated_track) = roma_line
+                    .tracks
+                    .iter()
+                    .find(|t| t.content_type == helper_types::ContentType::Main)
+            {
+                let has_syllables = roma_annotated_track
+                    .content
+                    .words
+                    .iter()
+                    .any(|w| !w.syllables.is_empty());
+                if has_syllables {
+                    main_annotated_track
+                        .romanizations
+                        .push(roma_annotated_track.content.clone());
+                    matched_roma_indices[roma_index] = true;
+                }
+            }
+        }
+        for (line_idx, line) in main_data.lines.iter().enumerate() {
+            println!(
+                "\n--- Line {} ({}ms - {}ms) ---",
+                line_idx, line.start_ms, line.end_ms
+            );
+
+            if let Some(main_track) = line.main_track() {
+                let main_syllables: Vec<_> = main_track
+                    .content
+                    .words
+                    .iter()
+                    .flat_map(|w| &w.syllables)
+                    .cloned()
+                    .collect();
+
+                if main_syllables.is_empty() {
+                    println!("  (No lyrical content in main track)");
+                    continue;
+                }
+
+                let (protocol_words, _, _) = extract_line_components(
+                    &main_syllables,
+                    &main_track.translations,
+                    &main_track.romanizations,
+                    false,
+                );
+
+                assert_eq!(main_syllables.len(), protocol_words.len());
+
+                // for (main_syl, protocol_word) in main_syllables.iter().zip(protocol_words.iter()) {
+                //     println!(
+                //         "  Main: '{}' ({} - {}) -> Romanization: '{}'",
+                //         main_syl.text,
+                //         main_syl.start_ms,
+                //         main_syl.end_ms,
+                //         protocol_word.roman_word.0
+                //     );
+                // }
+            } else {
+                println!("  (No main track in this line)");
+            }
+        }
+    }
 }
