@@ -4,33 +4,27 @@ use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
 use tokio::sync::oneshot::Receiver as OneshotReceiver;
-use tokio::time::sleep;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, connect_async, tungstenite::protocol::Message as WsMessage,
 };
 use tracing::warn;
 
 use super::protocol::{ClientMessage, ServerMessage};
-use super::types::WebsocketStatus;
+use crate::amll_connector::WebsocketStatus;
+
 /// 连接结束的原因枚举
 #[derive(Debug, Clone)]
 enum LifecycleEndReason {
-    PongTimeout,                    // Pong 响应超时
-    InitialConnectFailed(String),   // 初始连接失败，附带错误描述
-    StreamFailure(String),          // WebSocket 流错误，附带错误描述
-    ServerClosed,                   // 服务器关闭了连接
-    ShutdownSignalReceived,         // 收到了外部关闭信号
-    CriticalChannelFailure(String), // 关键的内部通道发生故障，附带错误描述
+    PongTimeout,
+    InitialConnectFailed(String),
+    StreamFailure(String),
+    ServerClosed,
 }
 
 type ActualWebSocketStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// 定义重连延迟时间（毫秒）
-const RECONNECT_DELAY_MS: u64 = 3000;
 /// 定义连接超时时长
 const CONNECT_TIMEOUT_DURATION: Duration = Duration::from_secs(10);
-/// 定义最大连续失败连接尝试次数
-const MAX_CONSECUTIVE_FAILURES: u32 = 3;
 
 /// 跳转请求的防抖持续时间
 const SEEK_DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
@@ -277,62 +271,58 @@ async fn handle_connection(
     ws_stream: ActualWebSocketStream,
     outgoing_rx: &mut TokioReceiver<ClientMessage>,
     media_cmd_tx: &TokioSender<SmtcControlCommand>,
-    shutdown_rx: &mut OneshotReceiver<()>,
-) -> LifecycleEndReason {
+    mut shutdown_rx: OneshotReceiver<()>,
+) -> Result<(), LifecycleEndReason> {
     let (mut ws_writer, mut ws_reader) = ws_stream.split();
     let (internal_pong_tx, mut internal_pong_rx) = tokio::sync::mpsc::channel(5);
 
     let mut state = ConnectionState::new();
     let mut app_ping_interval_timer = tokio::time::interval(APP_PING_INTERVAL);
-    app_ping_interval_timer.tick().await; // 消耗掉第一次立即触发的 tick
+    app_ping_interval_timer.tick().await;
 
     loop {
         tokio::select! {
             biased;
 
             // 1. 处理外部关闭信号
-            _ = &mut *shutdown_rx => {
+            _ = &mut shutdown_rx => {
                 tracing::trace!("[WebSocket 客户端] 收到外部关闭信号。");
                 ws_writer.close().await.ok();
-                return LifecycleEndReason::ShutdownSignalReceived;
+                return Ok(());
             }
 
             // 2. 处理待发送消息 (来自外部)
             maybe_body_to_send = outgoing_rx.recv() => {
                 if let Some(body_to_send) = maybe_body_to_send {
                     if send_ws_message(&mut ws_writer, body_to_send).await.is_err() {
-                        return LifecycleEndReason::StreamFailure("发送主通道消息失败".to_string());
+                        return Err(LifecycleEndReason::StreamFailure("发送主通道消息失败".to_string()));
                     }
                 } else {
-                    tracing::error!("[WebSocket 客户端] 主发送通道 (outgoing_rx) 已关闭。");
-                    ws_writer.close().await.ok();
-                    return LifecycleEndReason::CriticalChannelFailure("主发送通道已关闭".to_string());
+                    return Err(LifecycleEndReason::StreamFailure("主发送通道已关闭".to_string()));
                 }
-            }
+            },
 
             // 3. 处理待发送消息 (来自内部，如 Pong)
             maybe_internal_msg_to_send = internal_pong_rx.recv() => {
                 if let Some(internal_msg_to_send) = maybe_internal_msg_to_send {
                     if send_ws_message(&mut ws_writer, internal_msg_to_send).await.is_err() {
-                        return LifecycleEndReason::StreamFailure("发送内部 Pong 消息失败".to_string());
+                        return Err(LifecycleEndReason::StreamFailure("发送内部 Pong 消息失败".to_string()));
                     }
                 } else {
                     tracing::error!("[WebSocket 客户端] 内部 Pong 通道 (internal_pong_rx) 已关闭。");
                     ws_writer.close().await.ok();
-                    return LifecycleEndReason::CriticalChannelFailure("内部 Pong 通道已关闭".to_string());
+                    return Err(LifecycleEndReason::StreamFailure("内部 Pong 通道已关闭".to_string()));
                 }
             }
 
             // 4. 处理从 WebSocket 服务器接收到的消息
             ws_msg_option = ws_reader.next() => {
-                if let Err(reason) = handle_ws_message(
+                handle_ws_message(
                     ws_msg_option,
                     &internal_pong_tx,
                     media_cmd_tx,
                     &mut state,
-                ).await {
-                    return reason;
-                }
+                ).await?
             }
 
             // 5. 处理应用层 Ping 定时器
@@ -342,12 +332,12 @@ async fn handle_connection(
                         && Instant::now().duration_since(sent_at) > APP_PONG_TIMEOUT {
                             tracing::warn!("[WebSocket 客户端] 服务器应用层 Pong 超时! 断开连接。");
                             ws_writer.close().await.ok();
-                            return LifecycleEndReason::PongTimeout;
+                            return Err(LifecycleEndReason::PongTimeout);
                         }
                 } else {
                     tracing::trace!("[WebSocket 客户端] 定时发送 Ping 到服务器。");
                     if send_ws_message(&mut ws_writer, ClientMessage::Ping).await.is_err() {
-                        return LifecycleEndReason::StreamFailure("发送应用层 Ping 失败".to_string());
+                        return Err(LifecycleEndReason::StreamFailure("发送应用层 Ping 失败".to_string()));
                     }
                     state.last_app_ping_sent_at = Some(Instant::now());
                     state.waiting_for_app_pong = true;
@@ -364,99 +354,69 @@ pub async fn run_websocket_client(
     status_tx: TokioSender<WebsocketStatus>,
     media_cmd_tx: TokioSender<SmtcControlCommand>,
     mut shutdown_rx: OneshotReceiver<()>,
-) {
+) -> anyhow::Result<()> {
     tracing::info!("[WebSocket 客户端] 启动，目标 URL: {websocket_url}");
 
-    let mut consecutive_failures: u32 = 0;
+    let ws_stream;
 
-    'main_loop: loop {
-        let outcome = {
-            tracing::info!(
-                "[WebSocket 客户端] 正在尝试连接... (已连续失败: {consecutive_failures} 次)"
-            );
+    tokio::select! {
+        biased;
 
-            if status_tx.send(WebsocketStatus::Connecting).await.is_err() {
-                // 如果发送失败，说明 actor 已关闭，任务无法继续
-                break 'main_loop;
-            }
+        _ = &mut shutdown_rx => {
+            return Ok(());
+        }
 
-            match tokio::time::timeout(CONNECT_TIMEOUT_DURATION, connect_async(&websocket_url))
-                .await
-            {
-                Ok(Ok((ws_stream, response))) => {
+        connect_result = tokio::time::timeout(CONNECT_TIMEOUT_DURATION, connect_async(&websocket_url)) => {
+            match connect_result {
+                Ok(Ok((stream, response))) => {
                     tracing::info!(
                         "[WebSocket 客户端] 成功连接到服务器。HTTP 状态码: {}",
                         response.status()
                     );
-                    consecutive_failures = 0;
-                    if status_tx.send(WebsocketStatus::Connected).await.is_err() {
-                        break 'main_loop;
-                    }
-
-                    handle_connection(ws_stream, &mut outgoing_rx, &media_cmd_tx, &mut shutdown_rx)
-                        .await
+                    ws_stream = stream;
                 }
                 Ok(Err(e)) => {
-                    LifecycleEndReason::InitialConnectFailed(format!("连接握手失败: {e}"))
+                    return Err(anyhow::anyhow!("连接握手失败: {e}"));
                 }
-                Err(_) => LifecycleEndReason::InitialConnectFailed(format!(
-                    "连接超时 (超过 {} 秒)",
-                    CONNECT_TIMEOUT_DURATION.as_secs()
-                )),
+                Err(_) => {
+                    return Err(anyhow::anyhow!(
+                        "连接超时 (超过 {} 秒)",
+                        CONNECT_TIMEOUT_DURATION.as_secs()
+                    ));
+                }
             }
-        };
-
-        match outcome {
-            LifecycleEndReason::ShutdownSignalReceived => {
-                tracing::info!("[WebSocket 客户端] 因收到关闭信号而退出。");
-                status_tx.send(WebsocketStatus::Disconnected).await.ok();
-                break 'main_loop;
-            }
-            LifecycleEndReason::CriticalChannelFailure(reason) => {
-                tracing::error!("[WebSocket 客户端] 发生关键通道错误: {reason}。任务将退出。");
-                status_tx.send(WebsocketStatus::Error(reason)).await.ok();
-                break 'main_loop;
-            }
-            reason @ (LifecycleEndReason::InitialConnectFailed(_)
-            | LifecycleEndReason::StreamFailure(_)
-            | LifecycleEndReason::PongTimeout
-            | LifecycleEndReason::ServerClosed) => {
-                let error_message = match &reason {
-                    LifecycleEndReason::InitialConnectFailed(msg) => msg.clone(),
-                    LifecycleEndReason::StreamFailure(msg) => format!("连接流错误: {msg}"),
-                    LifecycleEndReason::PongTimeout => "心跳响应超时".to_string(),
-                    LifecycleEndReason::ServerClosed => "服务器关闭了连接".to_string(),
-                    _ => "未知错误".to_string(),
-                };
-
-                tracing::warn!("[WebSocket 客户端] 连接因 '{error_message}' 而结束，准备重连...");
-                status_tx
-                    .send(WebsocketStatus::Error(error_message))
-                    .await
-                    .ok();
-                consecutive_failures += 1;
-            }
-        }
-
-        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
-            let msg = format!("已达最大重连次数 ({MAX_CONSECUTIVE_FAILURES})");
-            status_tx.send(WebsocketStatus::Error(msg)).await.ok();
-
-            tracing::info!("[WebSocket 客户端] 暂停自动重连，等待外部指令。");
-            tokio::select! { biased; _ = &mut shutdown_rx => {} }
-            break 'main_loop;
-        }
-
-        tracing::debug!("[WebSocket 客户端] 将等待 {RECONNECT_DELAY_MS}ms 后尝试下一次连接...");
-        tokio::select! {
-            biased;
-            _ = &mut shutdown_rx => {
-                tracing::info!("[WebSocket 客户端] (重连延迟期间) 收到关闭信号，任务退出。");
-                break 'main_loop;
-            }
-            _ = sleep(Duration::from_millis(RECONNECT_DELAY_MS)) => {}
         }
     }
 
-    tracing::trace!("[WebSocket 客户端] 任务已完全停止。");
+    if status_tx
+        .send(super::types::WebsocketStatus::Connected)
+        .await
+        .is_err()
+    {
+        return Err(anyhow::anyhow!("Actor 可能已关闭"));
+    }
+
+    let reason = handle_connection(ws_stream, &mut outgoing_rx, &media_cmd_tx, shutdown_rx).await;
+
+    match reason {
+        Ok(_) => {
+            tracing::info!("[WebSocket 客户端] 因收到关闭信号而正常退出。");
+            Ok(())
+        }
+        Err(reason) => {
+            let error_message = match reason {
+                LifecycleEndReason::StreamFailure(msg) => format!("连接流错误: {msg}"),
+                LifecycleEndReason::PongTimeout => "心跳响应超时".to_string(),
+                LifecycleEndReason::ServerClosed => "服务器关闭了连接".to_string(),
+                LifecycleEndReason::InitialConnectFailed(msg) => {
+                    tracing::error!(
+                        "[WebSocket 客户端] 逻辑错误：在 handle_connection 中收到了 InitialConnectFailed"
+                    );
+                    msg
+                }
+            };
+            tracing::warn!("[WebSocket 客户端] 连接因 '{error_message}' 而异常终止。");
+            Err(anyhow::anyhow!(error_message))
+        }
+    }
 }

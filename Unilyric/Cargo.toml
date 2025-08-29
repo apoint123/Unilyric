@@ -37,3 +37,4 @@ fontdb = "0.23.0"
 image = { version = "0.25", features = ["jpeg", "png"] }
 image_hasher = "3.0.0"
 lyrics_helper_core = { path = "../lyrics_helper_core" }
+anyhow = "1.0.99"

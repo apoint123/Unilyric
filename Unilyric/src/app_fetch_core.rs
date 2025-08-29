@@ -585,13 +585,6 @@ async fn fetch_and_validate_cover(
                 None
             }
         }
-        (Some(provider_bytes), None) => {
-            info!("{}: SMTC未提供封面数据，使用提供商封面。", log_prefix);
-            Some(provider_bytes)
-        }
-        (None, _) => {
-            info!("{}: 提供商未找到封面，不发送封面更新。", log_prefix);
-            None
-        }
+        (_, _) => None,
     }
 }

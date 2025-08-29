@@ -6,6 +6,7 @@ version = 4
 name = "Unilyric"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "arboard",
  "binrw",
  "chrono",
