@@ -50,7 +50,5 @@ pub fn parse_apple_music_json(content: &str) -> Result<ParsedSourceData, Convert
         .push(apple_music_id);
 
     parsed_data.source_format = lyrics_helper_core::LyricFormat::AppleMusicJson;
-    parsed_data.raw_ttml_from_input = Some(ttml_string);
-
     Ok(parsed_data)
 }

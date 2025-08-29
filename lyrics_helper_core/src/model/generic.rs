@@ -8,7 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 /// 代表一位艺术家的通用模型。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Artist {
     /// 艺术家的唯一 ID (通常来自其所在平台)。
     pub id: String,

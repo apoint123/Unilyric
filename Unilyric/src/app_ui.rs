@@ -1,12 +1,12 @@
 use crate::amll_connector::WebsocketStatus;
-use crate::app_definition::UniLyricApp;
+use crate::app_definition::{PreviewState, SearchState, UniLyricApp};
 
 use crate::app_settings::AppAmllMirror;
 use crate::types::{AutoSearchSource, AutoSearchStatus};
 
 use crate::app_actions::{
-    AmllConnectorAction, LyricsAction, PlayerAction, ProcessorType, SettingsAction, UIAction,
-    UserAction,
+    AmllConnectorAction, DownloaderAction, LyricsAction, PlayerAction, ProcessorType,
+    SettingsAction, UIAction, UserAction,
 };
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::Color32;
@@ -91,8 +91,8 @@ impl UniLyricApp {
                         .clicked()
                     {
                         self.send_action(crate::app_actions::UserAction::UI(
-                            crate::app_actions::UIAction::ShowPanel(
-                                crate::app_actions::PanelType::Search,
+                            crate::app_actions::UIAction::SetView(
+                                crate::app_definition::AppView::Downloader,
                             ),
                         ));
                     }
@@ -780,6 +780,24 @@ impl UniLyricApp {
                     egui::DragValue::new(&mut self.ui.temp_edit_settings.smtc_time_offset_ms)
                         .speed(10.0)
                         .suffix(" ms"),
+                );
+                grid_ui.end_row();
+
+                grid_ui
+                    .label("校准时间轴")
+                    .on_hover_text("切歌时立刻跳转到0ms，可能对 Spotify 有奇效");
+                grid_ui.checkbox(
+                    &mut self.ui.temp_edit_settings.calibrate_timeline_on_song_change,
+                    "",
+                );
+                grid_ui.end_row();
+
+                grid_ui
+                    .label("在新曲目开始时快速暂停/播放")
+                    .on_hover_text("更强力地校准时间轴");
+                grid_ui.checkbox(
+                    &mut self.ui.temp_edit_settings.flicker_play_pause_on_song_change,
+                    "",
                 );
                 grid_ui.end_row();
             });
@@ -1594,19 +1612,19 @@ impl UniLyricApp {
             ui.label(format!("目标 URL: {websocket_url_display}"));
 
             match current_status {
-                WebsocketStatus::断开 => {
+                WebsocketStatus::Disconnected => {
                     if ui.button("连接到 AMLL Player").clicked() {
                         self.send_action(UserAction::AmllConnector(AmllConnectorAction::Connect));
                     }
                     ui.weak("状态: 未连接");
                 }
-                WebsocketStatus::连接中 => {
+                WebsocketStatus::Connecting => {
                     ui.horizontal(|h_ui| {
                         h_ui.add(Spinner::new());
                         h_ui.label("正在连接...");
                     });
                 }
-                WebsocketStatus::已连接 => {
+                WebsocketStatus::Connected => {
                     if ui.button("断开连接").clicked() {
                         self.send_action(UserAction::AmllConnector(
                             AmllConnectorAction::Disconnect,
@@ -1614,7 +1632,7 @@ impl UniLyricApp {
                     }
                     ui.colored_label(Color32::GREEN, "状态: 已连接");
                 }
-                WebsocketStatus::错误(err_msg_ref) => {
+                WebsocketStatus::Error(err_msg_ref) => {
                     if ui.button("重试连接").clicked() {
                         self.send_action(UserAction::AmllConnector(AmllConnectorAction::Retry));
                     }
@@ -1856,11 +1874,7 @@ impl UniLyricApp {
     }
 
     /// 绘制歌词搜索/下载窗口。
-    pub fn draw_search_lyrics_window(&mut self, ctx: &egui::Context) {
-        if !self.ui.show_search_window {
-            return;
-        }
-
+    pub fn draw_downloader_view(&mut self, ctx: &egui::Context) {
         if matches!(
             self.lyrics_helper_state.provider_state,
             crate::types::ProviderState::Uninitialized
@@ -1868,128 +1882,228 @@ impl UniLyricApp {
             self.trigger_provider_loading();
         }
 
-        let mut is_open = self.ui.show_search_window;
+        let mut action_to_send = None;
 
-        let available_rect = ctx.available_rect();
-
-        egui::Window::new("搜索歌词")
-            .open(&mut is_open)
-            .collapsible(false)
+        egui::SidePanel::left("downloader_left_panel")
             .resizable(true)
-            .default_width(400.0)
-            .max_width(available_rect.width() * 0.9)
-            .max_height(available_rect.height() * 0.8)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.horizontal(|h_ui| {
-                    let response = h_ui.add(
-                        egui::TextEdit::singleline(&mut self.lyrics.search_query)
-                            .hint_text("输入歌曲名或“歌曲 - 歌手”")
-                            .desired_width(h_ui.available_width() - 50.0),
-                    );
+            .default_width(300.0)
+            .width_range(250.0..=500.0)
+            .show(ctx, |left_ui| {
+                left_ui.horizontal(|header_ui| {
+                    header_ui.heading("搜索");
+                    header_ui.with_layout(Layout::right_to_left(Align::Center), |btn_ui| {
+                        if btn_ui.button("返回").clicked() {
+                            action_to_send =
+                                Some(UserAction::Downloader(Box::new(DownloaderAction::Close)));
+                        }
+                    });
+                });
 
+                left_ui.separator();
+                let is_searching = matches!(self.downloader.search_state, SearchState::Searching);
+
+                let mut perform_search = false;
+
+                egui::Grid::new("search_inputs_grid")
+                    .num_columns(2)
+                    .show(left_ui, |grid_ui| {
+                        grid_ui.label("歌曲名:");
+                        let title_edit = grid_ui.add_enabled(
+                            !is_searching,
+                            TextEdit::singleline(&mut self.downloader.title_input)
+                                .hint_text("必填"),
+                        );
+                        if title_edit.lost_focus()
+                            && grid_ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            perform_search = true;
+                        }
+                        grid_ui.end_row();
+
+                        grid_ui.label("艺术家:");
+                        let artist_edit = grid_ui.add_enabled(
+                            !is_searching,
+                            TextEdit::singleline(&mut self.downloader.artist_input)
+                                .hint_text("可选"),
+                        );
+                        if artist_edit.lost_focus()
+                            && grid_ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            perform_search = true;
+                        }
+                        grid_ui.end_row();
+
+                        grid_ui.label("专辑:");
+                        let album_edit = grid_ui.add_enabled(
+                            !is_searching,
+                            TextEdit::singleline(&mut self.downloader.album_input)
+                                .hint_text("可选"),
+                        );
+                        if album_edit.lost_focus()
+                            && grid_ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            perform_search = true;
+                        }
+                        grid_ui.end_row();
+
+                        grid_ui.label("时长 (ms):");
+                        grid_ui.add_enabled(
+                            !is_searching,
+                            egui::DragValue::new(&mut self.downloader.duration_ms_input)
+                                .speed(1000.0),
+                        );
+                        grid_ui.end_row();
+                    });
+
+                left_ui.horizontal(|h_ui| {
                     let providers_ready = matches!(
                         self.lyrics_helper_state.provider_state,
                         crate::types::ProviderState::Ready
                     );
-                    let search_enabled = !self.lyrics.search_in_progress && providers_ready;
-                    let search_button = h_ui.add_enabled(search_enabled, egui::Button::new("搜索"));
+                    let search_enabled =
+                        !self.downloader.title_input.is_empty() && !is_searching && providers_ready;
 
-                    if !providers_ready {
-                        let hover_text = match self.lyrics_helper_state.provider_state {
-                            crate::types::ProviderState::Uninitialized
-                            | crate::types::ProviderState::Loading => "正在初始化...",
-                            crate::types::ProviderState::Failed(_) => "搜索功能初始化失败",
-                            _ => "",
-                        };
-                        search_button.clone().on_disabled_hover_text(hover_text);
+                    if h_ui
+                        .add_enabled(search_enabled, Button::new("搜索"))
+                        .clicked()
+                    {
+                        perform_search = true;
                     }
 
-                    if response.lost_focus() && h_ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        || search_button.clicked()
-                    {
-                        self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-                            crate::app_actions::LyricsAction::Search,
+                    if h_ui.button("从SMTC填充").clicked() {
+                        action_to_send = Some(UserAction::Downloader(Box::new(
+                            DownloaderAction::FillFromSmtc,
                         )));
+                    }
+
+                    if is_searching {
+                        h_ui.add(Spinner::new());
                     }
                 });
 
-                ui.separator();
-
-                match &self.lyrics_helper_state.provider_state {
-                    crate::types::ProviderState::Uninitialized
-                    | crate::types::ProviderState::Loading => {
-                        ui.horizontal(|h_ui| {
-                            h_ui.spinner();
-                            h_ui.label("正在初始化...");
-                        });
-                    }
-                    crate::types::ProviderState::Failed(err) => {
-                        ui.colored_label(Color32::RED, "初始化失败");
-                        ui.small(err);
-                    }
-                    crate::types::ProviderState::Ready => {
-                        if self.lyrics.search_in_progress {
-                            ui.horizontal(|h_ui| {
-                                h_ui.spinner();
-                                h_ui.label("正在搜索...");
-                            });
-                        } else if self.lyrics.download_in_progress {
-                            ui.horizontal(|h_ui| {
-                                h_ui.spinner();
-                                h_ui.label("正在下载歌词...");
-                            });
-                        }
-                    }
+                if perform_search {
+                    action_to_send = Some(UserAction::Downloader(Box::new(
+                        DownloaderAction::PerformSearch,
+                    )));
                 }
 
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |s_ui| {
-                        if !self.lyrics.search_results.is_empty() {
-                            for result in self.lyrics.search_results.clone() {
-                                let full_label = format!(
-                                    "{} - {} ({})",
-                                    result.title,
-                                    result
+                left_ui.add_space(10.0);
+                left_ui.heading("搜索结果");
+                left_ui.separator();
+
+                ScrollArea::vertical().auto_shrink([false, false]).show(
+                    left_ui,
+                    |s_ui| match &self.downloader.search_state {
+                        SearchState::Idle => {
+                            s_ui.label("请输入关键词进行搜索。");
+                        }
+                        SearchState::Searching => {
+                            s_ui.label("正在搜索...");
+                        }
+                        SearchState::Error(err) => {
+                            s_ui.colored_label(Color32::RED, "搜索失败:");
+                            s_ui.label(err);
+                        }
+                        SearchState::Success(results) => {
+                            if results.is_empty() {
+                                s_ui.label("未找到结果。");
+                            } else {
+                                for result in results {
+                                    let is_selected =
+                                        self.downloader.selected_result_for_preview.as_ref()
+                                            == Some(result);
+
+                                    let artists_str = result
                                         .artists
                                         .iter()
                                         .map(|a| a.name.as_str())
                                         .collect::<Vec<_>>()
-                                        .join("/"),
-                                    result.provider_name
-                                );
+                                        .join("/");
 
-                                let mut display_label = full_label.clone();
-                                if display_label.chars().count() > 50 {
-                                    display_label =
-                                        display_label.chars().take(50).collect::<String>() + "...";
-                                }
+                                    let album_str = result.album.as_deref().unwrap_or("未知专辑");
 
-                                if s_ui
-                                    .button(&display_label)
-                                    .on_hover_text(&full_label)
-                                    .clicked()
-                                {
-                                    self.send_action(crate::app_actions::UserAction::Lyrics(
-                                        Box::new(crate::app_actions::LyricsAction::Download(
-                                            result.clone(),
-                                        )),
-                                    ));
+                                    let duration_str = result.duration.map_or_else(
+                                        || "未知时长".to_string(),
+                                        |ms| {
+                                            let secs = ms / 1000;
+                                            format!("{:02}:{:02}", secs / 60, secs % 60)
+                                        },
+                                    );
+
+                                    let display_text = format!(
+                                        "{} - {}\n专辑: {}\n时长: {} | 来源: {} | 匹配度: {:?}",
+                                        result.title,
+                                        artists_str,
+                                        album_str,
+                                        duration_str,
+                                        result.provider_name,
+                                        result.match_type
+                                    );
+                                    if s_ui.selectable_label(is_selected, display_text).clicked() {
+                                        action_to_send = Some(UserAction::Downloader(Box::new(
+                                            DownloaderAction::SelectResultForPreview(
+                                                result.clone(),
+                                            ),
+                                        )));
+                                    }
                                 }
                             }
-                        } else if !self.lyrics.search_in_progress
-                            && !self.lyrics.search_query.is_empty()
-                        {
-                            s_ui.label("未找到结果。");
                         }
-                    });
+                    },
+                );
             });
 
-        if !is_open {
-            self.send_action(crate::app_actions::UserAction::UI(
-                crate::app_actions::UIAction::HidePanel(crate::app_actions::PanelType::Search),
-            ));
+        egui::CentralPanel::default().show(ctx, |right_ui| {
+            right_ui.heading("歌词预览");
+            right_ui.separator();
+
+            match &self.downloader.preview_state {
+                PreviewState::Idle => {}
+                PreviewState::Loading => {
+                    right_ui.centered_and_justified(|cj_ui| {
+                        cj_ui.vertical_centered(|vc_ui| {
+                            vc_ui.add(Spinner::new());
+                        });
+                    });
+                }
+                PreviewState::Error(err) => {
+                    right_ui.centered_and_justified(|cj_ui| {
+                        cj_ui.label(format!("预览加载失败:\n{}", err));
+                    });
+                }
+                PreviewState::Success(preview_text) => {
+                    let can_apply = self.downloader.selected_full_lyrics.is_some();
+                    egui::TopBottomPanel::bottom("preview_actions_panel").show_inside(
+                        right_ui,
+                        |bottom_ui| {
+                            bottom_ui.with_layout(Layout::right_to_left(Align::Center), |btn_ui| {
+                                if btn_ui.add_enabled(can_apply, Button::new("应用")).clicked() {
+                                    action_to_send = Some(UserAction::Downloader(Box::new(
+                                        DownloaderAction::ApplyAndClose,
+                                    )));
+                                }
+                            });
+                        },
+                    );
+
+                    egui::CentralPanel::default().show_inside(right_ui, |text_panel_ui| {
+                        ScrollArea::vertical().auto_shrink([false, false]).show(
+                            text_panel_ui,
+                            |s_ui| {
+                                s_ui.add(
+                                    egui::Label::new(egui::RichText::new(preview_text).monospace())
+                                        .selectable(true)
+                                        .wrap(),
+                                );
+                            },
+                        );
+                    });
+                }
+            }
+        });
+
+        if let Some(action) = action_to_send {
+            self.send_action(action);
         }
     }
 }

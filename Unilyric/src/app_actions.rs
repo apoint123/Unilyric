@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::app_definition::AppView;
 use crate::app_settings::AppSettings;
 use crate::error::AppResult;
 use crate::types::LrcContentType;
@@ -19,6 +20,7 @@ pub enum UserAction {
     UI(UIAction),
     Settings(SettingsAction),
     AmllConnector(AmllConnectorAction),
+    Downloader(Box<DownloaderAction>),
 }
 
 // 子事件枚举定义
@@ -35,10 +37,6 @@ pub enum LyricsAction {
     Convert,
     ConvertCompleted(AppResult<FullConversionResult>),
     ConvertChinese(ferrous_opencc::config::BuiltinConfig),
-    Search,
-    SearchCompleted(AppResult<Vec<SearchResult>>),
-    Download(SearchResult),
-    DownloadCompleted(AppResult<FullLyricsResult>),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
     AddMetadata,                             // 添加新的元数据条目
@@ -53,6 +51,19 @@ pub enum LyricsAction {
     ApplyFetchedLyrics(Box<LyricsAndMetadata>), // 应用获取到的歌词
     LoadFileContent(String, std::path::PathBuf),
     ApplyProcessor(ProcessorType),
+}
+
+#[derive(Debug, Clone)]
+pub enum DownloaderAction {
+    SetTitle(String),
+    SetArtist(String),
+    FillFromSmtc,
+    PerformSearch,
+    SearchCompleted(AppResult<Vec<SearchResult>>),
+    SelectResultForPreview(SearchResult),
+    PreviewDownloadCompleted(AppResult<FullLyricsResult>),
+    ApplyAndClose,
+    Close,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +82,6 @@ pub enum PlayerAction {
 pub enum PanelType {
     Settings,
     Metadata,
-    Search,
     Log,
     Markers,
     Translation,
@@ -82,6 +92,7 @@ pub enum PanelType {
 #[derive(Clone)]
 pub enum UIAction {
     SetPanelVisibility(PanelType, bool),
+    SetView(AppView),
     SetWrapText(bool),
     ShowPanel(PanelType),
     HidePanel(PanelType),
@@ -98,6 +109,7 @@ impl fmt::Debug for UIAction {
                 .field(panel)
                 .field(is_visible)
                 .finish(),
+            Self::SetView(view) => f.debug_tuple("SetView").field(view).finish(),
             Self::SetWrapText(wrap) => f.debug_tuple("SetWrapText").field(wrap).finish(),
             Self::ShowPanel(panel) => f.debug_tuple("ShowPanel").field(panel).finish(),
             Self::HidePanel(panel) => f.debug_tuple("HidePanel").field(panel).finish(),

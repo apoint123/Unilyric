@@ -4,10 +4,10 @@ use std::sync::Arc;
 use crate::amll_connector::types::ActorSettings;
 use crate::amll_connector::{AMLLConnectorConfig, ConnectorCommand};
 use crate::app_actions::{
-    AmllConnectorAction, FileAction, LyricsAction, PanelType, PlayerAction, ProcessorType,
-    SettingsAction, UIAction, UserAction,
+    AmllConnectorAction, DownloaderAction, FileAction, LyricsAction, PanelType, PlayerAction,
+    ProcessorType, SettingsAction, UIAction, UserAction,
 };
-use crate::app_definition::UniLyricApp;
+use crate::app_definition::{AppView, DownloaderState, PreviewState, SearchState, UniLyricApp};
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
 use crate::app_settings::AppAmllMirror;
@@ -277,6 +277,9 @@ impl UniLyricApp {
             UserAction::AmllConnector(connector_action) => {
                 self.handle_amll_connector_action(connector_action)
             }
+            UserAction::Downloader(downloader_action) => {
+                self.handle_downloader_action(*downloader_action)
+            }
         }
     }
 
@@ -472,146 +475,6 @@ impl UniLyricApp {
                 self.clear_lyrics_state_for_new_song_internal();
                 ActionResult::Success
             }
-            LyricsAction::Search => {
-                if self.lyrics.search_in_progress {
-                    return ActionResult::Warning("搜索正在进行中".to_string());
-                }
-
-                match self.lyrics_helper_state.provider_state {
-                    ProviderState::Ready => {}
-                    ProviderState::Loading => {
-                        return ActionResult::Warning("功能正在加载，请稍候...".to_string());
-                    }
-                    _ => {
-                        return ActionResult::Error(AppError::Custom(
-                            "在线搜索功能不可用或加载失败。".to_string(),
-                        ));
-                    }
-                }
-
-                let helper = Arc::clone(&self.lyrics_helper_state.helper);
-
-                self.lyrics.search_in_progress = true;
-                self.lyrics.search_results.clear(); // 清除旧结果
-
-                let (tx, rx) = std::sync::mpsc::channel();
-                self.lyrics.search_result_rx = Some(rx);
-
-                let query = self.lyrics.search_query.clone();
-
-                self.tokio_runtime.spawn(async move {
-                    let track_to_search = Track {
-                        title: Some(&query),
-                        artists: None, // 简化
-                        album: None,
-                        duration: None,
-                    };
-
-                    let helper_clone = Arc::clone(&helper);
-
-                    let result = {
-                        let helper_guard = helper_clone.lock().await;
-                        helper_guard.search_track(&track_to_search).await
-                    };
-                    if tx.send(result).is_err() {
-                        warn!("[Search Task] 发送搜索结果失败，UI可能已关闭。");
-                    }
-                });
-                ActionResult::Success
-            }
-            LyricsAction::SearchCompleted(result) => {
-                self.lyrics.search_in_progress = false;
-                match result {
-                    Ok(results) => {
-                        info!("[Search] 搜索成功，找到 {} 条结果。", results.len());
-                        self.lyrics.search_results = results;
-                        ActionResult::Success
-                    }
-                    Err(e) => {
-                        error!("[Search] 搜索任务失败: {e}");
-                        ActionResult::Error(AppError::Custom(format!("搜索失败: {e}")))
-                    }
-                }
-            }
-            LyricsAction::Download(search_result) => {
-                if self.lyrics.download_in_progress {
-                    return ActionResult::Warning("下载正在进行中".to_string());
-                }
-
-                match self.lyrics_helper_state.provider_state {
-                    ProviderState::Ready => {}
-                    ProviderState::Loading => {
-                        return ActionResult::Warning("正在加载，请稍候...".to_string());
-                    }
-                    _ => {
-                        return ActionResult::Error(AppError::Custom(
-                            "下载功能不可用或加载失败。".to_string(),
-                        ));
-                    }
-                }
-
-                let helper = Arc::clone(&self.lyrics_helper_state.helper);
-
-                self.lyrics.download_in_progress = true;
-
-                let (tx, rx) = std::sync::mpsc::channel();
-                self.lyrics.download_result_rx = Some(rx);
-
-                let provider_name = search_result.provider_name.clone();
-                let provider_id = search_result.provider_id.clone();
-
-                self.tokio_runtime.spawn(async move {
-                    let helper_clone = Arc::clone(&helper);
-
-                    let result = {
-                        let future_result = {
-                            let helper_guard = helper_clone.lock().await;
-                            helper_guard.get_full_lyrics(&provider_name, &provider_id)
-                        };
-
-                        match future_result {
-                            Ok(future) => future.await,
-                            Err(e) => Err(e),
-                        }
-                    };
-
-                    if tx.send(result).is_err() {
-                        warn!("[Download Task] 发送下载结果失败，UI可能已关闭。");
-                    }
-                });
-                ActionResult::Success
-            }
-            LyricsAction::DownloadCompleted(result) => {
-                self.lyrics.download_in_progress = false;
-                match result {
-                    Ok(full_lyrics_result) => {
-                        let source_name = full_lyrics_result.parsed.source_name.clone();
-                        info!("[Download] 从 {source_name} 下载歌词成功，将立即加载。");
-
-                        self.ui.show_search_window = false;
-
-                        info!("[ProcessFetched] 开始处理已下载的歌词结果。");
-
-                        self.clear_lyrics_state_for_new_song_internal();
-
-                        let parsed_data = full_lyrics_result.parsed;
-                        let raw_data = full_lyrics_result.raw;
-
-                        self.lyrics.input_text = raw_data.content;
-                        self.lyrics.source_format = parsed_data.source_format;
-                        self.fetcher.last_source_format = Some(parsed_data.source_format);
-                        self.lyrics.metadata_source_is_download = true;
-
-                        self.trigger_convert();
-
-                        ActionResult::Success
-                    }
-                    Err(e) => {
-                        error!("[Download] 下载任务失败: {e}");
-                        ActionResult::Error(AppError::Custom(format!("下载失败: {e}")))
-                    }
-                }
-            }
             LyricsAction::AddMetadata => {
                 let new_entry_id_num = self.lyrics.metadata_manager.ui_entries.len() as u32
                     + rand::rng().random::<u32>();
@@ -738,13 +601,14 @@ impl UniLyricApp {
 
                 self.fetcher.current_ui_populated = true;
 
-                let parsed_data = &lyrics_and_metadata.lyrics.parsed;
+                let parsed_data = lyrics_and_metadata.lyrics.parsed;
                 let raw_data = lyrics_and_metadata.lyrics.raw;
 
                 self.lyrics.source_format = parsed_data.source_format;
                 self.fetcher.last_source_format = Some(parsed_data.source_format);
                 self.lyrics.input_text = raw_data.content;
 
+                self.lyrics.parsed_lyric_data = Some(parsed_data);
                 self.trigger_convert();
 
                 ActionResult::Success
@@ -784,6 +648,141 @@ impl UniLyricApp {
                     }
                 }
                 self.dispatch_regeneration_task();
+                ActionResult::Success
+            }
+        }
+    }
+
+    fn handle_downloader_action(&mut self, action: DownloaderAction) -> ActionResult {
+        match action {
+            DownloaderAction::SetTitle(title) => {
+                self.downloader.title_input = title;
+                ActionResult::Success
+            }
+            DownloaderAction::SetArtist(artist) => {
+                self.downloader.artist_input = artist;
+                ActionResult::Success
+            }
+            DownloaderAction::FillFromSmtc => {
+                let smtc_info = &self.player.current_now_playing;
+                if smtc_info.title.is_none() {
+                    return ActionResult::Warning("无 SMTC 信息可供填充".to_string());
+                }
+
+                self.downloader.title_input = smtc_info.title.clone().unwrap_or_default();
+                self.downloader.artist_input = smtc_info.artist.clone().unwrap_or_default();
+                self.downloader.album_input = smtc_info.album_title.clone().unwrap_or_default();
+                self.downloader.duration_ms_input = smtc_info.duration_ms.unwrap_or_default();
+
+                ActionResult::Success
+            }
+            DownloaderAction::PerformSearch => {
+                if self.downloader.title_input.trim().is_empty() {
+                    return ActionResult::Warning("歌曲名不能为空".to_string());
+                }
+                self.downloader.search_state = SearchState::Searching;
+                self.downloader.preview_state = PreviewState::Idle;
+                self.downloader.selected_result_for_preview = None;
+                self.downloader.selected_full_lyrics = None;
+
+                let helper = self.lyrics_helper_state.helper.clone();
+                let title = self.downloader.title_input.clone();
+                let artist = self.downloader.artist_input.clone();
+                let album = self.downloader.album_input.clone();
+                let duration = self.downloader.duration_ms_input;
+                let action_tx = self.action_tx.clone();
+
+                self.tokio_runtime.spawn(async move {
+                    let artists_vec: Vec<&str> = if artist.is_empty() {
+                        vec![]
+                    } else {
+                        artist.split(&['/', ',', ';']).map(|s| s.trim()).collect()
+                    };
+
+                    let track_to_search = Track {
+                        title: Some(&title),
+                        artists: if artists_vec.is_empty() {
+                            None
+                        } else {
+                            Some(&artists_vec)
+                        },
+                        album: if album.is_empty() { None } else { Some(&album) },
+                        duration: if duration == 0 { None } else { Some(duration) },
+                    };
+
+                    let result = helper.lock().await.search_track(&track_to_search).await;
+
+                    let _ = action_tx.send(UserAction::Downloader(Box::new(
+                        DownloaderAction::SearchCompleted(result.map_err(AppError::from)),
+                    )));
+                });
+
+                ActionResult::Success
+            }
+            DownloaderAction::SearchCompleted(result) => {
+                self.downloader.search_state = match result {
+                    Ok(results) => SearchState::Success(results),
+                    Err(e) => SearchState::Error(e.to_string()),
+                };
+                ActionResult::Success
+            }
+            DownloaderAction::SelectResultForPreview(search_result) => {
+                self.downloader.selected_result_for_preview = Some(search_result.clone());
+                self.downloader.preview_state = PreviewState::Loading;
+                self.downloader.selected_full_lyrics = None;
+
+                let helper = self.lyrics_helper_state.helper.clone();
+                let action_tx = self.action_tx.clone();
+
+                self.tokio_runtime.spawn(async move {
+                    let result = {
+                        let future_result = {
+                            helper.lock().await.get_full_lyrics(
+                                &search_result.provider_name,
+                                &search_result.provider_id,
+                            )
+                        };
+                        match future_result {
+                            Ok(future) => future.await,
+                            Err(e) => Err(e),
+                        }
+                    };
+                    let _ = action_tx.send(UserAction::Downloader(Box::new(
+                        DownloaderAction::PreviewDownloadCompleted(result.map_err(AppError::from)),
+                    )));
+                });
+
+                ActionResult::Success
+            }
+            DownloaderAction::PreviewDownloadCompleted(result) => {
+                match result {
+                    Ok(full_lyrics) => {
+                        let main_text = self.generate_lrc_from_main_track(&full_lyrics.parsed);
+
+                        self.downloader.preview_state =
+                            PreviewState::Success(main_text.to_string());
+                        self.downloader.selected_full_lyrics = Some(full_lyrics);
+                    }
+                    Err(e) => {
+                        self.downloader.preview_state = PreviewState::Error(e.to_string());
+                    }
+                }
+                ActionResult::Success
+            }
+            DownloaderAction::ApplyAndClose => {
+                if let Some(lyrics_to_apply) = self.downloader.selected_full_lyrics.clone() {
+                    self.send_action(UserAction::Lyrics(Box::new(
+                        LyricsAction::LoadFetchedResult(lyrics_to_apply),
+                    )));
+                    self.send_action(UserAction::Downloader(Box::new(DownloaderAction::Close)));
+                } else {
+                    return ActionResult::Warning("没有可应用的歌词".to_string());
+                }
+                ActionResult::Success
+            }
+            DownloaderAction::Close => {
+                self.ui.current_view = AppView::Editor;
+                self.downloader = DownloaderState::default();
                 ActionResult::Success
             }
         }
@@ -838,7 +837,6 @@ impl UniLyricApp {
                     PanelType::Romanization => &mut self.ui.show_romanization_lrc_panel,
                     PanelType::Settings => &mut self.ui.show_settings_window,
                     PanelType::Metadata => &mut self.ui.show_metadata_panel,
-                    PanelType::Search => &mut self.ui.show_search_window,
                     PanelType::AmllConnector => &mut self.ui.show_amll_connector_sidebar,
                 };
 
@@ -849,6 +847,10 @@ impl UniLyricApp {
                     self.ui.new_trigger_log_exists = false;
                 }
 
+                ActionResult::Success
+            }
+            UIAction::SetView(view) => {
+                self.ui.current_view = view;
                 ActionResult::Success
             }
             UIAction::ShowPanel(panel) => {
@@ -862,7 +864,6 @@ impl UniLyricApp {
                         self.ui.show_settings_window = true;
                     }
                     PanelType::Metadata => self.ui.show_metadata_panel = true,
-                    PanelType::Search => self.ui.show_search_window = true,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = true,
                 }
                 ActionResult::Success
@@ -878,7 +879,6 @@ impl UniLyricApp {
                     PanelType::Romanization => self.ui.show_romanization_lrc_panel = false,
                     PanelType::Settings => self.ui.show_settings_window = false,
                     PanelType::Metadata => self.ui.show_metadata_panel = false,
-                    PanelType::Search => self.ui.show_search_window = false,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = false,
                 }
                 ActionResult::Success
@@ -1291,6 +1291,32 @@ impl UniLyricApp {
 
                         let _ = writeln!(&mut lrc_output, "{}{}", timestamp, text);
                     }
+                }
+            }
+        }
+        lrc_output
+    }
+
+    pub(super) fn generate_lrc_from_main_track(
+        &self,
+        parsed_data: &lyrics_helper_core::ParsedSourceData,
+    ) -> String {
+        let mut lrc_output = String::new();
+
+        for line in &parsed_data.lines {
+            if let Some(main_track) = line
+                .tracks
+                .iter()
+                .find(|t| t.content_type == ContentType::Main)
+            {
+                let text: String = main_track.content.text();
+                if !text.is_empty() {
+                    let minutes = line.start_ms / 60000;
+                    let seconds = (line.start_ms % 60000) / 1000;
+                    let millis = (line.start_ms % 1000) / 10;
+                    let timestamp = format!("[{:02}:{:02}.{:02}]", minutes, seconds, millis);
+
+                    let _ = writeln!(&mut lrc_output, "{}{}", timestamp, text);
                 }
             }
         }

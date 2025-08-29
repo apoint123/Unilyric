@@ -92,6 +92,8 @@ pub struct AppSettings {
     pub amll_mirror: AppAmllMirror,
     pub auto_cache: bool,
     pub auto_cache_max_count: usize,
+    pub calibrate_timeline_on_song_change: bool,
+    pub flicker_play_pause_on_song_change: bool,
 }
 
 impl Default for AppSettings {
@@ -143,6 +145,8 @@ impl Default for AppSettings {
             amll_mirror: AppAmllMirror::default(),
             auto_cache: false,
             auto_cache_max_count: 500,
+            calibrate_timeline_on_song_change: false,
+            flicker_play_pause_on_song_change: false,
         }
     }
 }

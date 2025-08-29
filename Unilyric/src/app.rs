@@ -9,8 +9,6 @@ impl eframe::App for UniLyricApp {
         // ctx.set_debug_on_hover(true);
 
         app_update::handle_conversion_results(self);
-        app_update::handle_search_results(self);
-        app_update::handle_download_results(self);
 
         app_update::handle_provider_load_results(self);
 
@@ -43,7 +41,6 @@ impl eframe::App for UniLyricApp {
         app_update::draw_ui_elements(self, ctx);
         app_update::handle_file_drops(self, ctx);
 
-        self.draw_search_lyrics_window(ctx);
         self.ui.toasts.show(ctx);
 
         while let Ok(action) = self.action_rx.try_recv() {

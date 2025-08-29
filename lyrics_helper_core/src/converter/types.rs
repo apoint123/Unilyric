@@ -570,8 +570,6 @@ pub struct ParsedSourceData {
     pub is_line_timed_source: bool,
     /// 解析过程中产生的警告信息列表。
     pub warnings: Vec<String>,
-    /// 如果源文件是内嵌TTML的JSON，此字段存储原始的TTML字符串内容。
-    pub raw_ttml_from_input: Option<String>,
     /// 指示输入的TTML（来自`raw_ttml_from_input`）是否被格式化。
     /// 这影响空格和换行的处理。
     pub detected_formatted_ttml_input: Option<bool>,

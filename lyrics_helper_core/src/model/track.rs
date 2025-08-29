@@ -42,7 +42,7 @@ pub struct Track<'a> {
 /// 代表一个标准化的搜索结果条目。
 ///
 /// 这是所有 Provider 的 `search_songs` 方法需要返回的类型。
-#[derive(Debug, Deserialize, Clone, Default, Serialize)]
+#[derive(Debug, Deserialize, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct SearchResult {
     /// 搜索结果的歌曲标题。
     pub title: String,

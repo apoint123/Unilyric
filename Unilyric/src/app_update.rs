@@ -5,7 +5,7 @@ use crate::amll_connector::ConnectorUpdate;
 use crate::amll_connector::protocol::ClientMessage;
 use crate::amll_connector::protocol_strings::NullString;
 use crate::app_actions::{PlayerAction, UIAction, UserAction};
-use crate::app_definition::UniLyricApp;
+use crate::app_definition::{AppView, UniLyricApp};
 use crate::error::AppError;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel, ProviderState};
 use egui_toast::{Toast, ToastKind, ToastOptions};
@@ -69,6 +69,34 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                         || app.player.current_now_playing.artist != new_info.artist;
 
                     if is_new_song {
+                        {
+                            let settings = app.app_settings.lock().unwrap();
+                            if settings.calibrate_timeline_on_song_change
+                                && let Some(tx) = &app.amll_connector.command_tx
+                                && tx
+                                    .try_send(crate::amll_connector::ConnectorCommand::SetProgress(
+                                        0,
+                                    ))
+                                    .is_err()
+                            {
+                                warn!("[TimelineCalibrate] 发送时间轴校准命令失败。");
+                            }
+
+                            if app.player.is_first_song_processed {
+                                if settings.flicker_play_pause_on_song_change
+                                    && let Some(tx) = &app.amll_connector.command_tx
+                                    && tx
+                                            .try_send(
+                                                crate::amll_connector::ConnectorCommand::FlickerPlayPause,
+                                            )
+                                            .is_err()
+                                        {
+                                            warn!("[TimelineCalibrate] 发送暂停/播放命令失败。");
+                                        }
+                            } else {
+                                app.player.is_first_song_processed = true;
+                            }
+                        }
                         app.player.current_now_playing = new_info.clone();
                         crate::app_fetch_core::clear_last_fetch_results(app);
                         app.auto_fetch_trigger_time =
@@ -121,7 +149,6 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                 MediaUpdate::Error(e) => {
                     tracing::error!("[SMTC Update] smtc-suite 报告了一个错误: {e}");
                 }
-                MediaUpdate::TrackChangedForced(_now_playing_info) => {}
                 MediaUpdate::AudioData(_items) => {}
                 MediaUpdate::Diagnostic(_diagnostic_info) => {}
                 MediaUpdate::VolumeChanged {
@@ -372,6 +399,21 @@ pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
     });
     app.draw_log_panel(ctx);
 
+    match app.ui.current_view {
+        AppView::Editor => {
+            draw_editor_view(app, ctx);
+        }
+        AppView::Downloader => {
+            app.draw_downloader_view(ctx);
+        }
+    }
+
+    if app.ui.show_settings_window {
+        app.draw_settings_window(ctx);
+    }
+}
+
+fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
     let available_width = ctx.screen_rect().width();
     let input_panel_width = (available_width * 0.25).clamp(200.0, 400.0);
 
@@ -446,10 +488,6 @@ pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
             app.ui.show_metadata_panel = false;
         }
     }
-
-    if app.ui.show_settings_window {
-        app.draw_settings_window(ctx);
-    }
 }
 
 pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
@@ -511,31 +549,6 @@ pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
         let converted_result = result.map_err(AppError::from);
         app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
             crate::app_actions::LyricsAction::ConvertCompleted(converted_result),
-        )));
-    }
-}
-
-/// 处理来自异步歌词搜索任务的结果。
-pub(super) fn handle_search_results(app: &mut UniLyricApp) {
-    if let Some(rx) = app.lyrics.search_result_rx.take() {
-        while let Ok(result) = rx.try_recv() {
-            let converted_result = result.map_err(AppError::from);
-            app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-                crate::app_actions::LyricsAction::SearchCompleted(converted_result),
-            )));
-        }
-    }
-}
-/// 处理来自异步歌词下载任务的结果。
-pub(super) fn handle_download_results(app: &mut UniLyricApp) {
-    if let Some(rx) = &app.lyrics.download_result_rx
-        && let Ok(result) = rx.try_recv()
-    {
-        app.lyrics.download_result_rx = None;
-
-        let converted_result = result.map_err(AppError::from);
-        app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
-            crate::app_actions::LyricsAction::DownloadCompleted(converted_result),
         )));
     }
 }

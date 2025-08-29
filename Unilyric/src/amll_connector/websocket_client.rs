@@ -12,7 +12,7 @@ use tracing::warn;
 
 use super::protocol::{ClientMessage, ServerMessage};
 use super::types::WebsocketStatus;
-/// 连接生命周期结束的原因枚举
+/// 连接结束的原因枚举
 #[derive(Debug, Clone)]
 enum LifecycleEndReason {
     PongTimeout,                    // Pong 响应超时
@@ -272,7 +272,7 @@ async fn handle_ws_message(
     Ok(())
 }
 
-/// 管理一个已建立的 WebSocket 连接的整个生命周期
+/// 管理一个已建立的 WebSocket 连接
 async fn handle_connection(
     ws_stream: ActualWebSocketStream,
     outgoing_rx: &mut TokioReceiver<ClientMessage>,
@@ -375,7 +375,7 @@ pub async fn run_websocket_client(
                 "[WebSocket 客户端] 正在尝试连接... (已连续失败: {consecutive_failures} 次)"
             );
 
-            if status_tx.send(WebsocketStatus::连接中).await.is_err() {
+            if status_tx.send(WebsocketStatus::Connecting).await.is_err() {
                 // 如果发送失败，说明 actor 已关闭，任务无法继续
                 break 'main_loop;
             }
@@ -389,7 +389,7 @@ pub async fn run_websocket_client(
                         response.status()
                     );
                     consecutive_failures = 0;
-                    if status_tx.send(WebsocketStatus::已连接).await.is_err() {
+                    if status_tx.send(WebsocketStatus::Connected).await.is_err() {
                         break 'main_loop;
                     }
 
@@ -409,12 +409,12 @@ pub async fn run_websocket_client(
         match outcome {
             LifecycleEndReason::ShutdownSignalReceived => {
                 tracing::info!("[WebSocket 客户端] 因收到关闭信号而退出。");
-                status_tx.send(WebsocketStatus::断开).await.ok();
+                status_tx.send(WebsocketStatus::Disconnected).await.ok();
                 break 'main_loop;
             }
             LifecycleEndReason::CriticalChannelFailure(reason) => {
                 tracing::error!("[WebSocket 客户端] 发生关键通道错误: {reason}。任务将退出。");
-                status_tx.send(WebsocketStatus::错误(reason)).await.ok();
+                status_tx.send(WebsocketStatus::Error(reason)).await.ok();
                 break 'main_loop;
             }
             reason @ (LifecycleEndReason::InitialConnectFailed(_)
@@ -429,11 +429,9 @@ pub async fn run_websocket_client(
                     _ => "未知错误".to_string(),
                 };
 
-                tracing::warn!(
-                    "[WebSocket 客户端] 连接生命周期因 '{error_message}' 而结束，准备重连..."
-                );
+                tracing::warn!("[WebSocket 客户端] 连接因 '{error_message}' 而结束，准备重连...");
                 status_tx
-                    .send(WebsocketStatus::错误(error_message))
+                    .send(WebsocketStatus::Error(error_message))
                     .await
                     .ok();
                 consecutive_failures += 1;
@@ -442,7 +440,7 @@ pub async fn run_websocket_client(
 
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             let msg = format!("已达最大重连次数 ({MAX_CONSECUTIVE_FAILURES})");
-            status_tx.send(WebsocketStatus::错误(msg)).await.ok();
+            status_tx.send(WebsocketStatus::Error(msg)).await.ok();
 
             tracing::info!("[WebSocket 客户端] 暂停自动重连，等待外部指令。");
             tokio::select! { biased; _ = &mut shutdown_rx => {} }

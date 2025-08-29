@@ -142,7 +142,6 @@ pub fn parse_ttml(
         source_filename: None,
         is_line_timed_source: state.is_line_timing_mode,
         warnings,
-        raw_ttml_from_input: Some(content.to_string()),
         detected_formatted_ttml_input: Some(state.format_detection == FormatDetection::IsFormatted),
         ..Default::default()
     })

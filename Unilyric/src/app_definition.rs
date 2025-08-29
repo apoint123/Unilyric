@@ -29,9 +29,44 @@ use crate::{
     utils,
 };
 
-pub(super) type SearchResultRx = StdReceiver<Result<Vec<SearchResult>, LyricsHelperError>>;
-pub(super) type DownloadResultRx = StdReceiver<Result<FullLyricsResult, LyricsHelperError>>;
 pub(super) type ConversionResultRx = StdReceiver<Result<FullConversionResult, LyricsHelperError>>;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) enum AppView {
+    #[default]
+    Editor,
+    Downloader,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) enum SearchState {
+    #[default]
+    Idle,
+    Searching,
+    Success(Vec<SearchResult>),
+    Error(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) enum PreviewState {
+    #[default]
+    Idle,
+    Loading,
+    Success(String),
+    Error(String),
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct DownloaderState {
+    pub(super) title_input: String,
+    pub(super) artist_input: String,
+    pub(super) album_input: String,
+    pub(super) duration_ms_input: u64,
+    pub(super) search_state: SearchState,
+    pub(super) selected_result_for_preview: Option<SearchResult>,
+    pub(super) preview_state: PreviewState,
+    pub(super) selected_full_lyrics: Option<FullLyricsResult>,
+}
 
 pub(super) struct UiState {
     pub(super) show_bottom_log_panel: bool,
@@ -43,12 +78,12 @@ pub(super) struct UiState {
     pub(super) show_amll_connector_sidebar: bool,
     pub(super) show_metadata_panel: bool,
     pub(super) show_markers_panel: bool,
-    pub(super) show_search_window: bool,
     pub(super) log_display_buffer: Vec<LogEntry>,
     pub(super) temp_edit_settings: AppSettings,
     pub(super) toasts: Toasts,
     pub(super) available_system_fonts: Vec<String>,
     pub(super) current_settings_category: SettingsCategory,
+    pub(super) current_view: AppView,
 }
 
 impl UiState {
@@ -69,10 +104,10 @@ impl UiState {
             show_settings_window: false,
             show_metadata_panel: false,
             show_markers_panel: false,
-            show_search_window: false,
             log_display_buffer: Vec::with_capacity(200),
             available_system_fonts: Vec::new(),
             current_settings_category: SettingsCategory::default(),
+            current_view: AppView::default(),
         }
     }
 }
@@ -95,12 +130,6 @@ pub(super) struct LyricState {
     pub(super) last_saved_file_path: Option<std::path::PathBuf>,
     pub(super) conversion_in_progress: bool,
     pub(super) conversion_result_rx: Option<ConversionResultRx>,
-    pub(super) search_in_progress: bool,
-    pub(super) search_query: String,
-    pub(super) search_results: Vec<SearchResult>,
-    pub(super) search_result_rx: Option<SearchResultRx>,
-    pub(super) download_in_progress: bool,
-    pub(super) download_result_rx: Option<DownloadResultRx>,
 }
 
 pub(super) struct LyricsHelperState {
@@ -142,12 +171,6 @@ impl LyricState {
             last_saved_file_path: None,
             conversion_in_progress: false,
             conversion_result_rx: None,
-            search_in_progress: false,
-            search_query: String::new(),
-            search_results: Vec::new(),
-            search_result_rx: None,
-            download_in_progress: false,
-            download_result_rx: None,
         }
     }
 }
@@ -158,6 +181,7 @@ pub(super) struct PlayerState {
     pub(super) available_sessions: Vec<SmtcSessionInfo>,
     pub(super) smtc_time_offset_ms: i64,
     pub(super) last_requested_session_id: Option<String>,
+    pub(super) is_first_song_processed: bool,
 }
 
 impl PlayerState {
@@ -168,6 +192,7 @@ impl PlayerState {
             available_sessions: Vec::new(),
             smtc_time_offset_ms: 0,
             last_requested_session_id: None,
+            is_first_song_processed: false,
         }
     }
 }
@@ -200,7 +225,7 @@ impl AmllConnectorState {
         Self {
             command_tx: None,
             actor_handle: None,
-            status: Arc::new(StdMutex::new(WebsocketStatus::断开)),
+            status: Arc::new(StdMutex::new(WebsocketStatus::Disconnected)),
             config: Arc::new(StdMutex::new(AMLLConnectorConfig {
                 enabled: false,
                 ..Default::default()
@@ -262,6 +287,7 @@ pub(super) struct UniLyricApp {
     pub(super) fetcher: AutoFetchState,
     pub(super) local_cache: LocalCacheState,
     pub(super) amll_connector: AmllConnectorState,
+    pub(super) downloader: DownloaderState,
 
     // --- 核心依赖与配置 ---
     pub(super) lyrics_helper_state: LyricsHelperState,
@@ -433,6 +459,7 @@ impl UniLyricApp {
             amll_connector: amll_connector_state,
             fetcher: auto_fetch_state,
             local_cache,
+            downloader: DownloaderState::default(),
             lyrics_helper_state,
             app_settings: Arc::new(StdMutex::new(settings)),
             tokio_runtime,

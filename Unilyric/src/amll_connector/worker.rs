@@ -202,7 +202,7 @@ pub async fn amll_connector_actor(
         config: initial_config,
         actor_settings: ActorSettings {},
         websocket_client: None,
-        websocket_status: WebsocketStatus::断开,
+        websocket_status: WebsocketStatus::Disconnected,
         last_track_info: None,
         last_audio_sent_time: None,
     };
@@ -225,7 +225,7 @@ pub async fn amll_connector_actor(
                 tracing::error!("[AMLL Actor] 初始化 WebSocket 客户端失败: {}", e);
 
                 let update = UiUpdate {
-                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
                     repaint_needed: true,
                 };
 
@@ -237,6 +237,23 @@ pub async fn amll_connector_actor(
     tracing::debug!("[AMLL Actor] 已启动并进入主事件循环。");
 
     loop {
+        if let Some(client) = &state.websocket_client
+            && client.client_handle.is_finished()
+        {
+            state.websocket_client = None;
+
+            if state.websocket_status != WebsocketStatus::Disconnected {
+                state.websocket_status = WebsocketStatus::Disconnected;
+                let ui_update = UiUpdate {
+                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
+                    repaint_needed: true,
+                };
+                if update_tx.send(ui_update).is_err() {
+                    tracing::warn!("[AMLL Actor] 清理时发送状态更新失败。");
+                }
+            }
+        }
+
         tokio::select! {
             Some(command) = command_rx.recv() => {
                 if matches!(command, ConnectorCommand::Shutdown) {
@@ -245,18 +262,14 @@ pub async fn amll_connector_actor(
                     }
                     break;
                 }
-                handle_app_command(command, &mut state, &ws_status_tx, &media_cmd_tx, &update_tx).await;
+                handle_app_command(command, &mut state, &ws_status_tx, &media_cmd_tx, &update_tx, &smtc_command_tx).await;
             },
-
             Some(status) = ws_status_rx.recv() => {
-                state.websocket_status = status.clone();
                 handle_websocket_status(status, &update_tx, &smtc_command_tx).await;
             },
-
             Some(media_cmd) = media_cmd_rx.recv() => {
                 handle_player_control_command(media_cmd, &smtc_command_tx).await;
             },
-
             Some(update) = smtc_update_rx.recv() => {
                 handle_smtc_update(update, &mut state, &update_tx);
             },
@@ -266,13 +279,14 @@ pub async fn amll_connector_actor(
 
 fn handle_new_song(new_info: &smtc_suite::NowPlayingInfo, state: &ActorState) {
     tracing::debug!("[AMLL Actor] 检测到新歌曲，重置并发送元数据。");
-    if let (Some(client), WebsocketStatus::已连接) =
+    if let (Some(client), WebsocketStatus::Connected) =
         (&state.websocket_client, &state.websocket_status)
     {
         send_music_info_to_ws(client, new_info);
         if let Some(ref cover_data) = new_info.cover_data {
             send_cover_to_ws(client, cover_data);
         }
+        send_play_state_to_ws(client, new_info);
     }
 }
 
@@ -280,7 +294,7 @@ fn handle_progress_update(new_info: &smtc_suite::NowPlayingInfo, state: &ActorSt
     let mut repaint_needed = false;
     let last_info = state.last_track_info.as_ref();
 
-    if let (Some(client), WebsocketStatus::已连接) =
+    if let (Some(client), WebsocketStatus::Connected) =
         (&state.websocket_client, &state.websocket_status)
     {
         let cover_changed = new_info.cover_data.is_some()
@@ -325,7 +339,7 @@ fn handle_smtc_update(
             return false;
         }
 
-        if let (Some(client), WebsocketStatus::已连接) =
+        if let (Some(client), WebsocketStatus::Connected) =
             (&state.websocket_client, &state.websocket_status)
         {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
@@ -387,6 +401,7 @@ async fn handle_app_command(
     ws_status_tx: &TokioSender<WebsocketStatus>,
     media_cmd_tx: &TokioSender<SmtcControlCommand>,
     update_tx: &StdSender<UiUpdate>,
+    smtc_command_tx: &TokioSender<MediaCommand>,
 ) {
     match command {
         ConnectorCommand::Shutdown => {}
@@ -421,7 +436,9 @@ async fn handle_app_command(
                     Err(e) => {
                         tracing::error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
                         let ui_update = UiUpdate {
-                            payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                            payload: ConnectorUpdate::WebsocketStatusChanged(
+                                WebsocketStatus::Disconnected,
+                            ),
                             repaint_needed: true,
                         };
                         let _ = update_tx.send(ui_update);
@@ -446,10 +463,10 @@ async fn handle_app_command(
             }
 
             state.last_track_info = None;
-            state.websocket_status = WebsocketStatus::断开;
+            state.websocket_status = WebsocketStatus::Disconnected;
 
             let update = UiUpdate {
-                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::断开),
+                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
                 repaint_needed: true,
             };
 
@@ -459,8 +476,36 @@ async fn handle_app_command(
                 );
             }
         }
+        ConnectorCommand::SetProgress(progress) => {
+            if let (Some(client), WebsocketStatus::Connected) =
+                (&state.websocket_client, &state.websocket_status)
+            {
+                let msg = ClientMessage::OnPlayProgress { progress };
+                handle_websocket_send_error(client.outgoing_tx().try_send(msg), "SetProgress");
+            } else {
+                tracing::debug!("[AMLL Actor] WebSocket 客户端未连接，忽略 SetProgress 命令");
+            }
+        }
+        ConnectorCommand::FlickerPlayPause => {
+            handle_smtc_send_error(
+                smtc_command_tx
+                    .send(MediaCommand::Control(SmtcControlCommand::Pause))
+                    .await,
+                "FlickerPause",
+            )
+            .await;
+            // 短暂延迟以确保状态更新
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            handle_smtc_send_error(
+                smtc_command_tx
+                    .send(MediaCommand::Control(SmtcControlCommand::Play))
+                    .await,
+                "FlickerPlay",
+            )
+            .await;
+        }
         ConnectorCommand::SendLyric(parsed_data) => {
-            if let (Some(client), WebsocketStatus::已连接) =
+            if let (Some(client), WebsocketStatus::Connected) =
                 (&state.websocket_client, &state.websocket_status)
             {
                 let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
@@ -473,7 +518,7 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::SendClientMessage(message) => {
-            if let (Some(client), WebsocketStatus::已连接) =
+            if let (Some(client), WebsocketStatus::Connected) =
                 (&state.websocket_client, &state.websocket_status)
             {
                 handle_websocket_send_error(
@@ -485,7 +530,7 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::SendCover(cover_data) => {
-            if let (Some(client), WebsocketStatus::已连接) =
+            if let (Some(client), WebsocketStatus::Connected) =
                 (&state.websocket_client, &state.websocket_status)
             {
                 tracing::info!(
@@ -507,7 +552,7 @@ async fn handle_websocket_status(
 ) {
     tracing::debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
 
-    let enable_high_freq = matches!(status, WebsocketStatus::已连接);
+    let enable_high_freq = matches!(status, WebsocketStatus::Connected);
     let command = MediaCommand::SetHighFrequencyProgressUpdates(enable_high_freq);
     handle_smtc_send_error(smtc_command_tx.send(command).await, "高频更新开关").await;
 
