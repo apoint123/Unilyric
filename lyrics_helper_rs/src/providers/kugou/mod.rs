@@ -1053,7 +1053,7 @@ mod tests {
         KugouMusic::from_dfid(dfid.to_string(), http_client)
     }
 
-    const TEST_SONG_NAME: &str = "这人生所有的美好";
+    const TEST_SONG_NAME: &str = "目及皆是你";
     const TEST_SINGER_NAME: &str = "小蓝背心";
 
     async fn get_provider() -> &'static KugouMusic {
@@ -1089,8 +1089,8 @@ mod tests {
         let search_track = Track {
             title: Some(TEST_SONG_NAME),
             artists: Some(&[TEST_SINGER_NAME]),
-            album: None,
-            duration: None,
+            album: Some(TEST_SONG_NAME),
+            duration: Some(231_000),
         };
         let search_results = provider.search_songs(&search_track).await.unwrap();
         assert!(!search_results.is_empty(), "搜索应返回结果。");
@@ -1125,6 +1125,29 @@ mod tests {
         );
 
         info!("✅ test_full_flow_kugou 测试通过！");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_integration_get_full_lyrics() {
+        init_tracing();
+        let provider = get_test_provider().await;
+
+        let song_hash = "FDCE75F4195C7650681D5BE6ADF5973F";
+
+        info!("[INFO] 正在获取 Hash: {} 的歌词...", song_hash);
+        let lyrics_result = provider.get_full_lyrics(song_hash).await;
+
+        assert!(
+            lyrics_result.is_ok(),
+            "获取歌词应该成功，但返回了错误: {:?}",
+            lyrics_result.err()
+        );
+
+        let lyrics = lyrics_result.unwrap();
+        assert!(!lyrics.parsed.lines.is_empty(), "解析后的歌词行不应为空。");
+
+        info!("✅ test_integration_get_full_lyrics 测试通过！");
     }
 
     #[tokio::test]

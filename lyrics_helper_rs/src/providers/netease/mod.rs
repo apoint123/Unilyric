@@ -96,6 +96,13 @@ pub struct NeteaseClient {
 }
 
 impl NeteaseClient {
+    /// 设置客户端的 Cookie。
+    #[must_use]
+    pub fn with_cookie(mut self, cookie: String) -> Self {
+        self.cookie = Some(cookie);
+        self
+    }
+
     /// 辅助函数，用于发送加密的 WEAPI 请求。
     async fn post_weapi<T: Serialize, R: serde::de::DeserializeOwned>(
         &self,

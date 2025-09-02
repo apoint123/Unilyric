@@ -9,20 +9,46 @@
 //!
 //! - Brad Conte 的原始 DES 实现。
 //! - `LyricDecoder` 项目针对 QQ 音乐的改编。
-//!
-//! - Copyright (c) `SuJiKiNen` (`LyricDecoder` Project)
-//! - Licensed under the MIT License.
+//! - `qmc-decode` 项目的 QMC 解密实现。
 //!
 //! <https://github.com/SuJiKiNen/LyricDecoder>
+//! <https://github.com/jixunmoe/qmc-decode>
 
 use crate::error::Result;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// 对加密文本执行解密操作。
+/// 对HEX编码的加密文本执行解密操作。
+///
+/// 用于解密 API 返回的歌词字符串。
 pub fn decrypt_qrc(encrypted_text: &str) -> Result<String> {
-    let decrypted_string = qrc_logic::decrypt_lyrics(encrypted_text)?;
-    Ok(decrypted_string)
+    let encrypted_bytes = hex::decode(encrypted_text).map_err(|e| {
+        crate::error::LyricsHelperError::Decryption(format!("无效的十六进制字符串: {e}"))
+    })?;
+
+    qrc_logic::decrypt_lyrics_from_bytes(&encrypted_bytes)
+}
+
+/// 从字节切片解密 QQ 音乐的本地 QRC 格式歌词。
+///
+/// 用于解密 QQ 音乐保存在本地的 QRC 歌词。
+///
+/// # 参数
+/// * `encrypted_bytes` - 加密的本地 QRC 二进制数据。
+pub fn decrypt_qrc_local(encrypted_bytes: &[u8]) -> Result<String> {
+    // 复制数据以便进行原地 qmc1 解密
+    let mut data = encrypted_bytes.to_vec();
+    qrc_logic::qmc1_decrypt(&mut data);
+
+    // 移除 Magic Header
+    if data.len() < 11 {
+        return Err(crate::error::LyricsHelperError::Decryption(
+            "QMC 解密后数据过短，无法移除文件头".into(),
+        ));
+    }
+    let des_data = &data[11..];
+
+    qrc_logic::decrypt_lyrics_from_bytes(des_data)
 }
 
 /// 对明文歌词执行加密操作。
@@ -40,7 +66,7 @@ mod qrc_logic {
     use flate2::Compression;
     use flate2::read::ZlibDecoder;
     use flate2::write::ZlibEncoder;
-    use hex::{decode, encode};
+    use hex::encode;
     use std::io::{Read, Write};
     use std::sync::LazyLock;
 
@@ -106,11 +132,8 @@ mod qrc_logic {
     }
 
     /// 解密 QQ 音乐歌词的主函数
-    pub(super) fn decrypt_lyrics(encrypted_hex_str: &str) -> Result<String> {
-        let encrypted_bytes = decode(encrypted_hex_str)
-            .map_err(|e| LyricsHelperError::Decryption(format!("无效的十六进制字符串: {e}")))?;
-
-        if encrypted_bytes.len() % DES_BLOCK_SIZE != 0 {
+    pub(super) fn decrypt_lyrics_from_bytes(encrypted_bytes: &[u8]) -> Result<String> {
+        if !encrypted_bytes.len().is_multiple_of(DES_BLOCK_SIZE) {
             return Err(LyricsHelperError::Decryption(format!(
                 "加密数据长度不是{DES_BLOCK_SIZE}的倍数",
             )));
@@ -225,19 +248,19 @@ mod qrc_logic {
     }
 
     /// 将所有非标准的DES实现细节移动到一个子模块中，以作清晰隔离。
-    pub(crate) mod custom_des {
+    mod custom_des {
         use std::sync::LazyLock;
 
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub(crate) enum Mode {
+        pub(super) enum Mode {
             Encrypt,
             Decrypt,
         }
 
         // 解密使用的3个8字节的DES密钥
-        pub(crate) const KEY_1: &[u8; 8] = b"!@#)(*$%";
-        pub(crate) const KEY_2: &[u8; 8] = b"123ZXC!@";
-        pub(crate) const KEY_3: &[u8; 8] = b"!@#)(NHL";
+        pub(super) const KEY_1: &[u8; 8] = b"!@#)(*$%";
+        pub(super) const KEY_2: &[u8; 8] = b"123ZXC!@";
+        pub(super) const KEY_3: &[u8; 8] = b"!@#)(NHL";
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -442,7 +465,7 @@ mod qrc_logic {
         /// * `schedule` - 一个可变的二维向量，用于存储生成的16个轮密钥，每个轮密钥是6字节（48位）。
         /// * `mode` - 加密 (`Encrypt`) 或解密 (`Decrypt`) 模式。解密时轮密钥的使用顺序相反。
         #[allow(clippy::cast_possible_truncation)]
-        pub(crate) fn key_schedule(key: &[u8], schedule: &mut [[u8; 6]; 16], mode: Mode) {
+        pub(super) fn key_schedule(key: &[u8], schedule: &mut [[u8; 6]; 16], mode: Mode) {
             // 这几个表是标准的
 
             // 每轮循环左移的位数表
@@ -715,6 +738,104 @@ mod qrc_logic {
             // 逆初始置换
             inverse_permutation(state, output);
         }
+
+        #[cfg(test)]
+        mod tests {
+            use super::*;
+
+            #[test]
+            #[ignore]
+            fn capture_key_schedule() {
+                let key = KEY_1;
+                let mut schedule = [[0u8; 6]; 16];
+
+                key_schedule(key, &mut schedule, Mode::Encrypt);
+
+                for (i, round_key) in schedule.iter().enumerate() {
+                    print!("[");
+                    for (j, byte) in round_key.iter().enumerate() {
+                        print!("0x{byte:02X}");
+                        if j < 5 {
+                            print!(", ");
+                        }
+                    }
+                    println!("], // Round {}", i + 1);
+                }
+            }
+
+            #[test]
+            fn verify_key_schedule() {
+                // 上面测试生成的密钥调度结果
+                const ENCRYPT_SCHEDULE: [[u8; 6]; 16] = [
+                    [0x40, 0x0C, 0x26, 0x10, 0x28, 0x08], // Round 1
+                    [0x40, 0xA6, 0x20, 0x14, 0x04, 0x15], // Round 2
+                    [0xC0, 0x94, 0x26, 0x8B, 0x00, 0xC0], // Round 3
+                    [0xE0, 0x82, 0x42, 0x00, 0xE2, 0x01], // Round 4
+                    [0x20, 0xD2, 0x22, 0x32, 0x04, 0x04], // Round 5
+                    [0xA0, 0x11, 0x52, 0xC8, 0x00, 0x82], // Round 6
+                    [0x24, 0x42, 0x51, 0x04, 0x62, 0x09], // Round 7
+                    [0x07, 0x51, 0x10, 0x72, 0x10, 0x40], // Round 8
+                    [0x06, 0x41, 0x49, 0x4A, 0x80, 0x16], // Round 9
+                    [0x0B, 0x41, 0x11, 0x05, 0x44, 0x88], // Round 10
+                    [0x0D, 0x09, 0x89, 0x08, 0x10, 0x41], // Round 11
+                    [0x13, 0x20, 0x89, 0xC2, 0xC0, 0x24], // Round 12
+                    [0x19, 0x0C, 0x80, 0x00, 0x0E, 0x88], // Round 13
+                    [0x50, 0x28, 0x8C, 0x98, 0x10, 0x11], // Round 14
+                    [0x10, 0xA4, 0x04, 0x43, 0x42, 0x20], // Round 15
+                    [0xD0, 0x2C, 0x04, 0x00, 0xCA, 0x82], // Round 16
+                ];
+
+                let key = KEY_1;
+                let mut schedule = [[0u8; 6]; 16];
+
+                key_schedule(key, &mut schedule, Mode::Encrypt);
+
+                for i in 0..16 {
+                    assert_eq!(
+                        schedule[i],
+                        ENCRYPT_SCHEDULE[i],
+                        "轮密钥在第 {} 轮不匹配！",
+                        i + 1
+                    );
+                }
+
+                println!("✅ key_schedule 验证成功！");
+            }
+        }
+    }
+
+    #[rustfmt::skip]
+    const PRIVKEY: [u8; 128] = [
+        0xc3, 0x4a, 0xd6, 0xca, 0x90, 0x67, 0xf7, 0x52, 0xd8, 0xa1, 0x66, 0x62, 0x9f, 0x5b, 0x09, 0x00,
+        0xc3, 0x5e, 0x95, 0x23, 0x9f, 0x13, 0x11, 0x7e, 0xd8, 0x92, 0x3f, 0xbc, 0x90, 0xbb, 0x74, 0x0e,
+        0xc3, 0x47, 0x74, 0x3d, 0x90, 0xaa, 0x3f, 0x51, 0xd8, 0xf4, 0x11, 0x84, 0x9f, 0xde, 0x95, 0x1d,
+        0xc3, 0xc6, 0x09, 0xd5, 0x9f, 0xfa, 0x66, 0xf9, 0xd8, 0xf0, 0xf7, 0xa0, 0x90, 0xa1, 0xd6, 0xf3,
+        0xc3, 0xf3, 0xd6, 0xa1, 0x90, 0xa0, 0xf7, 0xf0, 0xd8, 0xf9, 0x66, 0xfa, 0x9f, 0xd5, 0x09, 0xc6,
+        0xc3, 0x1d, 0x95, 0xde, 0x9f, 0x84, 0x11, 0xf4, 0xd8, 0x51, 0x3f, 0xaa, 0x90, 0x3d, 0x74, 0x47,
+        0xc3, 0x0e, 0x74, 0xbb, 0x90, 0xbc, 0x3f, 0x92, 0xd8, 0x7e, 0x11, 0x13, 0x9f, 0x23, 0x95, 0x5e,
+        0xc3, 0x00, 0x09, 0x5b, 0x9f, 0x62, 0x66, 0xa1, 0xd8, 0x52, 0xf7, 0x67, 0x90, 0xca, 0xd6, 0x4a,
+    ];
+
+    pub(super) fn qmc1_decrypt(data: &mut [u8]) {
+        const THRESHOLD: usize = 0x7FFF + 1;
+
+        if data.len() < THRESHOLD {
+            for (i, byte) in data.iter_mut().enumerate() {
+                *byte ^= PRIVKEY[i & 0x7F];
+            }
+            return;
+        }
+
+        let (first_chunk, second_chunk) = data.split_at_mut(THRESHOLD);
+
+        for (i, byte) in first_chunk.iter_mut().enumerate() {
+            *byte ^= PRIVKEY[i & 0x7F];
+        }
+
+        for (i, byte) in second_chunk.iter_mut().enumerate() {
+            let original_index = THRESHOLD + i;
+            *byte ^= PRIVKEY[(original_index % 0x7FFF) & 0x7F];
+        }
     }
 }
 
@@ -726,6 +847,8 @@ mod tests {
 
     const ENCRYPTED_HEX_STRING: &str =
         include_str!("../../../tests/test_data/encrypted_lyrics.hex");
+
+    const ENCRYPTED_BINARY: &[u8] = include_bytes!("../../../tests/test_data/encrypted_lyrics.bin");
 
     #[test]
     fn test_full_decryption_flow() {
@@ -746,6 +869,23 @@ mod tests {
     }
 
     #[test]
+    fn test_decrypt_from_binary_file() {
+        let result = decrypt_qrc_local(ENCRYPTED_BINARY);
+
+        assert!(
+            result.is_ok(),
+            "从二进制 QRC 文件解密失败: {:?}",
+            result.err()
+        );
+
+        let decrypted_content = result.unwrap();
+        assert!(!decrypted_content.is_empty(), "解密后的内容不应为空");
+
+        println!("\n✅ 从二进制 QRC 文件解密成功:");
+        println!("{decrypted_content}");
+    }
+
+    #[test]
     fn test_round_trip() {
         let initial_plaintext = decrypt_qrc(ENCRYPTED_HEX_STRING).expect("初始加密失败");
 
@@ -760,72 +900,5 @@ mod tests {
         assert_eq!(initial_plaintext, final_plaintext, "初始文本不等于最终文本");
 
         println!("\n✅ 测试成功！初始明文与最终明文完全一致。");
-    }
-
-    #[test]
-    #[ignore]
-    fn capture_key_schedule() {
-        let key = qrc_logic::custom_des::KEY_1;
-        let mut schedule = [[0u8; 6]; 16];
-
-        qrc_logic::custom_des::key_schedule(
-            key,
-            &mut schedule,
-            qrc_logic::custom_des::Mode::Encrypt,
-        );
-
-        for (i, round_key) in schedule.iter().enumerate() {
-            print!("[");
-            for (j, byte) in round_key.iter().enumerate() {
-                print!("0x{byte:02X}");
-                if j < 5 {
-                    print!(", ");
-                }
-            }
-            println!("], // Round {}", i + 1);
-        }
-    }
-
-    #[test]
-    fn verify_key_schedule() {
-        // 上面测试生成的密钥调度结果
-        const ENCRYPT_SCHEDULE: [[u8; 6]; 16] = [
-            [0x40, 0x0C, 0x26, 0x10, 0x28, 0x08], // Round 1
-            [0x40, 0xA6, 0x20, 0x14, 0x04, 0x15], // Round 2
-            [0xC0, 0x94, 0x26, 0x8B, 0x00, 0xC0], // Round 3
-            [0xE0, 0x82, 0x42, 0x00, 0xE2, 0x01], // Round 4
-            [0x20, 0xD2, 0x22, 0x32, 0x04, 0x04], // Round 5
-            [0xA0, 0x11, 0x52, 0xC8, 0x00, 0x82], // Round 6
-            [0x24, 0x42, 0x51, 0x04, 0x62, 0x09], // Round 7
-            [0x07, 0x51, 0x10, 0x72, 0x10, 0x40], // Round 8
-            [0x06, 0x41, 0x49, 0x4A, 0x80, 0x16], // Round 9
-            [0x0B, 0x41, 0x11, 0x05, 0x44, 0x88], // Round 10
-            [0x0D, 0x09, 0x89, 0x08, 0x10, 0x41], // Round 11
-            [0x13, 0x20, 0x89, 0xC2, 0xC0, 0x24], // Round 12
-            [0x19, 0x0C, 0x80, 0x00, 0x0E, 0x88], // Round 13
-            [0x50, 0x28, 0x8C, 0x98, 0x10, 0x11], // Round 14
-            [0x10, 0xA4, 0x04, 0x43, 0x42, 0x20], // Round 15
-            [0xD0, 0x2C, 0x04, 0x00, 0xCA, 0x82], // Round 16
-        ];
-
-        let key = qrc_logic::custom_des::KEY_1;
-        let mut schedule = [[0u8; 6]; 16];
-
-        qrc_logic::custom_des::key_schedule(
-            key,
-            &mut schedule,
-            qrc_logic::custom_des::Mode::Encrypt,
-        );
-
-        for i in 0..16 {
-            assert_eq!(
-                schedule[i],
-                ENCRYPT_SCHEDULE[i],
-                "轮密钥在第 {} 轮不匹配！",
-                i + 1
-            );
-        }
-
-        println!("✅ key_schedule 验证成功！");
     }
 }

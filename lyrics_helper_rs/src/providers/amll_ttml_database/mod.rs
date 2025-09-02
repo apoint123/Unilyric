@@ -122,11 +122,15 @@ impl Provider for AmllTtmlDatabase {
                 ),
             ),
             AmllMirror::Dimeta => (
-                "https://amll.mirror.dimeta.top/api/db/metadata/raw-lyrics-index.jsonl".to_string(),
+                format!(
+                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/{INDEX_FILE_PATH_IN_REPO}"
+                ),
                 "https://amll.mirror.dimeta.top/api/db/raw-lyrics/{song_id}".to_string(),
             ),
             AmllMirror::Bikonoo => (
-                "https://amll.bikonoo.com/metadata/raw-lyrics-index.jsonl".to_string(),
+                format!(
+                    "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/{INDEX_FILE_PATH_IN_REPO}"
+                ),
                 "https://amll.bikonoo.com/raw-lyrics/{song_id}".to_string(),
             ),
             AmllMirror::Custom {

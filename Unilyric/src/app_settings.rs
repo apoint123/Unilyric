@@ -42,8 +42,8 @@ impl Default for WebsocketServerSettings {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum AppAmllMirror {
-    GitHub,
     #[default]
+    GitHub,
     Dimeta,
     Bikonoo,
     Custom {
