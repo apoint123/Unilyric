@@ -31,7 +31,7 @@ tracing = "0.1.41"
 tracing-subscriber = "0.3.20"
 tracing-appender = "0.2.3"
 lyrics_helper_rs = { path = "../lyrics_helper_rs" }
-smtc-suite = { git = "https://github.com/apoint123/smtc-suite" }
+smtc-suite = { version = "*" }
 binrw = "0.15.0"
 fontdb = "0.23.0"
 image = { version = "0.25", features = ["jpeg", "png"] }
