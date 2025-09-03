@@ -1,6 +1,6 @@
 {
   "name": "unilyricapp",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "<h1 align=\"center\">UniLyric - 一个全能的歌词转换器</h1>",
   "main": "index.js",
   "scripts": {
