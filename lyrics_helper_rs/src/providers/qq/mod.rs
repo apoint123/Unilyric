@@ -178,7 +178,29 @@ impl Provider for QQMusic {
     }
 
     async fn get_full_lyrics(&self, song_id: &str) -> Result<FullLyricsResult> {
-        self.try_get_lyrics_internal(song_id).await
+        let main_api_result = self.try_get_lyrics_internal(song_id).await;
+
+        match main_api_result {
+            Ok(lyrics) => Ok(lyrics),
+            Err(e) => {
+                if matches!(e, LyricsHelperError::LyricNotFound) {
+                    return Err(e);
+                }
+
+                warn!("主要接口对歌曲 '{song_id}' 调用失败: {e}。尝试备用接口...",);
+
+                let numerical_id = match self.get_numerical_song_id(song_id).await {
+                    Ok(id) => id,
+                    Err(id_err) => {
+                        warn!("获取歌曲数字 ID 失败: {id_err}，无法调用备用接口。");
+                        return Err(e);
+                    }
+                };
+
+                // 调用备用接口
+                self.try_get_lyrics_fallback(numerical_id).await
+            }
+        }
     }
 
     /// 根据专辑 MID 获取专辑的详细信息。
@@ -641,8 +663,6 @@ impl QQMusic {
             return decrypted_text.to_string();
         }
 
-        trace!("原始解密后的 QRC 文本:\n{}", decrypted_text);
-
         let try_parse = |text: &str| -> Option<String> {
             let mut reader = Reader::from_str(text);
             let mut buf = Vec::new();
@@ -731,87 +751,22 @@ impl QQMusic {
         let trans_lyrics_decrypted = Self::decrypt_with_fallback(&lyric_resp.trans)?;
         let roma_lyrics_decrypted = Self::decrypt_with_fallback(&lyric_resp.roma)?;
 
-        let main_lyric_format = if main_lyrics_decrypted.starts_with("<?xml") {
-            LyricFormat::Qrc
-        } else if main_lyrics_decrypted.trim().starts_with('[')
-            && main_lyrics_decrypted.contains(']')
-        {
-            LyricFormat::Lrc
-        } else {
-            let mut raw_metadata = std::collections::HashMap::new();
-            raw_metadata.insert(
-                "introduction".to_string(),
-                vec![main_lyrics_decrypted.clone()],
-            );
-            let parsed_data = ParsedSourceData {
-                source_name: "qq".to_string(),
-                raw_metadata,
-                ..Default::default()
-            };
-            let raw_lyrics = RawLyrics {
-                format: "txt".to_string(),
-                content: main_lyrics_decrypted,
-                translation: None,
-            };
-            return Ok(FullLyricsResult {
-                parsed: parsed_data,
-                raw: raw_lyrics,
-            });
-        };
-
-        let main_lyrics_content = if main_lyric_format == LyricFormat::Qrc {
-            Self::extract_from_qrc_wrapper(&main_lyrics_decrypted)
-        } else {
-            // 如果是 LRC 或其他格式，解密后的文本就是最终内容
-            main_lyrics_decrypted.clone()
-        };
-
-        let mut translations = Vec::new();
+        if !main_lyrics_decrypted.is_empty() {
+            trace!("[主接口] 解密后的主歌词:\n{}", main_lyrics_decrypted);
+        }
         if !trans_lyrics_decrypted.is_empty() {
-            translations.push(InputFile {
-                content: trans_lyrics_decrypted.clone(),
-                format: LyricFormat::Lrc,
-                language: Some("zh-Hans".to_string()),
-                filename: None,
-            });
+            trace!("[主接口] 解密后的翻译:\n{}", trans_lyrics_decrypted);
+        }
+        if !roma_lyrics_decrypted.is_empty() {
+            trace!("[主接口] 解密后的罗马音:\n{}", roma_lyrics_decrypted);
         }
 
-        let romanizations = Self::create_romanization_input(&roma_lyrics_decrypted)
-            .into_iter()
-            .collect();
-
-        let main_lyric_input = InputFile {
-            content: main_lyrics_content.clone(),
-            format: main_lyric_format,
-            language: None,
-            filename: None,
-        };
-
-        let conversion_input = ConversionInput {
-            main_lyric: main_lyric_input,
-            translations,
-            romanizations,
-            target_format: LyricFormat::Lrc,
-            user_metadata_overrides: None,
-        };
-        let mut parsed_data =
-            converter::parse_and_merge(&conversion_input, &ConversionOptions::default())?;
-        parsed_data.source_name = "qq".to_string();
-
-        let raw_lyrics = RawLyrics {
-            format: main_lyric_format.to_string(),
-            content: main_lyrics_content,
-            translation: if trans_lyrics_decrypted.is_empty() {
-                None
-            } else {
-                Some(trans_lyrics_decrypted)
-            },
-        };
-
-        Ok(FullLyricsResult {
-            parsed: parsed_data,
-            raw: raw_lyrics,
-        })
+        Self::build_full_lyrics_result(
+            main_lyrics_decrypted,
+            trans_lyrics_decrypted,
+            &roma_lyrics_decrypted,
+            "qq",
+        )
     }
 
     async fn get_song_urls_internal(
@@ -912,6 +867,232 @@ impl QQMusic {
         } else {
             "ja-Latn".to_string()
         }
+    }
+
+    async fn get_numerical_song_id(&self, song_id: &str) -> Result<u64> {
+        if let Ok(id) = song_id.parse::<u64>() {
+            return Ok(id);
+        }
+
+        info!("'{song_id}' 不是数字 ID，尝试通过 API 转换。");
+        let param = json!({ "song_mid": song_id });
+
+        let response_val = self
+            .execute_api_request(GET_SONG_DETAIL_MODULE, GET_SONG_DETAIL_METHOD, param, &[0])
+            .await?;
+
+        let result_container: models::SongDetailApiContainer =
+            serde_json::from_value(response_val)?;
+
+        Ok(result_container.data.track_info.id)
+    }
+
+    /// 备用歌词获取方案，调用 `lyric_download.fcg` 接口。
+    ///
+    /// # 参数
+    ///
+    /// * `music_id` - 歌曲的数字 ID。
+    async fn try_get_lyrics_fallback(&self, music_id: u64) -> Result<FullLyricsResult> {
+        const LYRIC_DOWNLOAD_URL: &str = "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg";
+
+        let params = &[
+            ("version", "15"),
+            ("miniversion", "82"),
+            ("lrctype", "4"),
+            ("musicid", &music_id.to_string()),
+        ];
+
+        let response = self
+            .http_client
+            .post_form(LYRIC_DOWNLOAD_URL, params)
+            .await?;
+        let response_text = response.text()?;
+
+        trace!(
+            "备用歌词接口 'lyric_download.fcg' 的原始响应: {}",
+            response_text
+        );
+
+        let xml_content = response_text
+            .trim()
+            .strip_prefix("<!--")
+            .unwrap_or(&response_text)
+            .strip_suffix("-->")
+            .unwrap_or(&response_text)
+            .trim();
+
+        if xml_content.is_empty() {
+            return Err(LyricsHelperError::LyricNotFound);
+        }
+
+        let mut reader = Reader::from_str(xml_content);
+        let mut buf = Vec::new();
+        let mut main_lyrics_encrypted = String::new();
+        let mut trans_lyrics_encrypted = String::new();
+        let mut roma_lyrics_encrypted = String::new();
+        let mut current_tag = String::new();
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    current_tag = String::from_utf8(e.name().as_ref().to_vec()).unwrap_or_default();
+                }
+                Ok(Event::Text(e)) => {
+                    if let Ok(text) = e.decode()
+                        && !text.trim().is_empty()
+                    {
+                        match current_tag.as_str() {
+                            "content" => main_lyrics_encrypted = text.to_string(),
+                            "contentts" => trans_lyrics_encrypted = text.to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+                Ok(Event::CData(e)) => {
+                    if let Ok(text) = e.decode()
+                        && !text.trim().is_empty()
+                    {
+                        match current_tag.as_str() {
+                            "content" => main_lyrics_encrypted = text.to_string(),
+                            "contentts" => trans_lyrics_encrypted = text.to_string(),
+                            "contentroma" => roma_lyrics_encrypted = text.to_string(),
+                            _ => {}
+                        }
+                    }
+                }
+
+                Err(e) => {
+                    warn!("XML 解析错误: {}, 内容: '{}'", e, xml_content);
+                    return Err(LyricsHelperError::Parser(format!(
+                        "解析备用接口歌词XML失败: {e}"
+                    )));
+                }
+                Ok(Event::Eof) => break,
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        if main_lyrics_encrypted.is_empty() {
+            return Err(LyricsHelperError::LyricNotFound);
+        }
+
+        let main_lyrics_decrypted = qrc_codec::decrypt_qrc(&main_lyrics_encrypted)?;
+        let trans_lyrics_decrypted =
+            qrc_codec::decrypt_qrc(&trans_lyrics_encrypted).unwrap_or_default();
+        let roma_lyrics_decrypted =
+            qrc_codec::decrypt_qrc(&roma_lyrics_encrypted).unwrap_or_default();
+
+        if !main_lyrics_decrypted.is_empty() {
+            trace!("[备用接口] 解密后的主歌词:\n{}", main_lyrics_decrypted);
+        }
+        if !trans_lyrics_decrypted.is_empty() {
+            trace!("[备用接口] 解密后的翻译:\n{}", trans_lyrics_decrypted);
+        }
+        if !roma_lyrics_decrypted.is_empty() {
+            trace!("[备用接口] 解密后的罗马音:\n{}", roma_lyrics_decrypted);
+        }
+
+        Self::build_full_lyrics_result(
+            main_lyrics_decrypted,
+            trans_lyrics_decrypted,
+            &roma_lyrics_decrypted,
+            "qq",
+        )
+    }
+
+    fn build_full_lyrics_result(
+        main_lyrics_decrypted: String,
+        trans_lyrics_decrypted: String,
+        roma_lyrics_decrypted: &str,
+        source_name: &str,
+    ) -> Result<FullLyricsResult> {
+        if !(main_lyrics_decrypted.starts_with("<?xml")
+            || main_lyrics_decrypted.trim().starts_with('[') && main_lyrics_decrypted.contains(']'))
+        {
+            let mut raw_metadata = std::collections::HashMap::new();
+            raw_metadata.insert(
+                "introduction".to_string(),
+                vec![main_lyrics_decrypted.clone()],
+            );
+            let parsed_data = ParsedSourceData {
+                source_name: source_name.to_string(),
+                raw_metadata,
+                ..Default::default()
+            };
+            let raw_lyrics = RawLyrics {
+                format: "txt".to_string(),
+                content: main_lyrics_decrypted,
+                translation: if trans_lyrics_decrypted.is_empty() {
+                    None
+                } else {
+                    Some(trans_lyrics_decrypted)
+                },
+            };
+            return Ok(FullLyricsResult {
+                parsed: parsed_data,
+                raw: raw_lyrics,
+            });
+        }
+
+        let main_lyric_format = if main_lyrics_decrypted.starts_with("<?xml") {
+            LyricFormat::Qrc
+        } else {
+            LyricFormat::Lrc
+        };
+
+        let main_lyrics_content = if main_lyric_format == LyricFormat::Qrc {
+            Self::extract_from_qrc_wrapper(&main_lyrics_decrypted)
+        } else {
+            main_lyrics_decrypted
+        };
+
+        let mut translations = Vec::new();
+        if !trans_lyrics_decrypted.is_empty() {
+            translations.push(InputFile {
+                content: Self::extract_from_qrc_wrapper(&trans_lyrics_decrypted),
+                format: LyricFormat::Lrc,
+                language: Some("zh-Hans".to_string()),
+                filename: None,
+            });
+        }
+
+        let romanizations = Self::create_romanization_input(roma_lyrics_decrypted)
+            .into_iter()
+            .collect();
+
+        let main_lyric_input = InputFile {
+            content: main_lyrics_content.clone(),
+            format: main_lyric_format,
+            language: None,
+            filename: None,
+        };
+
+        let conversion_input = ConversionInput {
+            main_lyric: main_lyric_input,
+            translations,
+            romanizations,
+            target_format: LyricFormat::Lrc,
+            user_metadata_overrides: None,
+        };
+        let mut parsed_data =
+            converter::parse_and_merge(&conversion_input, &ConversionOptions::default())?;
+        parsed_data.source_name = source_name.to_string();
+
+        let raw_lyrics = RawLyrics {
+            format: main_lyric_format.to_string(),
+            content: main_lyrics_content,
+            translation: if trans_lyrics_decrypted.is_empty() {
+                None
+            } else {
+                Some(trans_lyrics_decrypted)
+            },
+        };
+
+        Ok(FullLyricsResult {
+            parsed: parsed_data,
+            raw: raw_lyrics,
+        })
     }
 }
 
@@ -1064,6 +1245,7 @@ mod tests {
     const TEST_PLAYLIST_ID: &str = "7256912512"; // QQ音乐官方歌单: 欧美| 流行节奏控
     const TEST_TOPLIST_ID: u32 = 26; // QQ音乐热歌榜
     const INSTRUMENTAL_SONG_ID: &str = "201877085"; // 城南花已开
+    const TEST_SONG_NUMERICAL_ID: u64 = 7_137_425;
 
     // 周杰伦的即兴曲，主歌词包含了纯文本介绍内容
     // const SPECIAL_INSTRUMENTAL_SONG_ID: &str = "582359862";
@@ -1355,5 +1537,30 @@ mod tests {
         assert!(!full_lyrics.parsed.lines.is_empty(), "解析后的行不应为空");
 
         info!("解析结果: {:#?}", full_lyrics.parsed);
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_lyrics_fallback() {
+        init_tracing();
+        let provider = QQMusic::new().await.unwrap();
+
+        let result = provider
+            .try_get_lyrics_fallback(TEST_SONG_NUMERICAL_ID)
+            .await;
+
+        assert!(result.is_ok(), "备用接口调用失败: {:?}", result.err());
+
+        let full_lyrics = result.unwrap();
+        assert!(!full_lyrics.parsed.lines.is_empty(), "歌词行不应为空");
+
+        let has_full_line = full_lyrics.parsed.lines.iter().any(|line| {
+            line.get_translation_by_lang("zh-Hans").is_some()
+                && line.get_romanization_by_lang("ja-Latn").is_some()
+        });
+
+        assert!(has_full_line, "未能成功解析出歌词行");
+
+        info!("✅ 备用歌词接口测试通过！");
     }
 }

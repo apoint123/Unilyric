@@ -418,6 +418,32 @@ impl LyricLine {
     pub fn clear_tracks(&mut self, content_type: ContentType) {
         self.tracks.retain(|t| t.content_type != content_type);
     }
+
+    /// 根据语言代码获取第一个匹配的翻译轨道。
+    #[must_use]
+    pub fn get_translation_by_lang(&self, lang_tag: &str) -> Option<&LyricTrack> {
+        self.main_tracks()
+            .flat_map(|annotated_track| &annotated_track.translations)
+            .find(|translation_track| {
+                matches!(
+                    translation_track.metadata.get(&TrackMetadataKey::Language),
+                    Some(lang) if lang == lang_tag
+                )
+            })
+    }
+
+    /// 根据语言代码获取第一个匹配的罗马音轨道。
+    #[must_use]
+    pub fn get_romanization_by_lang(&self, lang_tag: &str) -> Option<&LyricTrack> {
+        self.main_tracks()
+            .flat_map(|annotated_track| &annotated_track.romanizations)
+            .find(|romanization_track| {
+                matches!(
+                    romanization_track.metadata.get(&TrackMetadataKey::Language),
+                    Some(lang) if lang == lang_tag
+                )
+            })
+    }
 }
 
 /// 通用的歌词音节结构，用于表示逐字歌词中的一个音节。
