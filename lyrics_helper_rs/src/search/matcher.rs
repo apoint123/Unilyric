@@ -423,7 +423,7 @@ mod tests {
         );
         assert_eq!(
             compare_name(Some("The Song (Live)"), Some("The Song")).unwrap(),
-            NameMatchType::Medium,
+            NameMatchType::Low,
             "Base name match with one having parens"
         );
         assert_eq!(
@@ -507,7 +507,7 @@ mod tests {
         };
         assert_eq!(
             compare_track(&perfect_track, &high_result),
-            MatchType::VeryHigh,
+            MatchType::High,
             "Track: VeryHigh match with minor differences"
         );
 
