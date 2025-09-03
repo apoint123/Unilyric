@@ -3,159 +3,179 @@
 use std::fmt::Write;
 
 use lyrics_helper_core::{
-    AssGenerationOptions, ContentType, ConvertError, LyricLine, LyricTrack, MetadataStore,
-    TrackMetadataKey, Word,
+    AgentStore, AssGenerationOptions, ContentType, ConvertError, LyricLine, LyricTrack,
+    MetadataStore, TrackMetadataKey, Word,
 };
-
-/// 将毫秒时间格式化为 ASS 时间字符串 `H:MM:SS.CS` (小时:分钟:秒.厘秒)。
-fn format_ass_time(ms: u64) -> String {
-    let total_cs = (ms + 5) / 10; // 四舍五入到厘秒
-    let cs = total_cs % 100;
-    let total_seconds = total_cs / 100;
-    let seconds = total_seconds % 60;
-    let total_minutes = total_seconds / 60;
-    let minutes = total_minutes % 60;
-    let hours = total_minutes / 60;
-    format!("{hours}:{minutes:02}:{seconds:02}.{cs:02}")
-}
-
-/// 将毫秒时长四舍五入到厘秒 (cs)，用于 ASS 的 `\k` 标签。
-fn round_duration_to_cs(duration_ms: u64) -> u32 {
-    let cs = (duration_ms + 5) / 10;
-    cs.try_into().unwrap_or(u32::MAX)
-}
 
 /// ASS 生成的主入口函数。
 pub fn generate_ass(
     lines: &[LyricLine],
     metadata_store: &MetadataStore,
+    agents: &AgentStore,
     is_line_timed: bool,
     options: &AssGenerationOptions,
 ) -> Result<String, ConvertError> {
     let mut ass_content = String::with_capacity(lines.len() * 200 + 1024);
 
+    write_ass_header(&mut ass_content, options)?;
+
+    write_ass_events(
+        &mut ass_content,
+        lines,
+        metadata_store,
+        agents,
+        is_line_timed,
+    )?;
+
+    Ok(ass_content)
+}
+
+fn write_ass_header(
+    output: &mut String,
+    options: &AssGenerationOptions,
+) -> Result<(), ConvertError> {
     // --- [Script Info] 部分 ---
     if let Some(custom_script_info) = &options.script_info {
-        writeln!(ass_content, "{}", custom_script_info.trim())?;
+        writeln!(output, "{}", custom_script_info.trim())?;
     } else {
-        writeln!(ass_content, "[Script Info]")?;
-        writeln!(ass_content, "ScriptType: v4.00+")?;
-        writeln!(ass_content, "PlayResX: 1920")?;
-        writeln!(ass_content, "PlayResY: 1080")?;
+        writeln!(output, "[Script Info]")?;
+        writeln!(output, "ScriptType: v4.00+")?;
+        writeln!(output, "PlayResX: 1920")?;
+        writeln!(output, "PlayResY: 1080")?;
     }
-    writeln!(ass_content)?;
+    writeln!(output)?;
 
     // --- [V4+ Styles] 部分 ---
     if let Some(custom_styles) = &options.styles {
-        writeln!(ass_content, "{}", custom_styles.trim())?;
+        writeln!(output, "{}", custom_styles.trim())?;
     } else {
-        writeln!(ass_content, "[V4+ Styles]")?;
+        writeln!(output, "[V4+ Styles]")?;
         writeln!(
-            ass_content,
+            output,
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
         )?;
         writeln!(
-            ass_content,
+            output,
             "Style: Default,Arial,90,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,3.5,1,2,10,10,10,1"
         )?; // 主歌词
         writeln!(
-            ass_content,
+            output,
             "Style: ts,Arial,55,&H00D3D3D3,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1"
         )?; // 翻译
         writeln!(
-            ass_content,
+            output,
             "Style: roma,Arial,55,&H00D3D3D3,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1"
         )?; // 罗马音
         writeln!(
-            ass_content,
-            "Style: bg-main,Arial,75,&H00E5E5E5,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,3,1,8,10,10,10,1"
-        )?; // 背景主歌词
-        writeln!(
-            ass_content,
+            output,
             "Style: bg-ts,Arial,45,&H00A0A0A0,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,1.5,1,8,10,10,55,1"
         )?; // 背景翻译
         writeln!(
-            ass_content,
+            output,
             "Style: bg-roma,Arial,45,&H00A0A0A0,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,1.5,1,8,10,10,55,1"
         )?; // 背景罗马音
         writeln!(
-            ass_content,
+            output,
             "Style: meta,Arial,40,&H00C0C0C0,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,1,0,5,10,10,10,1"
         )?; // 元数据
     }
-    writeln!(ass_content)?;
+    writeln!(output)?;
 
-    // --- [Events] 部分 ---
-    writeln!(ass_content, "[Events]")?;
+    Ok(())
+}
+
+fn write_ass_events(
+    output: &mut String,
+    lines: &[LyricLine],
+    metadata_store: &MetadataStore,
+    agents: &AgentStore,
+    is_line_timed: bool,
+) -> Result<(), ConvertError> {
+    writeln!(output, "[Events]")?;
     writeln!(
-        ass_content,
+        output,
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     )?;
 
     for (key, values) in metadata_store.get_all_data() {
         for value in values {
             writeln!(
-                ass_content,
+                output,
                 "Comment: 0,0:00:00.00,0:00:00.00,meta,,0,0,0,,{key}: {value}"
             )?;
         }
     }
 
-    for line in lines {
-        for annotated_track in &line.tracks {
-            let is_bg = annotated_track.content_type == ContentType::Background;
-            let style = if is_bg { "bg-main" } else { "Default" };
-            let mut actor_field = line.agent.clone().unwrap_or_default();
-            if is_bg {
-                actor_field = "x-bg".to_string();
-            } else if let Some(part) = &line.song_part {
-                write!(actor_field, r#" itunes:song-part="{part}""#)?;
-            }
-
-            write_dialogue_line(
-                &mut ass_content,
-                line,
-                &annotated_track.content,
-                style,
-                &actor_field,
-                is_line_timed,
+    for agent in agents.all_agents() {
+        if let Some(name) = &agent.name
+            && !name.is_empty()
+        {
+            writeln!(
+                output,
+                "Comment: 0,0:00:00.00,0:00:00.00,meta,,0,0,0,,{}: {}",
+                agent.id, name
             )?;
-
-            let trans_style = if is_bg { "bg-ts" } else { "ts" };
-            for trans_track in &annotated_track.translations {
-                let actor = trans_track
-                    .metadata
-                    .get(&TrackMetadataKey::Language)
-                    .map_or(String::new(), |l| format!("x-lang:{l}"));
-                write_dialogue_line(
-                    &mut ass_content,
-                    line,
-                    trans_track,
-                    trans_style,
-                    &actor,
-                    is_line_timed,
-                )?;
-            }
-
-            let roma_style = if is_bg { "bg-roma" } else { "roma" };
-            for roma_track in &annotated_track.romanizations {
-                let actor = roma_track
-                    .metadata
-                    .get(&TrackMetadataKey::Language)
-                    .map_or(String::new(), |l| format!("x-lang:{l}"));
-                write_dialogue_line(
-                    &mut ass_content,
-                    line,
-                    roma_track,
-                    roma_style,
-                    &actor,
-                    is_line_timed,
-                )?;
-            }
         }
     }
 
-    Ok(ass_content)
+    for line in lines {
+        write_events_for_line(output, line, is_line_timed)?;
+    }
+
+    Ok(())
+}
+
+fn write_events_for_line(
+    output: &mut String,
+    line: &LyricLine,
+    is_line_timed: bool,
+) -> Result<(), ConvertError> {
+    for annotated_track in &line.tracks {
+        let is_bg = annotated_track.content_type == ContentType::Background;
+        let style = "Default";
+        let mut actor_field = line.agent.clone().unwrap_or_else(|| "v1".to_string());
+
+        if is_bg {
+            actor_field = "x-bg".to_string();
+        } else if let Some(part) = &line.song_part {
+            write!(actor_field, r#" itunes:song-part="{part}""#)?;
+        }
+
+        write_dialogue_line(
+            output,
+            line,
+            &annotated_track.content,
+            style,
+            &actor_field,
+            is_line_timed,
+        )?;
+
+        let trans_style = if is_bg { "bg-ts" } else { "ts" };
+        for trans_track in &annotated_track.translations {
+            let actor = trans_track
+                .metadata
+                .get(&TrackMetadataKey::Language)
+                .map_or(String::new(), |l| format!("x-lang:{l}"));
+            write_dialogue_line(
+                output,
+                line,
+                trans_track,
+                trans_style,
+                &actor,
+                is_line_timed,
+            )?;
+        }
+
+        let roma_style = if is_bg { "bg-roma" } else { "roma" };
+        for roma_track in &annotated_track.romanizations {
+            let actor = roma_track
+                .metadata
+                .get(&TrackMetadataKey::Language)
+                .map_or(String::new(), |l| format!("x-lang:{l}"));
+            write_dialogue_line(output, line, roma_track, roma_style, &actor, is_line_timed)?;
+        }
+    }
+    Ok(())
 }
 
 fn write_dialogue_line(
@@ -167,20 +187,7 @@ fn write_dialogue_line(
     is_line_timed: bool,
 ) -> Result<(), ConvertError> {
     let text_field = if is_line_timed {
-        track
-            .words
-            .iter()
-            .flat_map(|w| &w.syllables)
-            .map(|syl| {
-                if syl.ends_with_space {
-                    format!("{} ", syl.text)
-                } else {
-                    syl.text.clone()
-                }
-            })
-            .collect::<String>()
-            .trim_end()
-            .to_string()
+        track.text()
     } else {
         build_karaoke_text(&track.words)?
     };
@@ -239,4 +246,20 @@ fn build_karaoke_text(words: &[Word]) -> Result<String, ConvertError> {
     }
 
     Ok(text_builder.trim_end().to_string())
+}
+
+fn format_ass_time(ms: u64) -> String {
+    let total_cs = (ms + 5) / 10; // 四舍五入到厘秒
+    let cs = total_cs % 100;
+    let total_seconds = total_cs / 100;
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let hours = total_minutes / 60;
+    format!("{hours}:{minutes:02}:{seconds:02}.{cs:02}")
+}
+
+fn round_duration_to_cs(duration_ms: u64) -> u32 {
+    let cs = (duration_ms + 5) / 10;
+    cs.try_into().unwrap_or(u32::MAX)
 }
