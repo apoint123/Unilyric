@@ -33,3 +33,4 @@ Thumbs.db
 # Specific to UniLyricApp workspace
 # Ignore target directories within each crate
 **/target/
+node_modules

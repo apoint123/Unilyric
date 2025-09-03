@@ -1,0 +1,30 @@
+{
+  "name": "unilyricapp",
+  "version": "1.0.0",
+  "description": "<h1 align=\"center\">UniLyric - 一个全能的歌词转换器</h1>",
+  "main": "index.js",
+  "scripts": {
+    "test": "cargo test",
+    "release": "commit-and-tag-version",
+    "prepare": "husky"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/apoint123/Unilyric.git"
+  },
+  "keywords": [],
+  "author": "apoint123",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/apoint123/Unilyric/issues"
+  },
+  "homepage": "https://github.com/apoint123/Unilyric#readme",
+  "packageManager": "pnpm@10.15.1",
+  "devDependencies": {
+    "@commitlint/config-conventional": "^19.8.1",
+    "commit-and-tag-version": "^12.6.0",
+    "commitlint": "^19.8.1",
+    "husky": "^9.1.7"
+  }
+}
