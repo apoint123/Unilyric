@@ -239,7 +239,7 @@ impl Provider for AmllTtmlDatabase {
                 let match_type = compare_track(track, &temp_search_result);
                 (entry, match_type)
             })
-            .filter(|(_, match_type)| *match_type >= MatchType::PrettyHigh)
+            .filter(|(_, match_type)| *match_type >= MatchType::VeryLow)
             .collect();
 
         scored_results.sort_by(|a, b| b.1.get_score().cmp(&a.1.get_score()));
