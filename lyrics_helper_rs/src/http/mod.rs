@@ -81,4 +81,19 @@ pub trait HttpClient: Send + Sync + Debug {
         headers: &[(&str, &str)],
         body: Option<&[u8]>,
     ) -> Result<HttpResponse>;
+
+    /// 发送带查询参数和自定义头部的GET请求
+    async fn get_with_params_and_headers(
+        &self,
+        url: &str,
+        params: &[(&str, &str)],
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let query_string = serde_urlencoded::to_string(params)
+            .map_err(|e| LyricsHelperError::Internal(format!("无法对查询参数进行编码: {e}")))?;
+        let full_url = format!("{url}?{query_string}");
+
+        self.request_with_headers(HttpMethod::Get, &full_url, headers, None)
+            .await
+    }
 }

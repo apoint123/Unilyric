@@ -5,6 +5,7 @@
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
 use std::{
+    collections::HashMap,
     sync::{Arc, LazyLock},
     time::Duration,
 };
@@ -192,13 +193,19 @@ impl Provider for QQMusic {
                 let numerical_id = match self.get_numerical_song_id(song_id).await {
                     Ok(id) => id,
                     Err(id_err) => {
-                        warn!("获取歌曲数字 ID 失败: {id_err}，无法调用备用接口。");
-                        return Err(e);
+                        warn!("获取歌曲数字 ID 失败: {id_err}，尝试调用仅 LRC 接口。");
+                        return self.try_get_lyrics_lrc_only(song_id).await;
                     }
                 };
 
                 // 调用备用接口
-                self.try_get_lyrics_fallback(numerical_id).await
+                match self.try_get_lyrics_fallback(numerical_id).await {
+                    Ok(lyrics) => Ok(lyrics),
+                    Err(fallback_err) => {
+                        warn!("备用接口失败: {fallback_err}。尝试调用仅 LRC 接口...");
+                        self.try_get_lyrics_lrc_only(song_id).await
+                    }
+                }
             }
         }
     }
@@ -427,13 +434,23 @@ impl Provider for QQMusic {
     async fn get_song_link(&self, song_mid: &str) -> Result<String> {
         let mids_slice = [song_mid];
 
-        let url_map = self
+        let (success_map, failure_map) = self
             .get_song_urls_internal(&mids_slice, models::SongFileType::Mp3_128)
             .await?;
 
-        url_map.get(song_mid).cloned().ok_or_else(|| {
-            LyricsHelperError::ApiError(format!("未找到 song_mid '{song_mid}' 的播放链接"))
-        })
+        success_map.get(song_mid).map_or_else(
+            || {
+                failure_map.get(song_mid).map_or_else(
+                    || {
+                        Err(LyricsHelperError::ApiError(format!(
+                            "未在 API 响应中找到 song_mid '{song_mid}' 的播放链接"
+                        )))
+                    },
+                    |reason| Err(LyricsHelperError::ApiError(reason.clone())),
+                )
+            },
+            |url| Ok(url.clone()),
+        )
     }
 
     async fn get_album_cover_url(&self, album_id: &str, size: CoverSize) -> Result<String> {
@@ -456,9 +473,9 @@ impl Provider for QQMusic {
 impl QQMusic {
     fn build_comm(&self) -> serde_json::Value {
         json!({
-            "cv": 13_020_508,
-            "ct": 11,
-            "v": 13_020_508,
+            "cv": 13_020_508,   // Client Version?
+            "ct": 11,           // Client Type?
+            "v": 13_020_508,    // Version?
             "QIMEI36": &self.qimei,
             "tmeAppID": "qqmusic",
             "inCharset": "utf-8",
@@ -772,7 +789,7 @@ impl QQMusic {
         &self,
         song_mids: &[&str],
         file_type: models::SongFileType,
-    ) -> Result<std::collections::HashMap<String, String>> {
+    ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
         if song_mids.len() > 100 {
             return Err(LyricsHelperError::ApiError(
                 "单次请求的歌曲数量不能超过100".to_string(),
@@ -803,20 +820,23 @@ impl QQMusic {
 
         let result_data = result_container.data;
 
-        let mut url_map = std::collections::HashMap::new();
+        let mut success_map = std::collections::HashMap::new();
+        let mut failure_map = std::collections::HashMap::new();
         let domain = "https://isure.stream.qqmusic.qq.com/";
 
         for info in result_data.midurlinfo {
             if info.purl.is_empty() {
-                return Err(LyricsHelperError::ApiError(format!(
+                let reason = format!(
                     "无法获取 songmid '{}' 的链接 (purl 为空)，可能是 VIP 歌曲。",
                     info.songmid
-                )));
+                );
+                failure_map.insert(info.songmid, reason);
+            } else {
+                success_map.insert(info.songmid, format!("{}{}", domain, info.purl));
             }
-            url_map.insert(info.songmid, format!("{}{}", domain, info.purl));
         }
 
-        Ok(url_map)
+        Ok((success_map, failure_map))
     }
 
     /// 生成一个随机的 UUID。
@@ -1092,6 +1112,89 @@ impl QQMusic {
             parsed: parsed_data,
             raw: raw_lyrics,
         })
+    }
+
+    async fn try_get_lyrics_lrc_only(&self, song_mid: &str) -> Result<FullLyricsResult> {
+        const LRC_LYRIC_URL: &str = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
+
+        let headers = [("Referer", "https://y.qq.com")];
+
+        let params = &[
+            ("songmid", song_mid),
+            (
+                "pcachetime",
+                &chrono::Local::now().timestamp_millis().to_string(),
+            ),
+            ("g_tk", "5381"),
+            ("loginUin", "0"),
+            ("hostUin", "0"),
+            ("inCharset", "utf8"),
+            ("outCharset", "utf-8"),
+            ("notice", "0"),
+            ("platform", "yqq"),
+            ("needNewCode", "0"),
+        ];
+
+        let response = self
+            .http_client
+            .get_with_params_and_headers(LRC_LYRIC_URL, params, &headers)
+            .await?;
+        let response_text = response.text()?;
+
+        trace!("[LRC接口] 原始响应: {}", response_text);
+
+        let json_text = response_text
+            .trim()
+            .strip_prefix("MusicJsonCallback(")
+            .unwrap_or(&response_text)
+            .strip_suffix(')')
+            .unwrap_or(&response_text);
+
+        if json_text.is_empty() {
+            return Err(LyricsHelperError::LyricNotFound);
+        }
+
+        #[derive(serde::Deserialize)]
+        struct LrcApiResponse {
+            code: i32,
+            lyric: Option<String>,
+            trans: Option<String>,
+        }
+
+        let api_response: LrcApiResponse = serde_json::from_str(json_text)?;
+
+        if api_response.code != 0 {
+            return Err(LyricsHelperError::ApiError(format!(
+                "LRC 接口返回业务错误码: {}",
+                api_response.code
+            )));
+        }
+
+        let main_lyrics_b64 = api_response.lyric.unwrap_or_default();
+        let trans_lyrics_b64 = api_response.trans.unwrap_or_default();
+
+        if main_lyrics_b64.is_empty() {
+            return Err(LyricsHelperError::LyricNotFound);
+        }
+
+        let main_lyrics_decrypted_bytes = BASE64_STANDARD
+            .decode(main_lyrics_b64)
+            .map_err(|e| LyricsHelperError::Decryption(format!("LRC 接口 Base64 解码失败: {e}")))?;
+        let main_lyrics_decrypted = String::from_utf8(main_lyrics_decrypted_bytes)?;
+
+        let trans_lyrics_decrypted = if trans_lyrics_b64.is_empty() {
+            String::new()
+        } else {
+            let bytes = BASE64_STANDARD.decode(trans_lyrics_b64)?;
+            String::from_utf8(bytes)?
+        };
+
+        trace!("[LRC接口] 解码后的主歌词:\n{}", main_lyrics_decrypted);
+        if !trans_lyrics_decrypted.is_empty() {
+            trace!("[LRC接口] 解码后的翻译:\n{}", trans_lyrics_decrypted);
+        }
+
+        Self::build_full_lyrics_result(main_lyrics_decrypted, trans_lyrics_decrypted, "", "qq-lrc")
     }
 }
 
@@ -1561,5 +1664,21 @@ mod tests {
         assert!(has_full_line, "未能成功解析出歌词行");
 
         info!("✅ 备用歌词接口测试通过！");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_try_get_lyrics_lrc_only() {
+        init_tracing();
+        let provider = QQMusic::new().await.unwrap();
+
+        let result = provider.try_get_lyrics_lrc_only(TEST_SONG_MID).await;
+
+        assert!(result.is_ok(), "LRC 接口调用失败: {:?}", result.err());
+
+        let full_lyrics = result.unwrap();
+        assert!(!full_lyrics.parsed.lines.is_empty(), "歌词行不应为空");
+
+        info!("✅ LRC 歌词接口测试通过！");
     }
 }

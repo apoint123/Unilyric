@@ -96,6 +96,26 @@ impl HttpClient for ReqwestClient {
 
         convert_response(response).await
     }
+
+    async fn get_with_params_and_headers(
+        &self,
+        url: &str,
+        params: &[(&str, &str)],
+        headers: &[(&str, &str)],
+    ) -> Result<HttpResponse> {
+        let mut request_builder = self.client.get(url).query(params);
+
+        for (key, value) in headers {
+            request_builder = request_builder.header(*key, *value);
+        }
+
+        let response = request_builder
+            .send()
+            .await
+            .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
+
+        convert_response(response).await
+    }
 }
 
 /// 将 `reqwest::Response` 转换为自定义的 `HttpResponse`。
