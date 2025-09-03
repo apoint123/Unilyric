@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use lyrics_helper_core::{LyricLine, LyricSyllable};
 
 /// 辅助函数，用于安全地将偏移量应用到 u64 时间戳上
-fn offset_timestamp(timestamp: u64, offset: i64) -> u64 {
+const fn offset_timestamp(timestamp: u64, offset: i64) -> u64 {
     if offset >= 0 {
         timestamp.saturating_add(offset.saturating_abs() as u64)
     } else {

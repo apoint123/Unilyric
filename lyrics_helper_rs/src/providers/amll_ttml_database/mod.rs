@@ -69,8 +69,10 @@ impl AmllTtmlDatabase {
         self.index
             .iter()
             .filter(|entry| {
-                if let Some(values) = entry.metadata.get(metadata_key) {
-                    match field {
+                entry
+                    .metadata
+                    .get(metadata_key)
+                    .is_some_and(|values| match field {
                         SearchField::NcmMusicId
                         | SearchField::QqMusicId
                         | SearchField::SpotifyId
@@ -85,10 +87,7 @@ impl AmllTtmlDatabase {
                                 .iter()
                                 .any(|v| v.to_lowercase().contains(&lower_query))
                         }
-                    }
-                } else {
-                    false
-                }
+                    })
             })
             .cloned()
             .collect()
@@ -412,20 +411,14 @@ async fn fetch_remote_index_head(http_client: &dyn HttpClient) -> Result<String>
 
 /// 从本地 `.head` 文件加载缓存的 commit SHA。
 fn load_cached_index_head() -> Option<String> {
-    match crate::config::read_from_cache(HEAD_CACHE_FILENAME) {
-        Ok(head) => {
-            let trimmed_head = head.trim();
-            if trimmed_head.is_empty() {
-                None
-            } else {
-                Some(trimmed_head.to_string())
-            }
-        }
-        Err(_) => {
-            // 在原生和WASM中，读取错误很可能意味着文件/键不存在。
+    crate::config::read_from_cache(HEAD_CACHE_FILENAME).map_or(None, |head| {
+        let trimmed_head = head.trim();
+        if trimmed_head.is_empty() {
             None
+        } else {
+            Some(trimmed_head.to_string())
         }
-    }
+    })
 }
 
 /// 从本地缓存文件加载索引。

@@ -84,16 +84,19 @@ pub mod native {
     }
 
     fn get_cache_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
-        if let Some(mut cache_dir) = dirs::cache_dir() {
-            cache_dir.push("lyrics-helper-rs");
-            cache_dir.push(filename);
-            Ok(cache_dir)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "无法找到用户缓存目录",
-            ))
-        }
+        dirs::cache_dir().map_or_else(
+            || {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "无法找到用户缓存目录",
+                ))
+            },
+            |mut cache_dir| {
+                cache_dir.push("lyrics-helper-rs");
+                cache_dir.push(filename);
+                Ok(cache_dir)
+            },
+        )
     }
 }
 

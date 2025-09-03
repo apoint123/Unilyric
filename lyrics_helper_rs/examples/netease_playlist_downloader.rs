@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
                         .replace(&['<', '>', ':', '"', '/', '\\', '|', '?', '*'][..], "_");
                     let path = Path::new(&file_name);
                     if path.exists() {
-                        println!("歌曲 {} 已存在，跳过下载。", file_name);
+                        println!("歌曲 {file_name} 已存在，跳过下载。");
                         continue;
                     }
 
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
                     let response = reqwest::get(&url).await?;
                     let content = response.bytes().await?;
                     tokio::fs::write(path, &content).await?;
-                    println!("  成功下载并保存为 {}", file_name);
+                    println!("  成功下载并保存为 {file_name}");
                 }
                 Err(e) => {
                     println!("  获取歌曲 {} 的下载链接失败: {}", song.name, e);

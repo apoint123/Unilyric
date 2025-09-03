@@ -122,13 +122,8 @@ pub fn parse_lrc(
                 let line_texts: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
 
                 let assignments = heuristic_analyzer::assign_roles(&line_texts, lang);
-                if let Some(track) =
-                    heuristic_analyzer::build_annotated_track(&assignments, start_ms, end_ms)
-                {
-                    vec![track]
-                } else {
-                    vec![]
-                }
+                heuristic_analyzer::build_annotated_track(&assignments, start_ms, end_ms)
+                    .map_or_else(Vec::new, |track| vec![track])
             }
             LrcSameTimestampStrategy::FirstIsMain => {
                 let meaningful_lines: Vec<_> = group_lines
@@ -226,16 +221,14 @@ pub fn parse_lrc(
                     }
                 }
 
-                if let Some(main_track) = main_content {
+                main_content.map_or_else(Vec::new, |main_track| {
                     vec![AnnotatedTrack {
                         content_type: ContentType::Main,
                         content: main_track,
                         translations,
                         romanizations,
                     }]
-                } else {
-                    vec![]
-                }
+                })
             }
         };
 
@@ -296,7 +289,7 @@ mod heuristic_analyzer {
         fn new() -> Self {
             let words = Set::new(DICTIONARY_FST_DATA)
                 .expect("Embedded FST data is malformed. This indicates a build-time error.");
-            WordChecker { words }
+            Self { words }
         }
 
         fn is_english_word(&self, word: &str) -> bool {
@@ -321,7 +314,7 @@ mod heuristic_analyzer {
     fn is_cjk_ideograph(c: char) -> bool {
         ('\u{4E00}'..='\u{9FFF}').contains(&c)
     }
-    fn is_latin(c: char) -> bool {
+    const fn is_latin(c: char) -> bool {
         c.is_ascii_alphabetic()
     }
 
@@ -452,12 +445,10 @@ mod heuristic_analyzer {
                     let pinyin_tone_word_count = words
                         .iter()
                         .filter(|w| {
-                            if let Some(last_char) = w.chars().last() {
+                            w.chars().last().is_some_and(|last_char| {
                                 last_char.is_ascii_digit()
                                     && w.chars().any(|c| c.is_ascii_alphabetic())
-                            } else {
-                                false
-                            }
+                            })
                         })
                         .count();
                     if pinyin_tone_word_count > 0 {
@@ -532,25 +523,25 @@ mod heuristic_analyzer {
 
         let main_track = super::new_line_timed_track((*main_text).to_string(), start_ms, end_ms);
 
-        let translations = if let Some(text) = assignments.get(&Role::Translation) {
-            vec![super::new_line_timed_track(
-                (*text).to_string(),
-                start_ms,
-                end_ms,
-            )]
-        } else {
-            vec![]
-        };
+        let translations = assignments
+            .get(&Role::Translation)
+            .map_or_else(Vec::new, |text| {
+                vec![super::new_line_timed_track(
+                    (*text).to_string(),
+                    start_ms,
+                    end_ms,
+                )]
+            });
 
-        let romanizations = if let Some(text) = assignments.get(&Role::Romanization) {
-            vec![super::new_line_timed_track(
-                (*text).to_string(),
-                start_ms,
-                end_ms,
-            )]
-        } else {
-            vec![]
-        };
+        let romanizations = assignments
+            .get(&Role::Romanization)
+            .map_or_else(Vec::new, |text| {
+                vec![super::new_line_timed_track(
+                    (*text).to_string(),
+                    start_ms,
+                    end_ms,
+                )]
+            });
 
         Some(super::AnnotatedTrack {
             content_type: super::ContentType::Main,

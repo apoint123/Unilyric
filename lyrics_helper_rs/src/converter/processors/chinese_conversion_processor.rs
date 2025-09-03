@@ -37,21 +37,18 @@ pub fn convert(text: &str, config: BuiltinConfig) -> String {
     }
 
     // 如果缓存中没有，则尝试创建并插入
-    match CONVERTER_CACHE
+    CONVERTER_CACHE
         .entry(cache_key.to_string())
         .or_try_insert_with(|| {
             OpenCC::from_config(config).map(Arc::new).map_err(|e| {
                 error!("使用配置 '{:?}' 初始化 Opencc 时失败: {}", config, e);
                 e // 将错误传递出去，or_try_insert_with 需要
             })
-        }) {
-        Ok(converter_ref) => converter_ref.value().convert(text),
-        Err(_) => {
-            // 如果创建失败，or_try_insert_with 不会插入任何值。
-            // 直接返回原始文本。
-            text.to_string()
-        }
-    }
+        })
+        .map_or_else(
+            |_| text.to_string(),
+            |converter_ref| converter_ref.value().convert(text),
+        )
 }
 
 /// 比较两个字符串的拼音是否相同。
@@ -83,7 +80,7 @@ pub struct ChineseConversionProcessor;
 impl ChineseConversionProcessor {
     /// 创建一个新的处理器实例。
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 

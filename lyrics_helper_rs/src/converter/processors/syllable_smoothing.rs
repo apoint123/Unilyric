@@ -68,20 +68,23 @@ pub fn apply_smoothing(lines: &mut [LyricLine], options: &SyllableSmoothingOptio
 
                         for _ in 0..options.smoothing_iterations {
                             // 处理第一个元素
-                            next_durations[0] = (1.0 - options.factor) * durations[0]
-                                + options.factor * durations[1];
+                            let term = options.factor * durations[1];
+                            next_durations[0] = (1.0 - options.factor).mul_add(durations[0], term);
 
                             // 处理中间元素
                             for i in 1..group_len - 1 {
-                                next_durations[i] = (1.0 - 2.0 * options.factor) * durations[i]
-                                    + options.factor * durations[i - 1]
-                                    + options.factor * durations[i + 1];
+                                let one_minus_2f = 2.0f64.mul_add(-options.factor, 1.0);
+                                let inner_term = one_minus_2f
+                                    .mul_add(durations[i], options.factor * durations[i - 1]);
+                                next_durations[i] =
+                                    options.factor.mul_add(durations[i + 1], inner_term);
                             }
 
                             // 处理最后一个元素
                             let last_idx = group_len - 1;
-                            next_durations[last_idx] = (1.0 - options.factor) * durations[last_idx]
-                                + options.factor * durations[last_idx - 1];
+                            let term = options.factor * durations[last_idx - 1];
+                            next_durations[last_idx] =
+                                (1.0 - options.factor).mul_add(durations[last_idx], term);
 
                             std::mem::swap(&mut durations, &mut next_durations);
                         }

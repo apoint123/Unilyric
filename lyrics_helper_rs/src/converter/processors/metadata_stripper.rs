@@ -41,6 +41,7 @@ fn get_cached_regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
 
     let regex_to_return = new_regex.clone();
     cache.insert(key, new_regex);
+    drop(cache);
 
     Some(regex_to_return)
 }

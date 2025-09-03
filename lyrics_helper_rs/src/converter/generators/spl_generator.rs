@@ -65,11 +65,9 @@ pub fn generate_spl(
                 write!(spl_output, "{text}")?;
             }
 
-            let needs_explicit_end_tag = if let Some(next_line) = lines.get(i + 1) {
-                line.end_ms != next_line.start_ms
-            } else {
-                true
-            };
+            let needs_explicit_end_tag = lines
+                .get(i + 1)
+                .is_none_or(|next_line| line.end_ms != next_line.start_ms);
 
             if needs_explicit_end_tag {
                 write!(spl_output, "{}", format_spl_timestamp(line.end_ms, false))?;

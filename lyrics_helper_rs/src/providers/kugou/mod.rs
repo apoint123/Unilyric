@@ -418,15 +418,15 @@ impl Provider for KugouMusic {
         if title.is_empty() {
             return Ok(vec![]);
         }
-        let keyword = if let Some(artists) = track.artists {
-            if let Some(first_artist) = artists.first() {
-                format!("{first_artist} - {title}")
-            } else {
-                title.to_string()
-            }
-        } else {
-            title.to_string()
-        };
+        let keyword = track.artists.map_or_else(
+            || title.to_string(),
+            |artists| {
+                artists.first().map_or_else(
+                    || title.to_string(),
+                    |first_artist| format!("{first_artist} - {title}"),
+                )
+            },
+        );
 
         let mut business_params = BTreeMap::new();
         business_params.insert("iscorrection".to_string(), "1".to_string());

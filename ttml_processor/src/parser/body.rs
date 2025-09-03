@@ -116,7 +116,7 @@ pub(super) fn handle_p_event(
 pub(super) fn handle_p_end(
     state: &mut TtmlParserState,
     lines: &mut Vec<LyricLine>,
-    warnings: &mut Vec<String>,
+    warnings: &mut [String],
 ) {
     if let Some(mut p_data) = state.body_state.current_p_element_data.take() {
         if let Some(key) = &p_data.itunes_key {
@@ -641,7 +641,7 @@ fn finalize_p_element(
     mut p_data: CurrentPElementData,
     lines: &mut Vec<LyricLine>,
     state: &mut TtmlParserState,
-    _warnings: &mut Vec<String>,
+    _warnings: &mut [String],
 ) {
     // 步骤 1: 如果是逐行模式且没有音节，则根据累积的文本创建主轨道
     create_main_track_from_accumulator_if_needed(&mut p_data, state);

@@ -70,22 +70,19 @@ pub fn recognize_agents(lines: &mut Vec<LyricLine>) {
 
 /// 辅助函数：从 `LyricLine` 中获取用于匹配的纯文本。
 fn get_text_from_main_track(line: &LyricLine) -> Cow<'_, str> {
-    if let Some(main_annotated_track) = line
-        .tracks
+    line.tracks
         .iter()
         .find(|at| at.content_type == ContentType::Main)
-    {
-        let collected_string: String = main_annotated_track
-            .content
-            .words
-            .iter()
-            .flat_map(|w| &w.syllables)
-            .map(|s| s.text.as_str())
-            .collect();
-        Cow::Owned(collected_string)
-    } else {
-        Cow::Borrowed("")
-    }
+        .map_or(Cow::Borrowed(""), |main_annotated_track| {
+            let collected_string: String = main_annotated_track
+                .content
+                .words
+                .iter()
+                .flat_map(|w| &w.syllables)
+                .map(|s| s.text.as_str())
+                .collect();
+            Cow::Owned(collected_string)
+        })
 }
 
 /// 辅助函数：从主轨道的文本部分移除演唱者标记前缀。

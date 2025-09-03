@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("dictionary.fst");
 
-    println!("cargo:rerun-if-changed={}", dictionary_txt_path);
+    println!("cargo:rerun-if-changed={dictionary_txt_path}");
 
     let reader = BufReader::new(File::open(dictionary_txt_path)?);
     let mut lines: Vec<String> = reader

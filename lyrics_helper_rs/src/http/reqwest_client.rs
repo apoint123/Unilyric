@@ -129,11 +129,11 @@ fn convert_headers(header_map: &HeaderMap) -> HashMap<String, String> {
 impl From<HttpMethod> for reqwest::Method {
     fn from(method: HttpMethod) -> Self {
         match method {
-            HttpMethod::Get => reqwest::Method::GET,
-            HttpMethod::Post => reqwest::Method::POST,
-            HttpMethod::Put => reqwest::Method::PUT,
-            HttpMethod::Delete => reqwest::Method::DELETE,
-            HttpMethod::Patch => reqwest::Method::PATCH,
+            HttpMethod::Get => Self::GET,
+            HttpMethod::Post => Self::POST,
+            HttpMethod::Put => Self::PUT,
+            HttpMethod::Delete => Self::DELETE,
+            HttpMethod::Patch => Self::PATCH,
         }
     }
 }

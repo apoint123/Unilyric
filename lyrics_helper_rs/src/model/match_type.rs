@@ -46,14 +46,14 @@ pub(crate) trait MatchScorable {
 impl MatchScorable for MatchType {
     fn get_score(&self) -> i32 {
         match self {
-            MatchType::Perfect => 8,
-            MatchType::VeryHigh => 7,
-            MatchType::High => 6,
-            MatchType::PrettyHigh => 5,
-            MatchType::Medium => 4,
-            MatchType::Low => 3,
-            MatchType::VeryLow => 2,
-            MatchType::None => 0,
+            Self::Perfect => 8,
+            Self::VeryHigh => 7,
+            Self::High => 6,
+            Self::PrettyHigh => 5,
+            Self::Medium => 4,
+            Self::Low => 3,
+            Self::VeryLow => 2,
+            Self::None => 0,
         }
     }
 }
@@ -61,12 +61,12 @@ impl MatchScorable for MatchType {
 impl MatchScorable for NameMatchType {
     fn get_score(&self) -> i32 {
         match self {
-            NameMatchType::Perfect => 7,
-            NameMatchType::VeryHigh => 6,
-            NameMatchType::High => 5,
-            NameMatchType::Medium => 4,
-            NameMatchType::Low => 2,
-            NameMatchType::NoMatch => 0,
+            Self::Perfect => 7,
+            Self::VeryHigh => 6,
+            Self::High => 5,
+            Self::Medium => 4,
+            Self::Low => 2,
+            Self::NoMatch => 0,
         }
     }
 }
@@ -74,12 +74,12 @@ impl MatchScorable for NameMatchType {
 impl MatchScorable for ArtistMatchType {
     fn get_score(&self) -> i32 {
         match self {
-            ArtistMatchType::Perfect => 7,
-            ArtistMatchType::VeryHigh => 6,
-            ArtistMatchType::High => 5,
-            ArtistMatchType::Medium => 4,
-            ArtistMatchType::Low => 2,
-            ArtistMatchType::NoMatch => 0,
+            Self::Perfect => 7,
+            Self::VeryHigh => 6,
+            Self::High => 5,
+            Self::Medium => 4,
+            Self::Low => 2,
+            Self::NoMatch => 0,
         }
     }
 }
@@ -87,12 +87,12 @@ impl MatchScorable for ArtistMatchType {
 impl MatchScorable for DurationMatchType {
     fn get_score(&self) -> i32 {
         match self {
-            DurationMatchType::Perfect => 7,
-            DurationMatchType::VeryHigh => 6,
-            DurationMatchType::High => 5,
-            DurationMatchType::Medium => 4,
-            DurationMatchType::Low => 2,
-            DurationMatchType::NoMatch => 0,
+            Self::Perfect => 7,
+            Self::VeryHigh => 6,
+            Self::High => 5,
+            Self::Medium => 4,
+            Self::Low => 2,
+            Self::NoMatch => 0,
         }
     }
 }

@@ -1,3 +1,6 @@
+#![allow(clippy::pedantic)]
+#![allow(clippy::nursery)]
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::hint::black_box;
 
@@ -376,13 +379,13 @@ fn bench_decryption(c: &mut Criterion) {
     group.bench_function("Optimized", |b| {
         b.iter(|| {
             let _ = decrypt_qrc(black_box(ENCRYPTED_HEX_STRING));
-        })
+        });
     });
 
     group.bench_function("C/C# Original", |b| {
         b.iter(|| {
             let _ = original::decrypt_lyrics(black_box(ENCRYPTED_HEX_STRING));
-        })
+        });
     });
 
     group.finish();

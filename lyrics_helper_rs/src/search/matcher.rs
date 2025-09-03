@@ -25,7 +25,7 @@ fn normalize_name_for_comparison(name: &str) -> String {
 }
 
 /// 比较用户查询和搜索结果，返回一个综合的匹配等级。
-pub(crate) fn compare_track(track: &Track, result: &SearchResult) -> MatchType {
+pub fn compare_track(track: &Track, result: &SearchResult) -> MatchType {
     const TITLE_WEIGHT: f64 = 1.0;
     const ARTIST_WEIGHT: f64 = 1.0;
     const ALBUM_WEIGHT: f64 = 0.4;
@@ -48,10 +48,10 @@ pub(crate) fn compare_track(track: &Track, result: &SearchResult) -> MatchType {
     let album_match = compare_name(track.album, result.album.as_deref());
     let duration_match = compare_duration(track.duration, result.duration);
 
-    let total_score = f64::from(title_match.get_score()) * TITLE_WEIGHT
-        + f64::from(artist_match.get_score()) * ARTIST_WEIGHT
-        + f64::from(album_match.get_score()) * ALBUM_WEIGHT
-        + f64::from(duration_match.get_score()) * DURATION_WEIGHT;
+    let mut total_score = f64::from(duration_match.get_score()) * DURATION_WEIGHT;
+    total_score = f64::from(album_match.get_score()).mul_add(ALBUM_WEIGHT, total_score);
+    total_score = f64::from(artist_match.get_score()).mul_add(ARTIST_WEIGHT, total_score);
+    total_score = f64::from(title_match.get_score()).mul_add(TITLE_WEIGHT, total_score);
 
     // 计算理论最高分
     let mut possible_score = MAX_SINGLE_SCORE * (TITLE_WEIGHT + ARTIST_WEIGHT);

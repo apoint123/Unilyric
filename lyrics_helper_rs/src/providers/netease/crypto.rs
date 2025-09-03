@@ -20,16 +20,16 @@ use rand::{Rng, distributions::Alphanumeric, thread_rng};
 use crate::error::{LyricsHelperError, Result};
 
 /// WEAPI 加密中使用的固定"随机数"串，实际上是 AES CBC 加密的第一轮密钥
-pub(crate) const NONCE_STR: &str = "0CoJUm6Qyw8W8jud";
+pub const NONCE_STR: &str = "0CoJUm6Qyw8W8jud";
 /// WEAPI 和 EAPI 中 AES CBC 加密使用的固定初始化向量 (IV)
-pub(crate) const VI_STR: &str = "0102030405060708";
+pub const VI_STR: &str = "0102030405060708";
 
 /// EAPI 加密中使用的固定 AES ECB 密钥
 const EAPI_KEY_STR: &str = "e82ckenh8dichen8";
 /// WEAPI 加密中使用的 RSA 公钥指数 ("010001"，即 65537)
-pub(crate) const PUBKEY_STR_API: &str = "010001";
+pub const PUBKEY_STR_API: &str = "010001";
 /// WEAPI 加密中使用的 RSA 公钥模数 (一个很长的十六进制字符串)
-pub(crate) const MODULUS_STR_API: &str = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
+pub const MODULUS_STR_API: &str = "00e0b509f6259df8642dbc35662901477df22677ec152b5ff68ace615bb7b725152b3ab17a876aea8a5aa76d2e417629ec4ee341f56135fccf695280104e0312ecbda92557c93870114af6c9d05c4f7f0c3685b7a46bee255932575cce10b424d813cfe4875d3e82047b97ddef52741d546b8e289dc6935b3ece0462db0a22b8e7";
 
 /// 生成一个指定长度的随机字母数字字符串。
 ///

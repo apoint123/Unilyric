@@ -62,7 +62,7 @@ pub enum SearchField {
 
 impl SearchField {
     /// 将枚举成员转换为在索引元数据中对应的 key 字符串。
-    pub fn to_metadata_key(&self) -> &'static str {
+    pub const fn to_metadata_key(&self) -> &'static str {
         match self {
             Self::MusicName => "musicName",
             Self::Artists => "artists",

@@ -381,11 +381,10 @@ impl Provider for QQMusic {
     /// 一个 `Result`，其中包含一个通用的 `generic::Song` 结构。
     ///
     async fn get_song_info(&self, song_id: &str) -> Result<generic::Song> {
-        let param = if let Ok(id) = song_id.parse::<u64>() {
-            json!({ "song_id": id })
-        } else {
-            json!({ "song_mid": song_id })
-        };
+        let param = song_id.parse::<u64>().map_or_else(
+            |_| json!({ "song_mid": song_id }),
+            |id| json!({ "song_id": id }),
+        );
 
         let response_val = self
             .execute_api_request(GET_SONG_DETAIL_MODULE, GET_SONG_DETAIL_METHOD, param, &[0])

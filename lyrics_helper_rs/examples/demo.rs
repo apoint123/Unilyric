@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         title: Some("有点甜"),
         artists: Some(&["汪苏泷", "BY2"]),
         album: Some("万有引力"),
-        duration: Some(235000),
+        duration: Some(235_000),
     };
     info!(
         "准备搜索歌曲: '{}' - '{}'",
@@ -54,8 +54,7 @@ async fn main() -> Result<()> {
     );
     let song_id_for_lyrics = selected_result
         .provider_id_num
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| selected_result.provider_id.clone());
+        .map_or_else(|| selected_result.provider_id.clone(), |id| id.to_string());
     let mut parsed_lyrics_data = helper
         .get_full_lyrics(&selected_result.provider_name, &song_id_for_lyrics)?
         .await?;
@@ -127,7 +126,7 @@ fn prompt_user_for_selection(search_results: &[SearchResult]) -> Result<usize> {
 
         let album_display = result.album.as_deref().unwrap_or("N/A");
         let album_id_display = result.album_id.as_deref().unwrap_or("N/A");
-        println!("       专辑: {} (ID: {})", album_display, album_id_display);
+        println!("       专辑: {album_display} (ID: {album_id_display})");
 
         let duration_ms = result.duration.unwrap_or(0);
         let duration_formatted = if duration_ms > 0 {
@@ -139,8 +138,7 @@ fn prompt_user_for_selection(search_results: &[SearchResult]) -> Result<usize> {
         let language_display = result
             .language
             .as_ref()
-            .map(|l| format!("{:?}", l))
-            .unwrap_or_else(|| "N/A".to_string());
+            .map_or_else(|| "N/A".to_string(), |l| format!("{l:?}"));
         println!(
             "       来源: {:<10} | 匹配度: {:<15} | 时长: {} | 语言: {}",
             result.provider_name,
@@ -151,15 +149,14 @@ fn prompt_user_for_selection(search_results: &[SearchResult]) -> Result<usize> {
 
         let numeric_id_display = result
             .provider_id_num
-            .map(|id| id.to_string())
-            .unwrap_or_else(|| "N/A".to_string());
+            .map_or_else(|| "N/A".to_string(), |id| id.to_string());
         println!(
             "       ID:   Provider ID: {} | 数字 ID: {}",
             result.provider_id, numeric_id_display
         );
 
         let cover_url_display = result.cover_url.as_deref().unwrap_or("N/A");
-        println!("       封面: {}", cover_url_display);
+        println!("       封面: {cover_url_display}");
 
         if index < search_results.len() - 1 {
             println!();

@@ -139,12 +139,16 @@ pub fn generate_from_parsed<S: BuildHasher>(
             &metadata_store,
             &options.lrc,
         ),
-        LyricFormat::Ass => generators::ass_generator::generate_ass(
-            &source_data.lines,
-            &metadata_store,
-            source_data.is_line_timed_source,
-            &options.ass,
-        ),
+        LyricFormat::Ass => {
+            let agent_store = MetadataStore::to_agent_store(&metadata_store);
+            generators::ass_generator::generate_ass(
+                &source_data.lines,
+                &metadata_store,
+                &agent_store,
+                source_data.is_line_timed_source,
+                &options.ass,
+            )
+        }
         LyricFormat::Ttml => {
             let agent_store = MetadataStore::to_agent_store(&metadata_store);
             generate_ttml(

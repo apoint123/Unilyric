@@ -228,6 +228,7 @@ pub(super) fn get_time_attribute(
 mod tests {
     use super::*;
 
+    #[allow(clippy::cognitive_complexity)]
     #[test]
     fn test_parse_ttml_time_to_ms() {
         assert_eq!(parse_ttml_time_to_ms("7.1s").unwrap(), 7100);

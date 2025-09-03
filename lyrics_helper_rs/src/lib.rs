@@ -1,9 +1,3 @@
-#![warn(missing_docs)]
-#![warn(clippy::pedantic)]
-#![allow(clippy::too_many_lines)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::ignore_without_reason)]
-
 //! # Lyrics Helper RS
 //!
 //! 一个强大的 Rust 库，用于从多个在线音乐服务搜索歌曲、获取歌词，并进行格式转换。
@@ -150,13 +144,13 @@ impl ProviderName {
             Self::QQMusic,
             Self::Netease,
             Self::Kugou,
-            ProviderName::AmllTtmlDatabase,
+            Self::AmllTtmlDatabase,
         ]
     }
 
     /// 获取提供商的显示名称
     #[must_use]
-    pub fn display_name(&self) -> &'static str {
+    pub const fn display_name(&self) -> &'static str {
         match self {
             Self::QQMusic => "QQ音乐",
             Self::Netease => "网易云音乐",
@@ -212,38 +206,38 @@ pub enum SearchMode {
 impl SearchMode {
     /// 创建一个搜索特定提供商的模式
     #[must_use]
-    pub fn specific(provider: ProviderName) -> Self {
-        SearchMode::Specific(provider)
+    pub const fn specific(provider: ProviderName) -> Self {
+        Self::Specific(provider)
     }
 
     /// 创建一个搜索提供商子集的模式
     #[must_use]
-    pub fn subset(providers: Vec<ProviderName>) -> Self {
-        SearchMode::Subset(providers)
+    pub const fn subset(providers: Vec<ProviderName>) -> Self {
+        Self::Subset(providers)
     }
 
     /// 创建一个只搜索网易云音乐的模式
     #[must_use]
     pub const fn netease_only() -> Self {
-        SearchMode::Specific(ProviderName::Netease)
+        Self::Specific(ProviderName::Netease)
     }
 
     /// 创建一个只搜索QQ音乐的模式
     #[must_use]
     pub const fn qq_only() -> Self {
-        SearchMode::Specific(ProviderName::QQMusic)
+        Self::Specific(ProviderName::QQMusic)
     }
 
     /// 创建一个只搜索酷狗音乐的模式
     #[must_use]
     pub const fn kugou_only() -> Self {
-        SearchMode::Specific(ProviderName::Kugou)
+        Self::Specific(ProviderName::Kugou)
     }
 
     /// 创建一个只搜索AMLL TTML数据库的模式
     #[must_use]
     pub const fn amll_only() -> Self {
-        SearchMode::Specific(ProviderName::AmllTtmlDatabase)
+        Self::Specific(ProviderName::AmllTtmlDatabase)
     }
 }
 

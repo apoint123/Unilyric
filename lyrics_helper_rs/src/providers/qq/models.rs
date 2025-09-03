@@ -69,7 +69,7 @@ pub enum SearchType {
 impl SearchType {
     /// 获取该搜索类型对应的整数值
     #[must_use]
-    pub fn as_u32(&self) -> u32 {
+    pub const fn as_u32(&self) -> u32 {
         match self {
             Self::Song => 0,
             Self::Singer => 1,
@@ -168,7 +168,7 @@ pub enum QQMusicCoverSize {
 impl QQMusicCoverSize {
     /// 将给定封面尺寸变体的像素大小以 `u32` 形式返回。
     #[must_use]
-    pub fn as_u32(&self) -> u32 {
+    pub const fn as_u32(&self) -> u32 {
         match self {
             Self::Size90 => 90,
             Self::Size150 => 150,
@@ -508,7 +508,7 @@ pub enum SongFileType {
 impl SongFileType {
     /// 获取该文件类型对应的类型码和扩展名
     #[must_use]
-    pub fn get_parts(&self) -> (&str, &str) {
+    pub const fn get_parts(&self) -> (&str, &str) {
         match self {
             Self::Mp3_128 => ("M500", ".mp3"),
             Self::Mp3_320 => ("M800", "mp3"),

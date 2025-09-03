@@ -235,19 +235,22 @@ pub async fn get_qimei(
         Ok(result) => Ok(result),
         Err(e) => {
             tracing::warn!("获取 Qimei 失败: {}. 使用缓存或默认值。", e);
-            if let Some(cached_q36) = &device.qimei {
-                tracing::info!("使用缓存的 Qimei: {}", cached_q36);
-                Ok(QimeiResult {
-                    q16: String::new(), // q16 通常是临时的，所以返回空
-                    q36: cached_q36.clone(),
-                })
-            } else {
-                tracing::warn!("未找到缓存的 Qimei，使用硬编码的默认值。");
-                Ok(QimeiResult {
-                    q16: String::new(),
-                    q36: "6c9d3cd110abca9b16311cee10001e717614".to_string(),
-                })
-            }
+            device.qimei.as_ref().map_or_else(
+                || {
+                    tracing::warn!("未找到缓存的 Qimei，使用硬编码的默认值。");
+                    Ok(QimeiResult {
+                        q16: String::new(),
+                        q36: "6c9d3cd110abca9b16311cee10001e717614".to_string(),
+                    })
+                },
+                |cached_q36| {
+                    tracing::info!("使用缓存的 Qimei: {}", cached_q36);
+                    Ok(QimeiResult {
+                        q16: String::new(), // q16 通常是临时的，所以返回空
+                        q36: cached_q36.clone(),
+                    })
+                },
+            )
         }
     }
 }

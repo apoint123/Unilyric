@@ -373,11 +373,10 @@ impl Provider for NeteaseClient {
             return Ok(vec![]);
         }
 
-        let keyword = if let Some(artists) = track.artists.and_then(|a| a.first()) {
-            format!("{title} {artists}")
-        } else {
-            title.to_string()
-        };
+        let keyword = track
+            .artists
+            .and_then(|a| a.first())
+            .map_or_else(|| title.to_string(), |artists| format!("{title} {artists}"));
 
         // 使用 EAPI 搜索接口
         let url_path = "/api/cloudsearch/pc";
@@ -723,7 +722,7 @@ impl Provider for NeteaseClient {
 
 impl From<models::Song> for generic::Song {
     fn from(song: models::Song) -> Self {
-        generic::Song {
+        Self {
             id: song.id.to_string(),
             name: song.name,
             artists: song
@@ -742,14 +741,14 @@ impl From<models::Song> for generic::Song {
 
 impl From<models::Artist> for generic::Artist {
     fn from(artist: models::Artist) -> Self {
-        generic::Artist {
+        Self {
             id: artist.id.to_string(),
             name: artist.name,
         }
     }
 }
 
-fn get_user_agent(client_type: ClientType) -> &'static str {
+const fn get_user_agent(client_type: ClientType) -> &'static str {
     match client_type {
         ClientType::PC => {
             "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.0.18.203152"

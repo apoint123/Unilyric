@@ -202,7 +202,7 @@ fn parse_syllables_from_line(
 }
 
 /// 第二遍处理，修正所有行和音节的结束时间
-fn finalize_end_times(lines: &mut [LyricLine], _warnings: &mut Vec<String>) {
+fn finalize_end_times(lines: &mut [LyricLine], _warnings: &mut [String]) {
     // 首先按开始时间排序，确保时间线是正确的
     lines.sort_by_key(|line| line.start_ms);
     for i in 0..lines.len() {
