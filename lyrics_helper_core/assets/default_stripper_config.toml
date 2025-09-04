@@ -107,6 +107,7 @@ keywords = [
     "营销推广/出品/发行",
     "出品/发行公司",
     "音乐制作发行",
+    "本歌曲商用授权，前往小程序",
     "OP",
     "SP",
     "Lyrics by",
@@ -287,6 +288,7 @@ keywords = [
     "音乐项目总监Project Executive",
     "联合出品Published",
     "出品人Presenter",
+    "封面插画Cover illustration",
 ]
 
 regex_patterns = [
