@@ -271,6 +271,7 @@ impl Provider for AmllTtmlDatabase {
         Ok(final_results)
     }
 
+    #[allow(clippy::literal_string_with_formatting_args)]
     /// 获取并解析完整的 TTML 歌词文件。
     async fn get_full_lyrics(&self, song_id: &str) -> Result<FullLyricsResult> {
         let ttml_url = self.lyrics_url_template.replace("{song_id}", song_id);

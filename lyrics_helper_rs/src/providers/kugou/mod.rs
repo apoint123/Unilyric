@@ -472,7 +472,11 @@ impl Provider for KugouMusic {
                     provider_name: self.name().to_string(),
                     provider_id_num: Some(song.audio_id),
                     cover_url: Some(song.image.replace("{size}", "400")),
-                    language: map_language(song.trans_param.and_then(|p| p.language)),
+                    language: song
+                        .trans_param
+                        .and_then(|p| p.language)
+                        .as_deref()
+                        .map(map_language),
                     ..Default::default()
                 })
                 .collect();
@@ -988,6 +992,7 @@ impl Provider for KugouMusic {
         Err(LyricsHelperError::LyricNotFound)
     }
 
+    #[allow(clippy::literal_string_with_formatting_args)]
     async fn get_album_cover_url(&self, album_id: &str, size: CoverSize) -> Result<String> {
         let album_info = self.get_album_info(album_id).await?;
 
@@ -1008,14 +1013,14 @@ impl Provider for KugouMusic {
     }
 }
 
-fn map_language(lang_str: Option<String>) -> Option<Language> {
-    lang_str.map(|s| match s.as_str() {
+fn map_language(lang_str: &str) -> Language {
+    match lang_str {
         "国语" => Language::Chinese,
         "英语" => Language::English,
         "日语" => Language::Japanese,
         "韩语" => Language::Korean,
         _ => Language::Other,
-    })
+    }
 }
 
 #[cfg(test)]

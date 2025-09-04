@@ -187,14 +187,14 @@ impl NeteaseClient {
         match serde_json::from_str::<R>(&response_text) {
             Ok(data) => Ok(data),
             Err(e) => {
-                if response_text.contains("\"code\":400") && response_text.contains("参数错误")
+                if let Ok(json_val) = serde_json::from_str::<serde_json::Value>(&response_text)
+                    && json_val.get("code").and_then(serde_json::Value::as_i64) == Some(400)
                 {
-                    Err(LyricsHelperError::ApiError(
+                    return Err(LyricsHelperError::ApiError(
                         "网易云 API 返回 '参数错误' (code 400)。".to_string(),
-                    ))
-                } else {
-                    Err(LyricsHelperError::from(e))
+                    ));
                 }
+                Err(LyricsHelperError::from(e))
             }
         }
     }
