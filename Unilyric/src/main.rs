@@ -15,7 +15,7 @@ mod types;
 mod utils;
 
 use app_settings::AppSettings;
-use std::sync::mpsc;
+use std::sync::{LazyLock, Mutex, mpsc};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, Layer, fmt};
 
@@ -107,9 +107,9 @@ fn setup_tracing(
                     let (non_blocking_writer, guard) =
                         tracing_appender::non_blocking(file_appender);
 
-                    static LOG_GUARD: once_cell::sync::Lazy<
-                        std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
-                    > = once_cell::sync::Lazy::new(|| std::sync::Mutex::new(None));
+                    static LOG_GUARD: LazyLock<
+                        Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
+                    > = LazyLock::new(|| Mutex::new(None));
                     *LOG_GUARD.lock().unwrap() = Some(guard);
 
                     Some(

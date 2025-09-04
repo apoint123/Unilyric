@@ -23,7 +23,6 @@ dependencies = [
  "log",
  "lyrics_helper_core",
  "lyrics_helper_rs",
- "once_cell",
  "rand 0.9.2",
  "rfd",
  "serde",
@@ -35,7 +34,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "webbrowser",
 ]
 
 [[package]]

@@ -12,7 +12,7 @@ keywords = ["ttml", "lyrics", "parser", "generator", "xml"]
 categories = ["multimedia::audio", "parsing", "text-processing"]
 
 [dependencies]
-quick-xml = { version = "0.38.2", features = ["serialize"] }
+quick-xml = { version = "0.38.3", features = ["serialize"] }
 hyphenation = { version = "0.8.4", features = ["embed_en-us"] }
 unicode-segmentation = "1.12.0"
 tracing = "0.1.41"
