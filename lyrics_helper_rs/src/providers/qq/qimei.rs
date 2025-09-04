@@ -10,11 +10,12 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{Local, Utc};
 use cipher::{BlockEncryptMut, KeyIvInit};
 use md5::{Digest, Md5};
-use rand::Rng;
-use rand::rngs::OsRng;
-use rsa::pkcs8::DecodePublicKey;
-use rsa::{Pkcs1v15Encrypt, RsaPublicKey};
+use rand::{Rng, rngs::OsRng};
+use rsa::{Pkcs1v15Encrypt, RsaPublicKey, pkcs8::DecodePublicKey};
+use serde_json::json;
 use std::fmt::Write;
+use thiserror::Error;
+use tracing::{info, warn};
 
 const PUBLIC_KEY: &str = r"-----BEGIN PUBLIC KEY-----
 MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDEIxgwoutfwoJxcGQeedgP7FG9
@@ -25,6 +26,22 @@ LQ+FLkpncClKVIrBwv6PHyUvuCb0rIarmgDnzkfQAqVufEtR64iazGDKatvJ9y6B
 
 const SECRET: &str = "ZdJqM15EeO2zWc08";
 const APP_KEY: &str = "0AND0HD6FE4HY80F";
+const HEX_CHARSET: &[u8] = b"abcdef1234567890";
+
+#[derive(Debug, Error)]
+pub enum QimeiError {
+    #[error("加密失败")]
+    Encryption(String),
+
+    #[error("HTTP 请求失败")]
+    Network(#[from] crate::LyricsHelperError),
+
+    #[error("JSON 序列化或反序列化失败")]
+    Json(#[from] serde_json::Error),
+
+    #[error("API 响应解析失败: {0}")]
+    ResponseParsing(String),
+}
 
 /// Qimei 服务器成功响应后返回的数据结构。
 #[derive(serde::Deserialize, Debug)]
@@ -35,14 +52,11 @@ pub struct QimeiResult {
     pub q36: String,
 }
 
-fn rsa_encrypt(content: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+fn rsa_encrypt(content: &[u8]) -> Result<Vec<u8>, rsa::Error> {
     let cleaned_key = PUBLIC_KEY.trim();
-
-    let public_key = RsaPublicKey::from_public_key_pem(cleaned_key)?;
-
+    let public_key = RsaPublicKey::from_public_key_pem(cleaned_key).expect("解析公钥失败");
     let mut rng = OsRng;
-    let encrypted = public_key.encrypt(&mut rng, Pkcs1v15Encrypt, content)?;
-    Ok(encrypted)
+    public_key.encrypt(&mut rng, Pkcs1v15Encrypt, content)
 }
 
 fn aes_encrypt(key: &[u8], content: &[u8]) -> Result<Vec<u8>, &'static str> {
@@ -103,148 +117,160 @@ fn random_beacon_id() -> String {
     beacon_id
 }
 
-/// 从腾讯服务器获取 Qimei 指纹。
-///
-/// # 参数
-/// * `device` - 一个包含了虚拟设备所有信息的 `Device` 实例。
-/// * `version` - 当前模拟的 App 版本号字符串。
+fn build_payload(device: &Device, version: &str) -> serde_json::Value {
+    let reserved = json!({
+        "harmony": "0", "clone": "0", "containe": "",
+        "oz": "UhYmelwouA+V2nPWbOvLTgN2/m8jwGB+yUB5v9tysQg=",
+        "oo": "Xecjt+9S1+f8Pz2VLSxgpw==", "kelong": "0",
+        "uptimes": "2024-01-01 08:00:00", "multiUser": "0",
+        "bod": device.brand, "dv": device.device,
+        "firstLevel": "", "manufact": device.brand,
+        "name": device.model, "host": "se.infra",
+        "kernel": device.proc_version,
+    });
+
+    json!({
+        "androidId": device.android_id, "platformId": 1,
+        "appKey": APP_KEY, "appVersion": version,
+        "beaconIdSrc": random_beacon_id(),
+        "brand": device.brand, "channelId": "10003505",
+        "cid": "", "imei": device.imei, "imsi": "", "mac": "",
+        "model": device.model, "networkType": "unknown", "oaid": "",
+        "osVersion": format!("Android {},level {}", device.version.release, device.version.sdk),
+        "qimei": "", "qimei36": "", "sdkVersion": "1.2.13.6",
+        "targetSdkVersion": "33", "audit": "", "userId": "{}",
+        "packageId": "com.tencent.qqmusic",
+        "deviceType": "Phone", "sdkName": "",
+        "reserved": reserved.to_string(),
+    })
+}
+
+fn prepare_qimei_params(payload_bytes: &[u8]) -> Result<(serde_json::Value, i64), QimeiError> {
+    let (crypt_key, nonce) = {
+        let mut rng = rand::thread_rng();
+        let crypt_key: String = (0..16)
+            .map(|_| {
+                let idx = rng.gen_range(0..HEX_CHARSET.len());
+                HEX_CHARSET[idx] as char
+            })
+            .collect();
+        let nonce: String = (0..16)
+            .map(|_| {
+                let idx = rng.gen_range(0..HEX_CHARSET.len());
+                HEX_CHARSET[idx] as char
+            })
+            .collect();
+        (crypt_key, nonce)
+    };
+
+    let key_encrypted =
+        rsa_encrypt(crypt_key.as_bytes()).map_err(|e| QimeiError::Encryption(e.to_string()))?;
+    let key_b64 = STANDARD.encode(key_encrypted);
+
+    let params_encrypted = aes_encrypt(crypt_key.as_bytes(), payload_bytes)
+        .map_err(|e| QimeiError::Encryption(e.to_string()))?;
+    let params_b64 = STANDARD.encode(params_encrypted);
+
+    let ts = Utc::now().timestamp_millis();
+    let extra = format!(r#"{{"appKey":"{APP_KEY}"}}"#);
+
+    let mut signature_hasher = Md5::new();
+    signature_hasher.update(key_b64.as_bytes());
+    signature_hasher.update(params_b64.as_bytes());
+    signature_hasher.update(ts.to_string().as_bytes());
+    signature_hasher.update(nonce.as_bytes());
+    signature_hasher.update(SECRET.as_bytes());
+    signature_hasher.update(extra.as_bytes());
+    let sign = hex::encode(signature_hasher.finalize());
+
+    let qimei_params = json!({
+        "key": key_b64, "params": params_b64,
+        "time": ts.to_string(), "nonce": nonce,
+        "sign": sign, "extra": extra
+    });
+
+    Ok((qimei_params, ts))
+}
+
+async fn send_and_parse_response(
+    http_client: &dyn HttpClient,
+    qimei_params: serde_json::Value,
+    ts: i64,
+) -> Result<QimeiResult, QimeiError> {
+    let ts_sec = ts / 1000;
+    let mut header_sign_hasher = Md5::new();
+    header_sign_hasher.update(format!(
+        "qimei_qq_androidpzAuCmaFAaFaHrdakPjLIEqKrGnSOOvH{ts_sec}"
+    ));
+    let header_sign = hex::encode(header_sign_hasher.finalize());
+    let ts_sec_str = ts_sec.to_string();
+
+    let headers = [
+        ("method", "GetQimei"),
+        ("service", "trpc.tme_datasvr.qimeiproxy.QimeiProxy"),
+        ("appid", "qimei_qq_android"),
+        ("sign", &header_sign),
+        ("user-agent", "QQMusic"),
+        ("timestamp", &ts_sec_str),
+        ("Content-Type", "application/json"),
+    ];
+
+    let body = json!({ "app": 0, "os": 1, "qimeiParams": qimei_params });
+    let body_bytes = serde_json::to_vec(&body)?;
+
+    let response = http_client
+        .request_with_headers(
+            HttpMethod::Post,
+            "https://api.tencentmusic.com/tme/trpc/proxy",
+            &headers,
+            Some(&body_bytes),
+        )
+        .await?;
+
+    let response_text = response.text()?;
+    let outer_resp: serde_json::Value = serde_json::from_str(&response_text)?;
+    let inner_json_str = outer_resp["data"]
+        .as_str()
+        .ok_or_else(|| QimeiError::ResponseParsing("Inner data not found".to_string()))?;
+    let inner_resp: serde_json::Value = serde_json::from_str(inner_json_str)?;
+    let qimei_data = &inner_resp["data"];
+
+    serde_json::from_value(qimei_data.clone())
+        .map_err(|e| QimeiError::ResponseParsing(format!("Failed to parse final Qimei data: {e}")))
+}
+
+async fn try_get_qimei_from_network(
+    http_client: &dyn HttpClient,
+    device: &Device,
+    version: &str,
+) -> Result<QimeiResult, QimeiError> {
+    let payload = build_payload(device, version);
+    let payload_bytes = serde_json::to_vec(&payload)?;
+
+    let (qimei_params, ts) = prepare_qimei_params(&payload_bytes)?;
+
+    send_and_parse_response(http_client, qimei_params, ts).await
+}
+
 pub async fn get_qimei(
     http_client: &dyn HttpClient,
     device: &Device,
     version: &str,
-) -> Result<QimeiResult, Box<dyn std::error::Error>> {
-    const HEX_CHARSET: &[u8] = b"abcdef1234567890";
-
-    let network_result = async {
-        let reserved = serde_json::json!({
-            "harmony": "0", "clone": "0", "containe": "",
-            "oz": "UhYmelwouA+V2nPWbOvLTgN2/m8jwGB+yUB5v9tysQg=",
-            "oo": "Xecjt+9S1+f8Pz2VLSxgpw==", "kelong": "0",
-            "uptimes": "2024-01-01 08:00:00", "multiUser": "0",
-            "bod": device.brand, "dv": device.device,
-            "firstLevel": "", "manufact": device.brand,
-            "name": device.model, "host": "se.infra",
-            "kernel": device.proc_version,
-        });
-
-        let payload = serde_json::json!({
-            "androidId": device.android_id, "platformId": 1,
-            "appKey": APP_KEY, "appVersion": version,
-            "beaconIdSrc": random_beacon_id(),
-            "brand": device.brand, "channelId": "10003505",
-            "cid": "", "imei": device.imei, "imsi": "", "mac": "",
-            "model": device.model, "networkType": "unknown", "oaid": "",
-            "osVersion": format!("Android {},level {}", device.version.release, device.version.sdk),
-            "qimei": "", "qimei36": "", "sdkVersion": "1.2.13.6",
-            "targetSdkVersion": "33", "audit": "", "userId": "{}",
-            "packageId": "com.tencent.qqmusic",
-            "deviceType": "Phone", "sdkName": "",
-            "reserved": reserved.to_string(),
-        });
-
-        let payload_bytes = serde_json::to_vec(&payload)?;
-
-        let (crypt_key, nonce) = {
-            let mut rng = rand::thread_rng();
-            let crypt_key: String = (0..16)
-                .map(|_| {
-                    let idx = rng.gen_range(0..HEX_CHARSET.len());
-                    HEX_CHARSET[idx] as char
-                })
-                .collect();
-
-            let nonce: String = (0..16)
-                .map(|_| {
-                    let idx = rng.gen_range(0..HEX_CHARSET.len());
-                    HEX_CHARSET[idx] as char
-                })
-                .collect();
-
-            (crypt_key, nonce)
-        };
-
-        let key_encrypted = rsa_encrypt(crypt_key.as_bytes())?;
-        let key_b64 = STANDARD.encode(key_encrypted);
-
-        let params_encrypted = aes_encrypt(crypt_key.as_bytes(), &payload_bytes)?;
-        let params_b64 = STANDARD.encode(params_encrypted);
-
-        let ts = Utc::now().timestamp_millis();
-
-        let extra = format!(r#"{{"appKey":"{APP_KEY}"}}"#);
-
-        let mut signature_hasher = Md5::new();
-        signature_hasher.update(key_b64.as_bytes());
-        signature_hasher.update(params_b64.as_bytes());
-        signature_hasher.update(ts.to_string().as_bytes());
-        signature_hasher.update(nonce.as_bytes());
-        signature_hasher.update(SECRET.as_bytes());
-        signature_hasher.update(extra.as_bytes());
-        let sign = hex::encode(signature_hasher.finalize());
-
-        let ts_sec = ts / 1000;
-        let mut header_sign_hasher = Md5::new();
-        header_sign_hasher.update(format!(
-            "qimei_qq_androidpzAuCmaFAaFaHrdakPjLIEqKrGnSOOvH{ts_sec}"
-        ));
-        let header_sign = hex::encode(header_sign_hasher.finalize());
-        let ts_sec_str = ts_sec.to_string();
-
-        let headers = [
-            ("method", "GetQimei"),
-            ("service", "trpc.tme_datasvr.qimeiproxy.QimeiProxy"),
-            ("appid", "qimei_qq_android"),
-            ("sign", &header_sign),
-            ("user-agent", "QQMusic"),
-            ("timestamp", &ts_sec_str),
-            ("Content-Type", "application/json"),
-        ];
-
-        let body = serde_json::json!({
-            "app": 0, "os": 1,
-            "qimeiParams": {
-                "key": key_b64, "params": params_b64,
-                "time": ts.to_string(), "nonce": nonce,
-                "sign": sign, "extra": extra
-            }
-        });
-        let body_bytes = serde_json::to_vec(&body)?;
-
-        let response = http_client
-            .request_with_headers(
-                HttpMethod::Post,
-                "https://api.tencentmusic.com/tme/trpc/proxy",
-                &headers,
-                Some(&body_bytes),
-            )
-            .await
-            .map_err(Box::new)?;
-
-        let response_text = response.text().map_err(Box::new)?;
-        let outer_resp: serde_json::Value = serde_json::from_str(&response_text)?;
-        let inner_json_str = outer_resp["data"].as_str().ok_or("Inner data not found")?;
-        let inner_resp: serde_json::Value = serde_json::from_str(inner_json_str)?;
-        let qimei_data = &inner_resp["data"];
-        let result: QimeiResult = serde_json::from_value(qimei_data.clone())?;
-
-        Ok::<_, Box<dyn std::error::Error>>(result)
-    }
-    .await;
-
-    match network_result {
+) -> Result<QimeiResult, QimeiError> {
+    match try_get_qimei_from_network(http_client, device, version).await {
         Ok(result) => Ok(result),
         Err(e) => {
-            tracing::warn!("获取 Qimei 失败: {}. 使用缓存或默认值。", e);
+            warn!("获取 Qimei 失败: {}. 使用缓存或默认值。", e);
             device.qimei.as_ref().map_or_else(
                 || {
-                    tracing::warn!("未找到缓存的 Qimei，使用硬编码的默认值。");
+                    warn!("未找到缓存的 Qimei，使用硬编码的默认值。");
                     Ok(QimeiResult {
                         q16: String::new(),
                         q36: "6c9d3cd110abca9b16311cee10001e717614".to_string(),
                     })
                 },
                 |cached_q36| {
-                    tracing::info!("使用缓存的 Qimei: {}", cached_q36);
+                    info!("使用缓存的 Qimei: {}", cached_q36);
                     Ok(QimeiResult {
                         q16: String::new(), // q16 通常是临时的，所以返回空
                         q36: cached_q36.clone(),
