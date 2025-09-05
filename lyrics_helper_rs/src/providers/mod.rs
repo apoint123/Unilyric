@@ -2,26 +2,27 @@
 //!
 //! 该模块定义了与 Providers 进行交互的核心抽象。
 
+pub mod amll_ttml_database;
+pub mod kugou;
+pub mod login;
+// pub mod musixmatch;
+pub mod netease;
+pub mod qq;
+
 use std::sync::Arc;
+
+use crate::error::Result;
+use crate::http::{HttpClient, ReqwestClient};
+pub use login::LoginProvider;
 
 use async_trait::async_trait;
 use lyrics_helper_core::{
     CoverSize, FullLyricsResult, ParsedSourceData, SearchResult, Track, model::generic,
 };
 
-use crate::error::Result;
-use crate::http::{HttpClient, ReqwestClient};
-
-pub mod amll_ttml_database;
-pub mod kugou;
-// pub mod musixmatch;
-pub mod netease;
-pub mod qq;
-
 /// 定义了所有音乐平台提供商需要实现的通用接口。
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[async_trait]
 pub trait Provider: Send + Sync {
     /// 使用默认的 Reqwest HTTP 客户端创建一个新的 Provider 实例。
     async fn new() -> Result<Self>
@@ -45,6 +46,15 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &'static str;
 
     ///
+    /// 尝试将此 Provider 转换为 `LoginProvider`。
+    ///
+    /// 如果 Provider 不支持登录，则返回 None。
+    /// 默认返回 None，需要登录的 Provider 应重写此方法。
+    ///
+    fn as_login_provider(&self) -> Option<&dyn LoginProvider> {
+        None
+    }
+
     /// 根据歌曲信息（如歌曲标题、艺术家）搜索歌曲。
     ///
     /// # 参数
@@ -157,6 +167,7 @@ pub trait Provider: Send + Sync {
     ///
     /// # 注意
     /// 大概率因版权、地区限制或 VIP 而失败。
+    /// 建议登陆后再调用此接口。
     ///
     /// # 参数
     /// * `song_id` - 歌曲 ID。

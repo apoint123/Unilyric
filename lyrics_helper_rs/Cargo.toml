@@ -70,6 +70,8 @@ console_error_panic_hook = { version = "0.1", optional = true }
 tracing-wasm = { version = "0.2", optional = true }
 serde-wasm-bindgen = { version = "0.6", optional = true }
 serde_urlencoded = "0.7.1"
+cookie_store = { version = "0.22", features = ["preserve_order"] }
+parking_lot = "0.12.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.uuid]
 version = "1"
@@ -97,6 +99,7 @@ console_error_panic_hook = ["dep:console_error_panic_hook"]
 
 [build-dependencies]
 fst = "0.4"
+rand = "0.9"
 
 [[bench]]
 name = "decryption_benchmark"

@@ -1,17 +1,61 @@
 //! `reqwest` 客户端的默认实现。
 
-use std::collections::HashMap;
-
 use async_trait::async_trait;
-use reqwest::header::HeaderMap;
+use cookie_store::{CookieStore, RawCookie, serde::json};
+use parking_lot::Mutex;
+use reqwest::{Url, header::HeaderMap, header::HeaderValue};
+use std::{collections::HashMap, sync::Arc};
 
-use crate::error::{LyricsHelperError, Result};
-use crate::http::{HttpClient, HttpMethod, HttpResponse};
+use crate::{
+    error::{LyricsHelperError, Result},
+    http::{HttpClient, HttpMethod, HttpResponse},
+};
+
+#[derive(Debug, Clone, Default)]
+struct SharedCookieStore {
+    store: Arc<Mutex<CookieStore>>,
+}
+
+impl SharedCookieStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl reqwest::cookie::CookieStore for SharedCookieStore {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+        let mut store = self.store.lock();
+
+        let cookies = cookie_headers.filter_map(|val| {
+            val.to_str()
+                .ok()
+                .and_then(|s| RawCookie::parse(s.to_owned()).ok())
+        });
+        store.store_response_cookies(cookies, url);
+    }
+
+    fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+        let cookie_string = self
+            .store
+            .lock()
+            .get_request_values(url)
+            .map(|(name, value)| format!("{name}={value}"))
+            .collect::<Vec<_>>()
+            .join("; ");
+
+        if cookie_string.is_empty() {
+            None
+        } else {
+            HeaderValue::from_str(&cookie_string).ok()
+        }
+    }
+}
 
 /// 包装了 `reqwest::Client` 的 `HttpClient` 实现。
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ReqwestClient {
     client: reqwest::Client,
+    cookie_store: Arc<SharedCookieStore>,
 }
 
 impl Default for ReqwestClient {
@@ -23,23 +67,48 @@ impl Default for ReqwestClient {
 impl ReqwestClient {
     /// 创建一个新的 `ReqwestClient` 实例。
     pub fn new() -> Result<Self> {
-        let builder = reqwest::Client::builder();
+        let cookie_store = Arc::new(SharedCookieStore::new());
+        let builder = reqwest::Client::builder().cookie_provider(Arc::clone(&cookie_store));
 
         #[cfg(not(target_arch = "wasm32"))]
-        let builder = { builder.timeout(std::time::Duration::from_secs(10)) };
+        let builder = builder.timeout(std::time::Duration::from_secs(10));
         #[cfg(target_arch = "wasm32")]
         let builder = builder;
 
         let client = builder
             .build()
             .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
-        Ok(Self { client })
+
+        Ok(Self {
+            client,
+            cookie_store,
+        })
     }
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl HttpClient for ReqwestClient {
+    fn get_cookies(&self) -> Result<String> {
+        let store = self.cookie_store.store.lock();
+        let mut writer = Vec::new();
+        json::save_incl_expired_and_nonpersistent(&store, &mut writer)
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
+        Ok(String::from_utf8(writer).unwrap_or_default())
+    }
+
+    fn set_cookies(&self, cookies_json: &str) -> Result<()> {
+        if cookies_json.is_empty() {
+            *self.cookie_store.store.lock() = CookieStore::default();
+            return Ok(());
+        }
+        let new_store = json::load_all(cookies_json.as_bytes())
+            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
+
+        *self.cookie_store.store.lock() = new_store;
+        Ok(())
+    }
+
     async fn get(&self, url: &str) -> Result<HttpResponse> {
         let response = self
             .client
@@ -137,13 +206,15 @@ async fn convert_response(response: reqwest::Response) -> Result<HttpResponse> {
 
 /// 将 `reqwest` 的 `HeaderMap` 转换为 `HashMap<String, String>`。
 fn convert_headers(header_map: &HeaderMap) -> HashMap<String, String> {
-    let mut headers = HashMap::new();
-    for (name, value) in header_map {
-        if let Ok(value_str) = value.to_str() {
-            headers.insert(name.as_str().to_string(), value_str.to_string());
-        }
-    }
-    headers
+    header_map
+        .iter()
+        .filter_map(|(name, value)| {
+            value
+                .to_str()
+                .ok()
+                .map(|value_str| (name.as_str().to_string(), value_str.to_string()))
+        })
+        .collect()
 }
 
 impl From<HttpMethod> for reqwest::Method {

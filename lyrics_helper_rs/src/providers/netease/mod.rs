@@ -1,30 +1,38 @@
 //! 此模块实现了与网易云音乐平台进行交互的 `Provider`。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-use std::{fmt::Write, sync::Arc};
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STD};
 use chrono::Utc;
+use cookie_store::serde::json;
 use lyrics_helper_core::{
     ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, LyricFormat,
     RawLyrics, SearchResult, Track, model::generic,
 };
-use rand::Rng;
-use reqwest::header::{CONTENT_TYPE, COOKIE, HeaderValue, REFERER, USER_AGENT};
+use md5::{Digest, Md5};
+use parking_lot::Mutex;
+use rand::{Rng, SeedableRng, seq::SliceRandom};
+use reqwest::header::{CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::Serialize;
 use serde_json::json;
+use tracing::trace;
 
 use crate::{
     converter,
     error::{LyricsHelperError, Result},
     http::HttpClient,
-    providers::Provider,
+    model::auth::{LoginCredentials, LoginResult, ProviderAuthState, UserProfile},
+    providers::{LoginProvider, Provider},
 };
 
 mod crypto;
 pub mod models;
 
 const BASE_URL_NETEASE: &str = "https://music.163.com";
+const ID_XOR_KEY_1: &[u8] = b"3go8&$8*3*3h0k(2)2";
+const SELECTED_DEVICE_IDS: &str = include_str!(concat!(env!("OUT_DIR"), "/selected_deviceids.txt"));
 
 // TODO: 允许选择设备类型
 #[allow(dead_code)]
@@ -89,18 +97,60 @@ pub struct NeteaseClient {
     weapi_secret_key: String,
     /// 使用 RSA 公钥加密 `weapi_secret_key` 后得到的结果，作为请求的一部分发送。
     weapi_enc_sec_key: String,
-    /// 用户的 Cookie，用于访问需要登录的接口
-    cookie: Option<String>,
     http_client: Arc<dyn HttpClient>,
     config: ClientConfig,
+    user_profile: Arc<Mutex<Option<UserProfile>>>,
 }
 
 impl NeteaseClient {
-    /// 设置客户端的 Cookie。
-    #[must_use]
-    pub fn with_cookie(mut self, cookie: String) -> Self {
-        self.cookie = Some(cookie);
-        self
+    async fn fetch_user_profile(&self) -> Result<UserProfile> {
+        let url = "https://music.163.com/api/nuser/account/get";
+        let payload = json!({});
+        let resp: models::AccountProfileResult = self.post_weapi(url, &payload).await?;
+
+        if let Some(profile) = resp.profile {
+            Ok(UserProfile {
+                user_id: profile.user_id,
+                nickname: profile.nickname,
+                avatar_url: profile.avatar_url,
+            })
+        } else {
+            Err(LyricsHelperError::LoginFailed(
+                "Cookie 无效或已过期".to_string(),
+            ))
+        }
+    }
+
+    async fn register_anonimous(&self) -> Result<()> {
+        let device_ids: Vec<&str> = SELECTED_DEVICE_IDS.lines().collect();
+        if device_ids.is_empty() {
+            tracing::warn!("[Netease] 未能获取到任何 Device ID，跳过游客登录。");
+            return Ok(());
+        }
+
+        let mut rng = rand::rngs::StdRng::from_entropy();
+
+        let device_id = device_ids.choose(&mut rng).unwrap_or(&"");
+
+        let signature = cloudmusic_dll_encode_id(device_id);
+        let encoded_username = BASE64_STD.encode(format!("{device_id} {signature}"));
+
+        let url = "https://music.163.com/api/register/anonimous";
+        let payload = json!({ "username": encoded_username });
+
+        let resp: serde_json::Value = self.post_weapi(url, &payload).await?;
+
+        // 虽然 weapi 在这里返回 400 错误，但是 cookie 确实返回给我们了
+        if resp.get("code").and_then(serde_json::Value::as_i64) == Some(400) {
+            tracing::info!("[Netease] 游客登录成功！");
+        } else {
+            let msg = resp
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("未知错误");
+            return Err(LyricsHelperError::ApiError(format!("游客登录失败: {msg}")));
+        }
+        Ok(())
     }
 
     /// 辅助函数，用于发送加密的 WEAPI 请求。
@@ -130,35 +180,9 @@ impl NeteaseClient {
 
         let user_agent = get_user_agent(self.config.client_type);
 
-        let mut cookie_str = format!(
-            "os=pc; osver={}; appver={}; __remember_me=true",
-            self.config.os_version.as_deref().unwrap_or(""),
-            self.config.app_version.as_deref().unwrap_or("")
-        );
-
-        if let Some(user_cookie) = &self.cookie {
-            cookie_str.push_str("; ");
-            if user_cookie.to_lowercase().contains("music_u=") {
-                cookie_str.push_str(user_cookie);
-            } else {
-                write!(cookie_str, "MUSIC_U={user_cookie}")
-                    .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
-            }
-        }
-
-        let cookie_value = cookie_str
-            .parse::<HeaderValue>()
-            .map_err(|e| LyricsHelperError::ApiError(format!("无法解析 WEAPI COOKIE: {e}")))?;
-
-        // 发送 POST 请求
-        let cookie_str_header = cookie_value.to_str().map_err(|_| {
-            LyricsHelperError::Internal("Failed to convert WEAPI cookie to string".to_string())
-        })?;
-
         let headers = [
             (USER_AGENT.as_str(), user_agent),
             (REFERER.as_str(), BASE_URL_NETEASE),
-            (COOKIE.as_str(), cookie_str_header),
             (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
         ];
 
@@ -177,6 +201,8 @@ impl NeteaseClient {
             .await?;
 
         let response_text = response.text()?;
+
+        trace!("weapi 原始响应内容: {}", &response_text);
 
         if response_text.is_empty() {
             return Err(LyricsHelperError::ApiError(
@@ -211,27 +237,8 @@ impl NeteaseClient {
 
         let user_agent = get_user_agent(self.config.client_type);
 
-        let mut cookie_parts = vec!["os=pc".to_string(), "appver=8.9.75".to_string()];
-        if let Some(user_cookie) = &self.cookie {
-            if user_cookie.to_lowercase().contains("music_u=") {
-                cookie_parts.push(user_cookie.clone());
-            } else {
-                cookie_parts.push(format!("MUSIC_U={user_cookie}"));
-            }
-        }
-        let cookie_str = cookie_parts.join("; ");
-
-        let cookie_value = cookie_str
-            .parse::<HeaderValue>()
-            .map_err(|e| LyricsHelperError::ApiError(format!("无法解析 EAPI COOKIE: {e}")))?;
-
-        let cookie_str_header = cookie_value.to_str().map_err(|_| {
-            LyricsHelperError::Internal("Failed to convert EAPI cookie to string".to_string())
-        })?;
-
         let headers = [
             (USER_AGENT.as_str(), user_agent),
-            (COOKIE.as_str(), cookie_str_header),
             (REFERER.as_str(), BASE_URL_NETEASE),
             (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
         ];
@@ -252,7 +259,7 @@ impl NeteaseClient {
 
         let response_text = response.text()?;
 
-        // println!("\n{}\n", &response_text);
+        trace!("eapi 原始响应内容: {}", &response_text);
         serde_json::from_str::<R>(&response_text).map_err(LyricsHelperError::from)
     }
 
@@ -276,7 +283,6 @@ impl NeteaseClient {
             "channel": config.channel.as_deref().unwrap_or(""),
             "requestId": format!("{}_{:04}", current_time_ms, rand::random::<u16>() % 1000),
             "__csrf": "",
-            "MUSIC_U": self.cookie.as_deref().unwrap_or(""),
         })
     }
 
@@ -347,6 +353,10 @@ impl Provider for NeteaseClient {
         "netease"
     }
 
+    fn as_login_provider(&self) -> Option<&dyn LoginProvider> {
+        Some(self)
+    }
+
     async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
     where
         Self: Sized,
@@ -358,13 +368,19 @@ impl Provider for NeteaseClient {
             crypto::MODULUS_STR_API,
         )?;
 
-        Ok(Self {
+        let client = Self {
             weapi_secret_key,
             weapi_enc_sec_key,
-            cookie: None,
             http_client,
             config: ClientConfig::default(),
-        })
+            user_profile: Arc::new(Mutex::new(None)),
+        };
+
+        if let Err(e) = client.register_anonimous().await {
+            tracing::warn!("[Netease] 游客登录失败: {}", e);
+        }
+
+        Ok(client)
     }
 
     async fn search_songs(&self, track: &Track<'_>) -> Result<Vec<SearchResult>> {
@@ -512,7 +528,7 @@ impl Provider for NeteaseClient {
 
         let mut parsed_data =
             converter::parse_and_merge(&conversion_input, &ConversionOptions::default())?;
-        parsed_data.source_name = "netease".to_string();
+        parsed_data.source_name = self.name().to_string();
 
         let raw_lyrics = RawLyrics {
             format: main_format.to_string(),
@@ -748,6 +764,21 @@ impl From<models::Artist> for generic::Artist {
     }
 }
 
+fn cloudmusic_dll_encode_id(device_id: &str) -> String {
+    let device_id_bytes = device_id.as_bytes();
+    let mut xored_bytes = Vec::with_capacity(device_id_bytes.len());
+
+    for (i, byte) in device_id_bytes.iter().enumerate() {
+        xored_bytes.push(byte ^ ID_XOR_KEY_1[i % ID_XOR_KEY_1.len()]);
+    }
+
+    let mut hasher = Md5::new();
+    hasher.update(&xored_bytes);
+    let digest = hasher.finalize();
+
+    BASE64_STD.encode(digest)
+}
+
 const fn get_user_agent(client_type: ClientType) -> &'static str {
     match client_type {
         ClientType::PC => {
@@ -760,8 +791,73 @@ const fn get_user_agent(client_type: ClientType) -> &'static str {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl LoginProvider for NeteaseClient {
+    async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult> {
+        match credentials {
+            LoginCredentials::NeteaseByCookie { music_u } => {
+                let mut temp_store = cookie_store::CookieStore::default();
+                let cookie_str = format!("MUSIC_U={music_u}");
+                let url = BASE_URL_NETEASE.parse().unwrap();
+                temp_store.store_response_cookies(
+                    std::iter::once(cookie_store::RawCookie::parse(cookie_str).unwrap()),
+                    &url,
+                );
+                let mut writer = Vec::new();
+                json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer).unwrap();
+                let cookie_json = String::from_utf8(writer).unwrap();
+
+                self.http_client.set_cookies(&cookie_json)?;
+
+                let user_profile = self.fetch_user_profile().await?;
+                *self.user_profile.lock() = Some(user_profile.clone());
+
+                Ok(LoginResult {
+                    profile: user_profile,
+                    auth_state: ProviderAuthState::Netease,
+                })
+            }
+        }
+    }
+
+    async fn verify_session(&self) -> Result<()> {
+        match self.fetch_user_profile().await {
+            Ok(profile) => {
+                *self.user_profile.lock() = Some(profile);
+                Ok(())
+            }
+            Err(e) => {
+                *self.user_profile.lock() = None;
+                Err(e)
+            }
+        }
+    }
+
+    fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
+        if matches!(auth_state, ProviderAuthState::Netease) {
+            *self.user_profile.lock() = None;
+            Ok(())
+        } else {
+            Err(LyricsHelperError::Internal(
+                "无效的认证状态类型".to_string(),
+            ))
+        }
+    }
+
+    fn get_auth_state(&self) -> Option<ProviderAuthState> {
+        if self.user_profile.lock().is_some() {
+            Some(ProviderAuthState::Netease)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::env;
+
     use super::*;
 
     const TEST_SONG_NAME: &str = "明天见";
@@ -769,9 +865,20 @@ mod tests {
     const TEST_SONG_ID: &str = "2116402049";
     const TEST_ALBUM_ID: &str = "182985259";
 
+    fn init_tracing() {
+        use tracing_subscriber::{EnvFilter, FmtSubscriber};
+        let filter = EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info,lyrics_helper_rs=trace"));
+        let _ = FmtSubscriber::builder()
+            .with_env_filter(filter)
+            .with_test_writer()
+            .try_init();
+    }
+
     #[tokio::test]
     #[ignore]
     async fn test_search_songs() {
+        init_tracing();
         let provider = NeteaseClient::new().await.unwrap();
 
         let search_track = Track {
@@ -803,8 +910,10 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_lyrics() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
-        let lyrics = provider.get_lyrics(TEST_SONG_ID).await.unwrap();
+        let lyrics = provider.get_lyrics("33894312").await.unwrap();
 
         assert!(!lyrics.lines.is_empty(), "解析后的歌词行列表不应为空");
         println!("✅ 测试 get_lyrics 通过，格式: {:?}", lyrics.source_format);
@@ -813,6 +922,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_info() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
         let album_info = provider.get_album_info(TEST_ALBUM_ID).await.unwrap();
 
@@ -825,6 +936,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_playlist() {
+        init_tracing();
+
         const NEW_SONGS_PLAYLIST_ID: &str = "3779629";
         let provider = NeteaseClient::new().await.unwrap();
         let playlist = provider.get_playlist(NEW_SONGS_PLAYLIST_ID).await.unwrap();
@@ -840,6 +953,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_song_info() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
         let song = provider.get_song_info(TEST_SONG_ID).await.unwrap();
 
@@ -854,6 +969,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_song_link() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
         let link_result = provider.get_song_link(TEST_SONG_ID).await;
 
@@ -877,6 +994,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_cover_url() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
         let album_id = "182985259";
 
@@ -909,6 +1028,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_singer_songs() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
 
         let singer_id = "12138269";
@@ -953,6 +1074,8 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn test_get_album_songs() {
+        init_tracing();
+
         let provider = NeteaseClient::new().await.unwrap();
 
         let album_id = "182985259";
@@ -992,6 +1115,7 @@ mod tests {
     // #[tokio::test]
     // #[ignore]
     // async fn test_get_song_link_v1_vip() {
+    //     init_tracing();
     //     const VIP_SONG_ID: &str = "1847975477";
 
     //     let cookie =
@@ -1014,4 +1138,60 @@ mod tests {
     //         }
     //     }
     // }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_anonymous_login_on_creation() {
+        init_tracing();
+
+        let provider_result = NeteaseClient::new().await;
+        let provider = provider_result.unwrap();
+
+        let cookies_json_result = provider.http_client.get_cookies();
+        let cookies_json = cookies_json_result.unwrap();
+
+        println!("获取到的 Cookies: {cookies_json}");
+
+        assert!(
+            !cookies_json.is_empty() && cookies_json != "[]" && cookies_json != "{}",
+            "游客登录后，Cookie 罐不应该是空的"
+        );
+
+        assert!(cookies_json.contains("NMTID"), "应该包含游客令牌 'NMTID'");
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_login_by_cookie() {
+        init_tracing();
+        let music_u_cookie = env::var("NETEASE_MUSIC_U");
+        if music_u_cookie.is_err() {
+            println!("未找到环境变量 NETEASE_MUSIC_U。");
+            return;
+        }
+
+        let music_u_cookie = music_u_cookie.unwrap();
+
+        let provider = NeteaseClient::new().await.expect("创建 NeteaseClient 失败");
+
+        let credentials = LoginCredentials::NeteaseByCookie {
+            music_u: &music_u_cookie,
+        };
+
+        let login_result = provider.login(&credentials).await;
+
+        assert!(
+            login_result.is_ok(),
+            "Cookie 登录不应该失败！错误: {:?}",
+            login_result.err()
+        );
+        let profile = login_result.unwrap();
+
+        assert!(
+            !profile.profile.nickname.is_empty(),
+            "登录成功后，返回的用户信息里应该有昵称！"
+        );
+
+        println!("✅ 成功以 '{}' 的身份登录！", profile.profile.nickname);
+    }
 }

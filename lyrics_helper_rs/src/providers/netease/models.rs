@@ -1,8 +1,7 @@
 //! 此模块定义了所有用于反序列化网易云音乐 API 响应的 `struct` 数据结构。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 
 // =================================================================
 // 搜索接口 (`/eapi/cloudsearch/pc`) 的模型
@@ -44,10 +43,6 @@ pub struct LyricResult {
     pub romalrc: Option<LyricData>,
     /// 逐字 YRC 歌词。
     pub yrc: Option<LyricData>,
-    /// 另一种格式的翻译歌词（内容通常与 `tlyric` 相同）。
-    pub ytlrc: Option<Value>,
-    /// 另一种格式的罗马音歌词（内容通常与 `romalrc` 相同）。
-    pub yromalrc: Option<Value>,
 }
 
 /// 单一歌词内容的数据结构。
@@ -265,4 +260,35 @@ pub struct SongUrlDataV1 {
     pub level: Option<String>,
     /// 文件大小
     pub size: u64,
+}
+
+// =================================================================
+// 用户信息接口 (`/api/nuser/account/get`) 的模型
+// =================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Account {
+    pub id: i64,
+    pub user_name: String,
+    pub vip_type: i32,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub user_id: i64,
+    pub nickname: String,
+    pub avatar_url: String,
+    pub background_url: String,
+    pub signature: Option<String>,
+    pub followed: bool,
+    pub vip_type: i32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AccountProfileResult {
+    pub code: i32,
+    pub account: Option<Account>,
+    pub profile: Option<Profile>,
 }

@@ -78,6 +78,14 @@ pub enum LyricsHelperError {
     /// 未初始化提供商功能
     #[error("提供商尚未初始化。请先调用 `load_providers()` 方法。")]
     ProvidersNotInitialized,
+
+    /// 登录失败
+    #[error("登录失败: {0}")]
+    LoginFailed(String),
+
+    /// 登录失败
+    #[error("{0} 提供商不支持登录")]
+    LoginNotSupported(String),
 }
 
 /// `LyricsHelperError` 的 `Result` 类型别名，方便在函数签名中使用。

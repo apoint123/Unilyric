@@ -96,4 +96,10 @@ pub trait HttpClient: Send + Sync + Debug {
         self.request_with_headers(HttpMethod::Get, &full_url, headers, None)
             .await
     }
+
+    /// 导出当前 `HttpClient` 中的所有 Cookies 为 JSON 字符串
+    fn get_cookies(&self) -> Result<String>;
+
+    /// 从 JSON 字符串中导入 Cookies，覆盖现有状态
+    fn set_cookies(&self, cookies_json: &str) -> Result<()>;
 }

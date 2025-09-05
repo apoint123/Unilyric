@@ -90,18 +90,26 @@ use std::{
     sync::Arc,
 };
 
-use crate::http::{HttpClient, ReqwestClient};
+use crate::{
+    http::{HttpClient, ReqwestClient},
+    model::auth::ProviderSession,
+};
 
-use futures::{Future, future};
+use futures::{Future, StreamExt, future, stream};
 use lyrics_helper_core::{
     ComprehensiveSearchResult, ConversionInput, ConversionOptions, CoverSize, FullConversionResult,
     FullLyricsResult, LyricFormat, LyricsAndMetadata, ParsedSourceData, SearchResult, Track,
 };
+use serde::{Deserialize, Serialize};
 
 pub use crate::error::{LyricsHelperError, Result};
+pub use crate::model::auth::{
+    LoginCredentials, LoginResult, ProviderAuthState, Session, UserProfile,
+};
+pub use crate::providers::LoginProvider;
 
 /// 支持的歌词提供商枚举
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ProviderName {
     /// QQ音乐
     QQMusic,
@@ -264,7 +272,7 @@ pub type SearchLyricsComprehensiveFuture<'a> =
 /// 这是与本库交互的主要入口点。
 pub struct LyricsHelper {
     providers: Vec<Arc<dyn Provider + Send + Sync>>,
-    http_client: Arc<dyn HttpClient>,
+    http_clients: HashMap<ProviderName, Arc<dyn HttpClient>>,
 }
 
 impl Default for LyricsHelper {
@@ -280,21 +288,140 @@ impl LyricsHelper {
     /// 若要使用歌词搜索和下载功能，必须先调用 `load_providers()` 方法。
     #[must_use]
     pub fn new() -> Self {
-        let default_client =
-            Arc::new(ReqwestClient::new().expect("Failed to create default HTTP client"));
-        Self::new_with_http_client(default_client)
-    }
-
-    /// 创建一个新的 `LyricsHelper` 实例，使用一个自定义的 HTTP 客户端。
-    ///
-    /// # 参数
-    /// * `http_client` - 一个实现了 `HttpClient` trait 的客户端实例。
-    #[must_use]
-    pub fn new_with_http_client(http_client: Arc<dyn HttpClient>) -> Self {
         Self {
             providers: Vec::new(),
-            http_client,
+            http_clients: HashMap::new(),
         }
+    }
+
+    /// 对指定的提供商执行登录操作。
+    ///
+    /// # 参数
+    /// * `provider_name` - 要登录的提供商。
+    /// * `credentials` - 提供的凭据。
+    ///
+    /// # 返回
+    /// 成功时返回包含用户信息的 `serde_json::Value`，可用于展示。
+    pub async fn login(
+        &self,
+        provider_name: ProviderName,
+        credentials: &LoginCredentials<'_>,
+    ) -> Result<UserProfile> {
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.name() == provider_name.as_str())
+            .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
+
+        let login_provider = provider
+            .as_login_provider()
+            .ok_or_else(|| LyricsHelperError::LoginNotSupported(provider_name.to_string()))?;
+
+        let result = login_provider.login(credentials).await?;
+
+        Ok(result.profile)
+    }
+
+    /// 导出包含所有登录状态的会话。
+    ///
+    /// # 返回
+    /// 一个序列化为 JSON 字符串的 `Session` 对象，可以被保存到本地。
+    pub fn export_session(&self) -> Result<String> {
+        let mut provider_sessions = HashMap::new();
+
+        for (name, client) in &self.http_clients {
+            let cookies = client.get_cookies()?;
+            let cookies_opt = if cookies.is_empty() || cookies == "{}" {
+                None
+            } else {
+                Some(cookies)
+            };
+
+            let auth_state_opt = self
+                .providers
+                .iter()
+                .find(|p| p.name() == name.as_str())
+                .and_then(|p| p.as_login_provider())
+                .and_then(LoginProvider::get_auth_state);
+
+            if cookies_opt.is_some() || auth_state_opt.is_some() {
+                provider_sessions.insert(
+                    name.clone(),
+                    ProviderSession {
+                        cookies: cookies_opt,
+                        auth_state: auth_state_opt,
+                    },
+                );
+            }
+        }
+
+        let session = Session { provider_sessions };
+        serde_json::to_string(&session).map_err(Into::into)
+    }
+
+    /// 从会话数据中恢复所有登录状态。
+    ///
+    /// 应该在执行任何需要登录的操作之前调用。
+    ///
+    /// # 参数
+    /// * `session_json` - `export_session` 方法返回的 JSON 字符串。
+    pub fn import_session(&self, session_json: &str) -> Result<()> {
+        if session_json.is_empty() {
+            return Ok(());
+        }
+
+        let session: Session = serde_json::from_str(session_json)?;
+
+        for (name, provider_session) in session.provider_sessions {
+            if let Some(cookies) = provider_session.cookies
+                && let Some(client) = self.http_clients.get(&name)
+            {
+                client.set_cookies(&cookies)?;
+            }
+
+            if let Some(auth_state) = provider_session.auth_state
+                && let Some(provider) = self.providers.iter().find(|p| p.name() == name.as_str())
+                && let Some(login_provider) = provider.as_login_provider()
+            {
+                login_provider.set_auth_state(&auth_state)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn verify_sessions(&self) -> Result<()> {
+        let mut verification_futures = Vec::new();
+
+        for provider in &self.providers {
+            if let Some(login_provider) = provider.as_login_provider()
+                && login_provider.get_auth_state().is_some()
+            {
+                let provider_name = login_provider.name().to_string();
+                let future = async move {
+                    login_provider
+                        .verify_session()
+                        .await
+                        .map_err(|e| (provider_name, e))
+                };
+                verification_futures.push(future);
+            }
+        }
+
+        if verification_futures.is_empty() {
+            return Ok(());
+        }
+
+        let results = future::join_all(verification_futures).await;
+
+        for result in results {
+            if let Err((provider_name, error)) = result {
+                tracing::warn!("提供商 '{}' 的会话验证失败: {}", provider_name, error);
+                return Err(error);
+            }
+        }
+
+        tracing::info!("所有已恢复的会话均验证成功。");
+        Ok(())
     }
 
     /// 初始化并加载所有歌词提供商。
@@ -305,67 +432,55 @@ impl LyricsHelper {
     /// # 返回
     /// 如果所有提供商都成功或部分成功初始化，则返回 `Ok(())`。
     pub async fn load_providers(&mut self) -> Result<()> {
-        #[cfg(not(target_arch = "wasm32"))]
-        type Initializer<'a> = Pin<
-            Box<
-                dyn Future<Output = (&'static str, Result<Box<dyn Provider + Send + Sync>>)>
-                    + Send
-                    + 'a,
-            >,
-        >;
-        #[cfg(target_arch = "wasm32")]
-        type Initializer<'a> = Pin<
-            Box<dyn Future<Output = (&'static str, Result<Box<dyn Provider + Send + Sync>>)> + 'a>,
-        >;
+        let provider_names = ProviderName::all();
+        let mut clients: HashMap<ProviderName, Arc<dyn HttpClient>> = HashMap::new();
+        let mut provider_initializers = Vec::new();
 
-        let http_client = self.http_client.clone();
+        for name in &provider_names {
+            clients.insert(name.clone(), Arc::new(ReqwestClient::new()?));
+        }
+        self.http_clients = clients;
 
-        let initializers: Vec<Initializer<'_>> = vec![
-            Box::pin(async {
-                (
-                    "QQMusic",
-                    QQMusic::with_http_client(http_client.clone())
+        for name in provider_names {
+            let client = self.http_clients.get(&name).unwrap().clone();
+            let provider_future = async move {
+                let result: Result<Box<dyn Provider + Send + Sync>> = match name {
+                    ProviderName::QQMusic => QQMusic::with_http_client(client)
                         .await
                         .map(|p| Box::new(p) as Box<_>),
-                )
-            }),
-            Box::pin(async {
-                (
-                    "NeteaseClient",
-                    NeteaseClient::with_http_client(http_client.clone())
+                    ProviderName::Netease => NeteaseClient::with_http_client(client)
                         .await
                         .map(|p| Box::new(p) as Box<_>),
-                )
-            }),
-            Box::pin(async {
-                (
-                    "KugouMusic",
-                    KugouMusic::with_http_client(http_client.clone())
+                    ProviderName::Kugou => KugouMusic::with_http_client(client)
                         .await
                         .map(|p| Box::new(p) as Box<_>),
-                )
-            }),
-            Box::pin(async {
-                (
-                    "AmllTtmlDatabase",
-                    AmllTtmlDatabase::with_http_client(http_client.clone())
+                    ProviderName::AmllTtmlDatabase => AmllTtmlDatabase::with_http_client(client)
                         .await
                         .map(|p| Box::new(p) as Box<_>),
-                )
-            }),
-        ];
+                };
+                (name, result)
+            };
+            provider_initializers.push(provider_future);
+        }
 
-        let results = future::join_all(initializers).await;
+        let results = stream::iter(provider_initializers)
+            .buffer_unordered(4)
+            .collect::<Vec<_>>()
+            .await;
 
         let providers = results
             .into_iter()
             .filter_map(|(name, result)| match result {
                 Ok(provider) => {
-                    tracing::info!("[Main] Provider '{}' 初始化成功。", name);
+                    tracing::info!("[Main] Provider '{}' 初始化成功。", name.display_name());
                     Some(Arc::from(provider))
                 }
                 Err(e) => {
-                    tracing::error!("[Main] Provider '{}' 初始化失败: {}", name, e);
+                    tracing::error!(
+                        "[Main] Provider '{}' 初始化失败: {}",
+                        name.display_name(),
+                        e
+                    );
                     None
                 }
             })
@@ -670,40 +785,19 @@ impl LyricsHelper {
             for candidate in candidates_to_try {
                 if let Some(album_id) = &candidate.album_id
                     && let Some(provider) = providers_map.get(candidate.provider_name.as_str())
-                {
-                    tracing::debug!(
-                        "尝试从 '{}' 获取专辑 '{}' 的封面",
-                        provider.name(),
-                        album_id
-                    );
-
-                    match provider
+                    && let Ok(url) = provider
                         .get_album_cover_url(album_id, CoverSize::Large)
                         .await
-                    {
-                        Ok(url) => match self.http_client.get(&url).await {
-                            Ok(response) => {
-                                if response.status < 300 {
-                                    tracing::info!(
-                                        "从 '{}' 的 '{}' 成功获取到封面",
-                                        provider.name(),
-                                        candidate.title
-                                    );
-                                    return Some(response.body);
-                                }
-                                tracing::debug!("封面请求返回状态码: {}", response.status);
-                            }
-                            Err(e) => {
-                                tracing::debug!("请求封面URL失败: {}", e);
-                            }
-                        },
-                        Err(e) => {
-                            tracing::debug!("获取封面URL失败: {}", e);
-                        }
-                    }
+                    && let Some(provider_name_enum) =
+                        ProviderName::try_from_str(&candidate.provider_name)
+                    && let Some(client) = self.http_clients.get(&provider_name_enum)
+                    && let Ok(response) = client.get(&url).await
+                    && response.status < 300
+                {
+                    tracing::info!("从 '{}' 成功获取到封面", provider.name());
+                    return Some(response.body);
                 }
             }
-
             tracing::info!("遍历完所有候选项都无法获取到封面");
             None
         })
@@ -730,40 +824,24 @@ impl LyricsHelper {
                 if let Some(album_id) = &candidate.album_id
                     && let Some(provider) = providers_map.get(candidate.provider_name.as_str())
                 {
-                    tracing::debug!(
-                        "尝试从 '{}' 获取专辑 '{}' 的封面",
-                        provider.name(),
-                        album_id
-                    );
-
-                    match provider
+                    if let Ok(url) = provider
                         .get_album_cover_url(album_id, CoverSize::Large)
                         .await
                     {
-                        Ok(url) => match self.http_client.get(&url).await {
-                            Ok(response) => {
+                        if let Some(provider_name_enum) =
+                            ProviderName::try_from_str(&candidate.provider_name)
+                            && let Some(client) = self.http_clients.get(&provider_name_enum)
+                        {
+                            if let Ok(response) = client.get(&url).await {
                                 if response.status < 300 {
-                                    tracing::info!(
-                                        "从 '{}' 的 '{}' 成功获取到封面",
-                                        provider.name(),
-                                        candidate.title
-                                    );
+                                    tracing::info!("从 '{}' 成功获取到封面", provider.name());
                                     return Some(response.body);
                                 }
-                                tracing::debug!("封面请求返回状态码: {}", response.status);
                             }
-                            Err(e) => {
-                                tracing::debug!("请求封面URL失败: {}", e);
-                            }
-                        },
-
-                        Err(e) => {
-                            tracing::debug!("获取封面URL失败: {}", e);
                         }
                     }
                 }
             }
-
             tracing::info!("遍历完所有候选项都无法获取到封面");
             None
         })
@@ -772,8 +850,16 @@ impl LyricsHelper {
     /// 强制重新检查并更新 AMLL TTML 数据库的索引。
     pub async fn force_update_amll_index(&mut self) -> Result<()> {
         tracing::info!("[LyricsHelper] 正在更新 AMLL 索引...");
-        let new_amll_provider =
-            AmllTtmlDatabase::with_http_client(self.http_client.clone()).await?;
+
+        let amll_client = self
+            .http_clients
+            .get(&ProviderName::AmllTtmlDatabase)
+            .ok_or_else(|| {
+                LyricsHelperError::ProviderNotSupported("amll-ttml-database".to_string())
+            })?
+            .clone();
+
+        let new_amll_provider = AmllTtmlDatabase::with_http_client(amll_client).await?;
         let new_provider_arc = Arc::new(new_amll_provider);
         self.providers.retain(|p| p.name() != "amll-ttml-database");
         self.providers.push(new_provider_arc);

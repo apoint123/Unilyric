@@ -19,9 +19,8 @@ async fn main() -> Result<()> {
     let playlist_id = &args[1];
 
     let http_client = Arc::new(ReqwestClient::new()?);
-    let provider = NeteaseClient::with_http_client(http_client)
-        .await?
-        .with_cookie(cookie);
+    let provider = NeteaseClient::with_http_client(http_client).await?;
+    // .with_cookie(cookie);
 
     println!("正在获取歌单信息...");
     let playlist = provider.get_playlist(playlist_id).await?;
