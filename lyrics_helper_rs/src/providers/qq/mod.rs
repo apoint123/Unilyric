@@ -19,7 +19,7 @@ use lyrics_helper_core::{
 };
 use quick_xml::{Reader, events::Event};
 use serde_json::json;
-use tracing::{info, trace, warn};
+use tracing::{info, instrument, trace, warn};
 use uuid::Uuid;
 
 use crate::{
@@ -99,6 +99,7 @@ impl Provider for QQMusic {
         "qq"
     }
 
+    #[instrument(skip_all, fields(provider = "qq"))]
     async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
     where
         Self: Sized,
@@ -106,13 +107,16 @@ impl Provider for QQMusic {
         const CACHE_FILENAME: &str = "qq_device.json";
 
         let device = if let Ok(config) = load_cached_config::<device::Device>(CACHE_FILENAME) {
-            info!("已从缓存加载 QQ Device。");
+            info!(cache_file = CACHE_FILENAME, "已从缓存加载 QQ Device");
             config.data
         } else {
-            info!("QQ Device 配置文件不存在或无效，将创建并保存一个新设备。");
+            info!(
+                cache_file = CACHE_FILENAME,
+                "QQ Device 配置文件不存在或无效，将创建并保存一个新设备"
+            );
             let new_device = device::Device::new();
             if let Err(e) = save_cached_config(CACHE_FILENAME, &new_device) {
-                warn!("保存新的 QQ Device 失败: {}", e);
+                warn!(error = %e, filename = CACHE_FILENAME, "保存新的 QQ Device 失败");
             }
             new_device
         };
@@ -137,6 +141,7 @@ impl Provider for QQMusic {
     ///
     /// * 一个 `Result`，其中包含一个 `Vec<SearchResult>`，每个 `SearchResult` 代表一首匹配的歌曲。
     ///
+    #[instrument(skip(self, track), fields(keyword))]
     async fn search_songs(&self, track: &Track<'_>) -> Result<Vec<SearchResult>> {
         let keyword = format!(
             "{} {}",
@@ -145,6 +150,7 @@ impl Provider for QQMusic {
         )
         .trim()
         .to_string();
+        tracing::Span::current().record("keyword", tracing::field::display(&keyword));
 
         let param = json!({
             "num_per_page": 20,
@@ -191,6 +197,7 @@ impl Provider for QQMusic {
         Ok(vec![])
     }
 
+    #[instrument(skip(self), fields(song_id = %song_id))]
     async fn get_full_lyrics(&self, song_id: &str) -> Result<FullLyricsResult> {
         let main_api_result = self.try_get_lyrics_internal(song_id).await;
 
@@ -201,12 +208,20 @@ impl Provider for QQMusic {
                     return Err(e);
                 }
 
-                warn!("主要接口对歌曲 '{song_id}' 调用失败: {e}。尝试备用接口...",);
+                warn!(
+                    song_id = %song_id,
+                    error = ?e,
+                    "主接口调用失败，尝试备用接口"
+                );
 
                 let numerical_id = match self.get_numerical_song_id(song_id).await {
                     Ok(id) => id,
                     Err(id_err) => {
-                        warn!("获取歌曲数字 ID 失败: {id_err}，尝试调用仅 LRC 接口。");
+                        warn!(
+                            song_id = %song_id,
+                            error = ?id_err,
+                            "获取歌曲数字 ID 失败，尝试调用仅 LRC 接口"
+                        );
                         return self.try_get_lyrics_lrc_only(song_id).await;
                     }
                 };
@@ -215,7 +230,12 @@ impl Provider for QQMusic {
                 match self.try_get_lyrics_fallback(numerical_id).await {
                     Ok(lyrics) => Ok(lyrics),
                     Err(fallback_err) => {
-                        warn!("备用接口失败: {fallback_err}。尝试调用仅 LRC 接口...");
+                        warn!(
+                            song_id = %song_id,
+                            numerical_id,
+                            error = ?fallback_err,
+                            "备用接口失败，尝试调用仅 LRC 接口"
+                        );
                         self.try_get_lyrics_lrc_only(song_id).await
                     }
                 }
@@ -236,6 +256,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个 `generic::Album` 结构。
     ///
+    #[instrument(skip(self), fields(album_mid = %album_mid))]
     async fn get_album_info(&self, album_mid: &str) -> Result<generic::Album> {
         let param = json!({
             "albumMId": album_mid
@@ -269,6 +290,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个 `Vec<generic::Song>`。
     ///
+    #[instrument(skip(self), fields(album_mid = %album_mid, page, page_size))]
     async fn get_album_songs(
         &self,
         album_mid: &str,
@@ -311,6 +333,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个 `Vec<generic::Song>`。
     ///
+    #[instrument(skip(self), fields(singer_mid = %singer_mid, page, page_size))]
     async fn get_singer_songs(
         &self,
         singer_mid: &str,
@@ -360,6 +383,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个通用的 `generic::Playlist` 结构。
     ///
+    #[instrument(skip(self), fields(playlist_id = %playlist_id))]
     async fn get_playlist(&self, playlist_id: &str) -> Result<generic::Playlist> {
         let disstid = playlist_id.parse::<u64>().map_err(|_| {
             LyricsHelperError::ApiError(format!(
@@ -400,6 +424,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个通用的 `generic::Song` 结构。
     ///
+    #[instrument(skip(self), fields(song_id = %song_id))]
     async fn get_song_info(&self, song_id: &str) -> Result<generic::Song> {
         let param = song_id.parse::<u64>().map_or_else(
             |_| json!({ "song_mid": song_id }),
@@ -444,6 +469,7 @@ impl Provider for QQMusic {
     ///
     /// 一个 `Result`，其中包含一个表示可播放 URL 的 `String`。
     ///
+    #[instrument(skip(self), fields(song_mid = %song_mid))]
     async fn get_song_link(&self, song_mid: &str) -> Result<String> {
         let mids_slice = [song_mid];
 
@@ -466,6 +492,7 @@ impl Provider for QQMusic {
         )
     }
 
+    #[instrument(skip(self), fields(album_id = %album_id, ?size))]
     async fn get_album_cover_url(&self, album_id: &str, size: CoverSize) -> Result<String> {
         let qq_size = match size {
             CoverSize::Thumbnail => QQMusicCoverSize::Size150,
@@ -496,6 +523,7 @@ impl QQMusic {
         })
     }
 
+    #[instrument(skip(self, param), fields(module = %module, method = %method))]
     async fn execute_api_request(
         &self,
         module: &str,
@@ -518,7 +546,11 @@ impl QQMusic {
         let response = self.http_client.post_json(url, &payload).await?;
         let response_text = response.text()?;
 
-        trace!("原始 JSON 响应 {request_key}: {response_text}");
+        trace!(
+            request_key = %request_key,
+            response.body = %response_text,
+            "收到原始 JSON 响应"
+        );
 
         let mut response_value: serde_json::Value = serde_json::from_str(&response_text)?;
 
@@ -562,6 +594,7 @@ impl QQMusic {
     ///
     /// 一个元组，包含排行榜信息和歌曲列表。
     ///
+    #[instrument(skip(self), fields(top_id, page, page_size, ?period))]
     pub async fn get_toplist(
         &self,
         top_id: u32,
@@ -617,6 +650,7 @@ impl QQMusic {
     /// `Result<Vec<models::TypedSearchResult>>` - 成功时返回一个包含
     /// `models::TypedSearchResult` 枚举向量的 `Ok` 变体，表示不同类型的搜索结果。
     /// 如果发生错误，则返回 `Err` 变体。
+    #[instrument(skip(self), fields(keyword = %keyword, ?search_type, page, page_size))]
     pub async fn search_by_type(
         &self,
         keyword: &str,
@@ -678,6 +712,7 @@ impl QQMusic {
     ///
     /// # 返回
     /// * `String` - 提取出的 `LyricContent` 内容，或在某些情况下的原始文本。
+    #[instrument]
     fn extract_from_qrc_wrapper(decrypted_text: &str) -> String {
         if decrypted_text.is_empty() {
             return String::new();
@@ -700,7 +735,7 @@ impl QQMusic {
                         }
                     }
                     Err(e) => {
-                        info!("quick-xml 解析失败: {e}");
+                        info!(error = ?e, "quick-xml 解析失败");
                         return None;
                     }
                     Ok(Event::Eof) => return None,
@@ -754,6 +789,7 @@ impl QQMusic {
         decrypted_text.to_string()
     }
 
+    #[instrument(skip(self), fields(song_id = %song_id, method = "primary"))]
     async fn try_get_lyrics_internal(&self, song_id: &str) -> Result<FullLyricsResult> {
         let mut param_map = serde_json::Map::new();
         if song_id.parse::<u64>().is_ok() {
@@ -776,13 +812,13 @@ impl QQMusic {
         let roma_lyrics_decrypted = Self::decrypt_with_fallback(&lyric_resp.roma)?;
 
         if !main_lyrics_decrypted.is_empty() {
-            trace!("[主接口] 解密后的主歌词:\n{}", main_lyrics_decrypted);
+            trace!(lyrics.main = %main_lyrics_decrypted, "解密后的主歌词");
         }
         if !trans_lyrics_decrypted.is_empty() {
-            trace!("[主接口] 解密后的翻译:\n{}", trans_lyrics_decrypted);
+            trace!(lyrics.translation = %trans_lyrics_decrypted, "解密后的翻译");
         }
         if !roma_lyrics_decrypted.is_empty() {
-            trace!("[主接口] 解密后的罗马音:\n{}", roma_lyrics_decrypted);
+            trace!(lyrics.romanization = %roma_lyrics_decrypted, "解密后的罗马音");
         }
 
         Self::build_full_lyrics_result(
@@ -793,6 +829,7 @@ impl QQMusic {
         )
     }
 
+    #[instrument(skip(self, song_mids), fields(mids_count = song_mids.len(), ?file_type))]
     async fn get_song_urls_internal(
         &self,
         song_mids: &[&str],
@@ -856,11 +893,12 @@ impl QQMusic {
     ///
     /// 优先尝试 Base64 解码，如果失败或结果不是有效的 UTF-8 字符串，
     /// 则回退到使用 DES 解密。
+    #[instrument]
     fn decrypt_with_fallback(encrypted_str: &str) -> Result<String> {
         if let Ok(decoded_bytes) = BASE64_STANDARD.decode(encrypted_str)
             && let Ok(decoded_str) = String::from_utf8(decoded_bytes)
         {
-            info!("成功使用 Base64 解密。");
+            info!("成功使用 Base64 解密");
             return Ok(decoded_str);
         }
         qrc_codec::decrypt_qrc(encrypted_str)
@@ -895,12 +933,13 @@ impl QQMusic {
         }
     }
 
+    #[instrument(skip(self), fields(song_id = %song_id))]
     async fn get_numerical_song_id(&self, song_id: &str) -> Result<u64> {
         if let Ok(id) = song_id.parse::<u64>() {
             return Ok(id);
         }
 
-        info!("'{song_id}' 不是数字 ID，尝试通过 API 转换。");
+        info!(song_id, "不是数字 ID，尝试通过 API 转换");
         let param = json!({ "song_mid": song_id });
 
         let response_val = self
@@ -918,6 +957,7 @@ impl QQMusic {
     /// # 参数
     ///
     /// * `music_id` - 歌曲的数字 ID。
+    #[instrument(skip(self), fields(music_id, method = "fallback"))]
     async fn try_get_lyrics_fallback(&self, music_id: u64) -> Result<FullLyricsResult> {
         let params = &[
             ("version", "15"),
@@ -933,8 +973,8 @@ impl QQMusic {
         let response_text = response.text()?;
 
         trace!(
-            "备用歌词接口 'lyric_download.fcg' 的原始响应: {}",
-            response_text
+            response.body = %response_text,
+            "备用歌词接口 'lyric_download.fcg' 的原始响应"
         );
 
         let xml_content = response_text
@@ -974,7 +1014,7 @@ impl QQMusic {
                     }
                 }
                 Err(e) => {
-                    warn!("XML 解析错误: {}, 内容: '{}'", e, xml_content);
+                    warn!(error = ?e, xml.content = %xml_content, "XML 解析错误");
                     return Err(LyricsHelperError::Parser(format!(
                         "解析备用接口歌词XML失败: {e}"
                     )));
@@ -996,13 +1036,13 @@ impl QQMusic {
             qrc_codec::decrypt_qrc(&roma_lyrics_encrypted).unwrap_or_default();
 
         if !main_lyrics_decrypted.is_empty() {
-            trace!("[备用接口] 解密后的主歌词:\n{}", main_lyrics_decrypted);
+            trace!(lyrics.main = %main_lyrics_decrypted, "解密后的主歌词");
         }
         if !trans_lyrics_decrypted.is_empty() {
-            trace!("[备用接口] 解密后的翻译:\n{}", trans_lyrics_decrypted);
+            trace!(lyrics.translation = %trans_lyrics_decrypted, "解密后的翻译");
         }
         if !roma_lyrics_decrypted.is_empty() {
-            trace!("[备用接口] 解密后的罗马音:\n{}", roma_lyrics_decrypted);
+            trace!(lyrics.romanization = %roma_lyrics_decrypted, "解密后的罗马音");
         }
 
         Self::build_full_lyrics_result(
@@ -1107,6 +1147,7 @@ impl QQMusic {
         })
     }
 
+    #[instrument(skip(self), fields(song_mid = %song_mid, method = "lrc_only"))]
     async fn try_get_lyrics_lrc_only(&self, song_mid: &str) -> Result<FullLyricsResult> {
         let headers = [("Referer", QQ_MUSIC_REFERER_URL)];
 
@@ -1132,7 +1173,7 @@ impl QQMusic {
             .await?;
         let response_text = response.text()?;
 
-        trace!("[LRC接口] 原始响应: {}", response_text);
+        trace!(response.body = %response_text, "LRC 接口原始响应");
 
         let json_text = response_text
             .trim()
@@ -1173,9 +1214,9 @@ impl QQMusic {
             String::from_utf8(bytes)?
         };
 
-        trace!("[LRC接口] 解码后的主歌词:\n{}", main_lyrics_decrypted);
+        trace!(lyrics.main = %main_lyrics_decrypted, "解码后的主歌词");
         if !trans_lyrics_decrypted.is_empty() {
-            trace!("[LRC接口] 解码后的翻译:\n{}", trans_lyrics_decrypted);
+            trace!(lyrics.translation = %trans_lyrics_decrypted, "解码后的翻译");
         }
 
         Self::build_full_lyrics_result(
@@ -1627,7 +1668,7 @@ mod tests {
 
         assert!(!full_lyrics.parsed.lines.is_empty(), "解析后的行不应为空");
 
-        info!("解析结果: {:#?}", full_lyrics.parsed);
+        // info!("解析结果: {:#?}", full_lyrics.parsed);
     }
 
     #[tokio::test]
