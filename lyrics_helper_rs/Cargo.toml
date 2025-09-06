@@ -72,6 +72,7 @@ serde-wasm-bindgen = { version = "0.6", optional = true }
 serde_urlencoded = "0.7.1"
 cookie_store = { version = "0.22", features = ["preserve_order"] }
 parking_lot = "0.12.4"
+const_format = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies.uuid]
 version = "1"

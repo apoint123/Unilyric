@@ -11,7 +11,7 @@ pub struct BusinessCode {
 }
 
 // =================================================================
-// 搜索接口 ( music.search.SearchCgiService.DoSearchForQQMusicMobile ) 的模型
+// 搜索接口 ( `music.search.SearchCgiService.DoSearchForQQMusicMobile` ) 的模型
 // =================================================================
 
 /// 包含响应代码和实际数据。
@@ -245,7 +245,7 @@ pub struct AlbumSinger {
 }
 
 // =================================================================
-// 专辑歌曲列表接口 ( music.musichallAlbum.AlbumSongList.GetAlbumSongList ) 的模型
+// 专辑歌曲列表接口 ( `music.musichallAlbum.AlbumSongList.GetAlbumSongList` ) 的模型
 // =================================================================
 
 #[derive(Debug, Deserialize, Clone)]
@@ -326,7 +326,7 @@ pub struct FileInfo {
 }
 
 // =================================================================
-// 歌手歌曲列表接口 ( musichall.song_list_server.GetSingerSongList ) 的模型
+// 歌手歌曲列表接口 ( `musichall.song_list_server.GetSingerSongList` ) 的模型
 // =================================================================
 
 /// 用于包装 `GetSingerSongList` API 响应的顶层容器。
@@ -347,7 +347,7 @@ pub struct SingerSongListResult {
 }
 
 // =================================================================
-// 排行榜接口 ( musicToplist.ToplistInfoServer.GetDetail ) 的模型
+// 排行榜接口 ( `musicToplist.ToplistInfoServer.GetDetail` ) 的模型
 // =================================================================
 
 #[derive(Debug, Deserialize, Clone)]
@@ -419,7 +419,7 @@ pub struct ToplistSongData {
 }
 
 // =================================================================
-// 歌单接口 ( c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg ) 的模型
+// 歌单接口 ( `c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg` ) 的模型
 // =================================================================
 
 /// 用于包装 `get_playlist_detail` API 响应数据的顶层容器。
@@ -464,7 +464,7 @@ pub struct PlaylistDetailInfo {
 }
 
 // =================================================================
-// 歌曲信息接口 ( music.pf_song_detail_svr.get_song_detail_yqq ) 的模型
+// 歌曲信息接口 ( `music.pf_song_detail_svr.get_song_detail_yqq` ) 的模型
 // =================================================================
 
 /// 用于包装 `get_song_detail_yqq` API 响应数据的顶层容器。
@@ -482,7 +482,7 @@ pub struct SongDetailApiResult {
 }
 
 // =================================================================
-// 歌曲播放链接接口 ( music.vkey.GetVkey.UrlGetVkey ) 的模型
+// 歌曲播放链接接口 ( `music.vkey.GetVkey.UrlGetVkey` ) 的模型
 // =================================================================
 
 #[derive(Debug, Deserialize, Clone)]
@@ -532,7 +532,7 @@ pub struct SongUrlResult {
 }
 
 // =================================================================
-// 歌词接口 ( music.musichallSong.PlayLyricInfo.GetPlayLyricInfo ) 的模型
+// 歌词接口 ( `music.musichallSong.PlayLyricInfo.GetPlayLyricInfo` ) 的模型
 // =================================================================
 
 /// 用于包装 `GetPlayLyricInfo` API 响应的顶层容器。
@@ -551,4 +551,15 @@ pub struct LyricApiResponse {
     pub trans: String,
     /// 加密的罗马音歌词内容（QRC格式，Base64 编码）。
     pub roma: String,
+}
+
+// =================================================================
+// 纯 LRC 接口 ( `c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg` ) 的模型
+// =================================================================
+
+#[derive(serde::Deserialize)]
+pub struct LrcApiResponse {
+    pub code: i32,
+    pub lyric: Option<String>,
+    pub trans: Option<String>,
 }

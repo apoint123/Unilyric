@@ -1,7 +1,5 @@
 //! QQ音乐提供商模块。
 //!
-//! 该模块提供了与 QQ 音乐 API 交互的各种功能，
-//! 包括搜索、获取歌词、歌曲、专辑、歌手和播放列表信息。
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
 use std::{
@@ -29,7 +27,10 @@ use crate::{
     converter,
     error::{LyricsHelperError, Result},
     http::HttpClient,
-    providers::{Provider, qq::models::QQMusicCoverSize},
+    providers::{
+        Provider,
+        qq::models::{LrcApiResponse, QQMusicCoverSize},
+    },
 };
 
 pub mod device;
@@ -62,6 +63,19 @@ const GET_SONG_DETAIL_METHOD: &str = "get_song_detail_yqq";
 
 const GET_PLAYLIST_DETAIL_MODULE: &str = "music.srfDissInfo.DissInfo";
 const GET_PLAYLIST_DETAIL_METHOD: &str = "CgiGetDiss";
+
+const GET_TOPLIST_MODULE: &str = "musicToplist.ToplistInfoServer";
+const GET_TOPLIST_METHOD: &str = "GetDetail";
+
+const APP_VERSION: &str = "14.8.0.8";
+
+const SONG_URL_DOMAIN: &str = "https://isure.stream.qqmusic.qq.com/";
+const QQ_MUSIC_REFERER_URL: &str = "https://y.qq.com";
+const ALBUM_COVER_BASE_URL: &str = "https://y.gtimg.cn/music/photo_new/";
+
+const LRC_LYRIC_URL: &str = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
+
+const LYRIC_DOWNLOAD_URL: &str = "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg";
 
 static QRC_LYRIC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"LyricContent="([^"]*)""#).unwrap());
@@ -103,8 +117,7 @@ impl Provider for QQMusic {
             new_device
         };
 
-        let api_version = "13.2.5.8";
-        let qimei_result = qimei::get_qimei(http_client.as_ref(), &device, api_version)
+        let qimei_result = qimei::get_qimei(http_client.as_ref(), &device, APP_VERSION)
             .await
             .map_err(|e| LyricsHelperError::ApiError(format!("获取 Qimei 失败: {e}")))?;
 
@@ -579,12 +592,7 @@ impl QQMusic {
         });
 
         let response_val = self
-            .execute_api_request(
-                "musicToplist.ToplistInfoServer",
-                "GetDetail",
-                param,
-                &[2000],
-            )
+            .execute_api_request(GET_TOPLIST_MODULE, GET_TOPLIST_METHOD, param, &[2000])
             .await?;
 
         let detail_data: models::DetailData = serde_json::from_value(response_val)?;
@@ -781,7 +789,7 @@ impl QQMusic {
             main_lyrics_decrypted,
             trans_lyrics_decrypted,
             &roma_lyrics_decrypted,
-            "qq",
+            self.name(),
         )
     }
 
@@ -822,7 +830,6 @@ impl QQMusic {
 
         let mut success_map = std::collections::HashMap::new();
         let mut failure_map = std::collections::HashMap::new();
-        let domain = "https://isure.stream.qqmusic.qq.com/";
 
         for info in result_data.midurlinfo {
             if info.purl.is_empty() {
@@ -832,7 +839,7 @@ impl QQMusic {
                 );
                 failure_map.insert(info.songmid, reason);
             } else {
-                success_map.insert(info.songmid, format!("{}{}", domain, info.purl));
+                success_map.insert(info.songmid, format!("{}{}", SONG_URL_DOMAIN, info.purl));
             }
         }
 
@@ -912,8 +919,6 @@ impl QQMusic {
     ///
     /// * `music_id` - 歌曲的数字 ID。
     async fn try_get_lyrics_fallback(&self, music_id: u64) -> Result<FullLyricsResult> {
-        const LYRIC_DOWNLOAD_URL: &str = "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg";
-
         let params = &[
             ("version", "15"),
             ("miniversion", "82"),
@@ -956,17 +961,6 @@ impl QQMusic {
                 Ok(Event::Start(e)) => {
                     current_tag = String::from_utf8(e.name().as_ref().to_vec()).unwrap_or_default();
                 }
-                Ok(Event::Text(e)) => {
-                    if let Ok(text) = e.decode()
-                        && !text.trim().is_empty()
-                    {
-                        match current_tag.as_str() {
-                            "content" => main_lyrics_encrypted = text.to_string(),
-                            "contentts" => trans_lyrics_encrypted = text.to_string(),
-                            _ => {}
-                        }
-                    }
-                }
                 Ok(Event::CData(e)) => {
                     if let Ok(text) = e.decode()
                         && !text.trim().is_empty()
@@ -979,7 +973,6 @@ impl QQMusic {
                         }
                     }
                 }
-
                 Err(e) => {
                     warn!("XML 解析错误: {}, 内容: '{}'", e, xml_content);
                     return Err(LyricsHelperError::Parser(format!(
@@ -1016,7 +1009,7 @@ impl QQMusic {
             main_lyrics_decrypted,
             trans_lyrics_decrypted,
             &roma_lyrics_decrypted,
-            "qq",
+            self.name(),
         )
     }
 
@@ -1115,9 +1108,7 @@ impl QQMusic {
     }
 
     async fn try_get_lyrics_lrc_only(&self, song_mid: &str) -> Result<FullLyricsResult> {
-        const LRC_LYRIC_URL: &str = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
-
-        let headers = [("Referer", "https://y.qq.com")];
+        let headers = [("Referer", QQ_MUSIC_REFERER_URL)];
 
         let params = &[
             ("songmid", song_mid),
@@ -1154,13 +1145,6 @@ impl QQMusic {
             return Err(LyricsHelperError::LyricNotFound);
         }
 
-        #[derive(serde::Deserialize)]
-        struct LrcApiResponse {
-            code: i32,
-            lyric: Option<String>,
-            trans: Option<String>,
-        }
-
         let api_response: LrcApiResponse = serde_json::from_str(json_text)?;
 
         if api_response.code != 0 {
@@ -1194,7 +1178,12 @@ impl QQMusic {
             trace!("[LRC接口] 解码后的翻译:\n{}", trans_lyrics_decrypted);
         }
 
-        Self::build_full_lyrics_result(main_lyrics_decrypted, trans_lyrics_decrypted, "", "qq-lrc")
+        Self::build_full_lyrics_result(
+            main_lyrics_decrypted,
+            trans_lyrics_decrypted,
+            "",
+            self.name(),
+        )
     }
 }
 
@@ -1208,7 +1197,7 @@ impl QQMusic {
 /// 一个包含了完整封面图片链接的 `String`。
 fn get_qq_album_cover_url(album_mid: &str, size: QQMusicCoverSize) -> String {
     let size_val = size.as_u32();
-    format!("https://y.gtimg.cn/music/photo_new/T002R{size_val}x{size_val}M000{album_mid}.jpg")
+    format!("{ALBUM_COVER_BASE_URL}T002R{size_val}x{size_val}M000{album_mid}.jpg")
 }
 
 impl From<models::Singer> for Artist {

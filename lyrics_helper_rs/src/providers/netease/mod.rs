@@ -6,6 +6,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STD};
 use chrono::Utc;
+use const_format::concatcp;
 use cookie_store::serde::json;
 use lyrics_helper_core::{
     ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, LyricFormat,
@@ -30,8 +31,31 @@ use crate::{
 mod crypto;
 pub mod models;
 
-const BASE_URL_NETEASE: &str = "https://music.163.com";
 const ID_XOR_KEY_1: &[u8] = b"3go8&$8*3*3h0k(2)2";
+
+const API_BASE_URL: &str = "https://music.163.com";
+const API_INTERFACE_BASE_URL: &str = "https://interface.music.163.com";
+const API_INTERFACE3_BASE_URL: &str = "https://interface3.music.163.com";
+
+const ACCOUNT_GET_URL: &str = concatcp!(API_BASE_URL, "/api/nuser/account/get");
+const REGISTER_ANONIMOUS_URL: &str = concatcp!(API_BASE_URL, "/api/register/anonimous");
+
+const SONG_ENHANCE_PLAYER_URL_V1_PATH: &str = "/api/song/enhance/player/url/v1";
+const SONG_ENHANCE_PLAYER_URL_V1_URL: &str =
+    concatcp!(API_INTERFACE3_BASE_URL, "/eapi/song/enhance/player/url/v1");
+
+const SEARCH_CLOUDSEARCH_PC_PATH: &str = "/api/cloudsearch/pc";
+const SEARCH_CLOUDSEARCH_PC_URL: &str = concatcp!(API_INTERFACE_BASE_URL, "/eapi/cloudsearch/pc");
+
+const SONG_LYRIC_V1_PATH: &str = "/api/song/lyric/v1";
+const SONG_LYRIC_V1_URL: &str = concatcp!(API_INTERFACE3_BASE_URL, "/eapi/song/lyric/v1");
+
+const ALBUM_GET_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/album/");
+const ARTIST_SONGS_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/artist/songs");
+const PLAYLIST_DETAIL_V6_URL: &str = concatcp!(API_BASE_URL, "/weapi/v6/playlist/detail");
+const SONG_DETAIL_V3_URL: &str = concatcp!(API_BASE_URL, "/weapi/v3/song/detail");
+const SONG_ENHANCE_PLAYER_URL_URL: &str = concatcp!(API_BASE_URL, "/weapi/song/enhance/player/url");
+
 const SELECTED_DEVICE_IDS: &str = include_str!(concat!(env!("OUT_DIR"), "/selected_deviceids.txt"));
 
 // TODO: 允许选择设备类型
@@ -104,9 +128,8 @@ pub struct NeteaseClient {
 
 impl NeteaseClient {
     async fn fetch_user_profile(&self) -> Result<UserProfile> {
-        let url = "https://music.163.com/api/nuser/account/get";
         let payload = json!({});
-        let resp: models::AccountProfileResult = self.post_weapi(url, &payload).await?;
+        let resp: models::AccountProfileResult = self.post_weapi(ACCOUNT_GET_URL, &payload).await?;
 
         if let Some(profile) = resp.profile {
             Ok(UserProfile {
@@ -135,10 +158,9 @@ impl NeteaseClient {
         let signature = cloudmusic_dll_encode_id(device_id);
         let encoded_username = BASE64_STD.encode(format!("{device_id} {signature}"));
 
-        let url = "https://music.163.com/api/register/anonimous";
         let payload = json!({ "username": encoded_username });
 
-        let resp: serde_json::Value = self.post_weapi(url, &payload).await?;
+        let resp: serde_json::Value = self.post_weapi(REGISTER_ANONIMOUS_URL, &payload).await?;
 
         // 虽然 weapi 在这里返回 400 错误，但是 cookie 确实返回给我们了
         if resp.get("code").and_then(serde_json::Value::as_i64) == Some(400) {
@@ -182,7 +204,7 @@ impl NeteaseClient {
 
         let headers = [
             (USER_AGENT.as_str(), user_agent),
-            (REFERER.as_str(), BASE_URL_NETEASE),
+            (REFERER.as_str(), API_BASE_URL),
             (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
         ];
 
@@ -239,7 +261,7 @@ impl NeteaseClient {
 
         let headers = [
             (USER_AGENT.as_str(), user_agent),
-            (REFERER.as_str(), BASE_URL_NETEASE),
+            (REFERER.as_str(), API_BASE_URL),
             (CONTENT_TYPE.as_str(), "application/x-www-form-urlencoded"),
         ];
 
@@ -288,10 +310,6 @@ impl NeteaseClient {
 
     /// 使用 EAPI 获取歌曲链接，可用于 VIP 歌曲。
     pub async fn get_song_link_v1(&self, song_id: &str) -> Result<String> {
-        let url_path_for_encrypt = "/api/song/enhance/player/url/v1";
-        let full_url_for_request =
-            "https://interface3.music.163.com/eapi/song/enhance/player/url/v1";
-
         let request_id = rand::thread_rng()
             .gen_range(10_000_000..100_000_000)
             .to_string();
@@ -314,7 +332,11 @@ impl NeteaseClient {
         };
 
         let resp: models::SongUrlResultV1 = self
-            .post_eapi(url_path_for_encrypt, full_url_for_request, &payload_struct)
+            .post_eapi(
+                SONG_ENHANCE_PLAYER_URL_V1_PATH,
+                SONG_ENHANCE_PLAYER_URL_V1_URL,
+                &payload_struct,
+            )
             .await?;
 
         if resp.code != 200 {
@@ -395,8 +417,6 @@ impl Provider for NeteaseClient {
             .map_or_else(|| title.to_string(), |artists| format!("{title} {artists}"));
 
         // 使用 EAPI 搜索接口
-        let url_path = "/api/cloudsearch/pc";
-        let full_url = "https://interface.music.163.com/eapi/cloudsearch/pc";
         let payload = json!({
             "s": keyword,
             "type": "1", // 1 代表搜索单曲
@@ -405,7 +425,13 @@ impl Provider for NeteaseClient {
             "total": true
         });
 
-        let resp: models::SearchResult = self.post_eapi(url_path, full_url, &payload).await?;
+        let resp: models::SearchResult = self
+            .post_eapi(
+                SEARCH_CLOUDSEARCH_PC_PATH,
+                SEARCH_CLOUDSEARCH_PC_URL,
+                &payload,
+            )
+            .await?;
 
         let search_results = resp
             .result
@@ -437,15 +463,14 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_full_lyrics(&self, id: &str) -> Result<FullLyricsResult> {
-        let url_path = "/api/song/lyric/v1";
-        let full_url = "https://interface3.music.163.com/eapi/song/lyric/v1";
-
         let header = self.build_eapi_header();
 
         let mut payload = json!({ "id": id, "cp": "false", "lv": "0", "kv": "0", "tv": "0", "rv": "0", "yv": "0", "ytv": "0", "yrv": "0", "csrf_token": "" });
         payload["header"] = header;
 
-        let resp: models::LyricResult = self.post_eapi(url_path, full_url, &payload).await?;
+        let resp: models::LyricResult = self
+            .post_eapi(SONG_LYRIC_V1_PATH, SONG_LYRIC_V1_URL, &payload)
+            .await?;
 
         if resp.code != 200 {
             return Err(LyricsHelperError::ApiError(format!(
@@ -543,7 +568,7 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_album_info(&self, album_id: &str) -> Result<generic::Album> {
-        let url = format!("https://music.163.com/weapi/v1/album/{album_id}?csrf_token=");
+        let url = format!("{ALBUM_GET_V1_URL}{album_id}?csrf_token=");
         let payload = json!({ "csrf_token": "" });
 
         let response: models::AlbumResult = self.post_weapi(&url, &payload).await?;
@@ -588,7 +613,7 @@ impl Provider for NeteaseClient {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<generic::Song>> {
-        let url = format!("https://music.163.com/weapi/v1/album/{album_id}");
+        let url = format!("{ALBUM_GET_V1_URL}{album_id}");
         let payload = json!({ "csrf_token": "" });
 
         let resp: models::AlbumContentResult = self.post_weapi(&url, &payload).await?;
@@ -618,8 +643,6 @@ impl Provider for NeteaseClient {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<generic::Song>> {
-        let url = "https://music.163.com/weapi/v1/artist/songs";
-
         let payload = json!({
             "id": singer_id,
             "private_cloud": "true",
@@ -630,7 +653,8 @@ impl Provider for NeteaseClient {
             "csrf_token": ""
         });
 
-        let resp: models::ArtistSongsResult = self.post_weapi(url, &payload).await?;
+        let resp: models::ArtistSongsResult =
+            self.post_weapi(ARTIST_SONGS_V1_URL, &payload).await?;
 
         if resp.code != 200 {
             return Err(LyricsHelperError::ApiError(format!(
@@ -645,10 +669,10 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_playlist(&self, playlist_id: &str) -> Result<generic::Playlist> {
-        let url = "https://music.163.com/weapi/v6/playlist/detail";
         let payload = json!({ "id": playlist_id, "n": 1000, "s": "8", "csrf_token": "" });
 
-        let resp: models::PlaylistResult = self.post_weapi(url, &payload).await?;
+        let resp: models::PlaylistResult =
+            self.post_weapi(PLAYLIST_DETAIL_V6_URL, &payload).await?;
 
         let netease_playlist = resp.playlist;
         let generic_playlist = generic::Playlist {
@@ -670,11 +694,10 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_song_info(&self, song_id: &str) -> Result<generic::Song> {
-        let url = "https://music.163.com/weapi/v3/song/detail";
         let c_field = json!([{"id": song_id}]).to_string();
         let payload = json!({ "c": c_field, "csrf_token": "" });
 
-        let resp: models::DetailResult = self.post_weapi(url, &payload).await?;
+        let resp: models::DetailResult = self.post_weapi(SONG_DETAIL_V3_URL, &payload).await?;
 
         let netease_song = resp
             .songs
@@ -686,10 +709,11 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_song_link(&self, song_id: &str) -> Result<String> {
-        let url = "https://music.163.com/weapi/song/enhance/player/url";
         let payload = json!({ "ids": format!("[{}]", song_id), "br": 999_000, "csrf_token": "" });
 
-        let resp: models::SongUrlResult = self.post_weapi(url, &payload).await?;
+        let resp: models::SongUrlResult = self
+            .post_weapi(SONG_ENHANCE_PLAYER_URL_URL, &payload)
+            .await?;
 
         let song_url_data = resp
             .data
@@ -799,7 +823,7 @@ impl LoginProvider for NeteaseClient {
             LoginCredentials::NeteaseByCookie { music_u } => {
                 let mut temp_store = cookie_store::CookieStore::default();
                 let cookie_str = format!("MUSIC_U={music_u}");
-                let url = BASE_URL_NETEASE.parse().unwrap();
+                let url = API_BASE_URL.parse().unwrap();
                 temp_store.store_response_cookies(
                     std::iter::once(cookie_store::RawCookie::parse(cookie_str).unwrap()),
                     &url,
@@ -1020,8 +1044,15 @@ mod tests {
             .await;
         assert!(invalid_id_result.is_err(), "无效的专辑ID应该返回错误");
         if let Err(e) = invalid_id_result {
-            assert!(matches!(e, LyricsHelperError::ApiError(_)));
-            println!("✅ 成功捕获到预期的 ApiError 错误: {e}");
+            // 网易云音乐在这里似乎会返回一个两个JSON拼接在一起的畸形响应
+            assert!(
+                matches!(
+                    e,
+                    LyricsHelperError::ApiError(_) | LyricsHelperError::JsonParse(_)
+                ),
+                "错误类型不是预期的 ApiError 或 JsonParse，而是: {e:?}"
+            );
+            println!("✅ 成功捕获到预期的 ApiError 或 JsonParse 错误: {e}");
         }
     }
 

@@ -15,6 +15,7 @@ use std::{collections::BTreeMap, sync::Arc};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
+use const_format::formatcp;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::json;
@@ -38,11 +39,39 @@ pub mod models;
 pub mod signature;
 
 const KUGOU_ANDROID_USER_AGENT: &str = "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi";
-const KUGOU_API_GATEWAY: &str = "https://gateway.kugou.com";
 const APP_ID: &str = "1005";
 const CLIENT_VER: &str = "12569";
 const REGISTER_APP_ID: &str = "1014";
 const KG_TID: &str = "255";
+
+const KUGOU_API_GATEWAY: &str = "https://gateway.kugou.com";
+const USER_SERVICE_URL: &str = "https://userservice.kugou.com";
+const EXPENDABLE_KMR_URL: &str = "https://expendablekmr.kugou.com";
+const LYRICS_API_URL: &str = "https://lyrics.kugou.com";
+const OPENAPI_URL: &str = "https://openapi.kugou.com";
+const TRACKER_URL: &str = "http://tracker.kugou.com";
+
+const REGISTER_DEV_METHOD: &str = "/risk/v1/r_register_dev";
+const IMAGE_BATCH_METHOD: &str = "/container/v2/image";
+const SEARCH_SONG_METHOD: &str = "/v3/search/song";
+const ALBUM_DETAIL_METHOD: &str = "/kmr/v2/albums";
+const ALBUM_SONGS_METHOD: &str = "/v1/album_audio/lite";
+const SINGER_SONGS_METHOD: &str = "/kmr/v1/audio_group/author";
+const PLAYLIST_INFO_METHOD: &str = "/v3/get_list_info";
+const PLAYLIST_SONGS_METHOD: &str = "/pubsongs/v2/get_other_list_file_nofilt";
+const SONG_DETAIL_METHOD: &str = "/v2/get_res_privilege/lite";
+const SONG_LINK_METHOD: &str = "/v6/priv_url";
+
+const API_URL_REGISTER_DEV: &str = formatcp!("{USER_SERVICE_URL}{REGISTER_DEV_METHOD}");
+const API_URL_IMAGE_BATCH: &str = formatcp!("{EXPENDABLE_KMR_URL}{IMAGE_BATCH_METHOD}");
+const API_URL_SEARCH_SONG: &str = formatcp!("{KUGOU_API_GATEWAY}{SEARCH_SONG_METHOD}");
+const API_URL_ALBUM_DETAIL: &str = formatcp!("{KUGOU_API_GATEWAY}{ALBUM_DETAIL_METHOD}");
+const API_URL_ALBUM_SONGS: &str = formatcp!("{KUGOU_API_GATEWAY}{ALBUM_SONGS_METHOD}");
+const API_URL_SINGER_SONGS: &str = formatcp!("{OPENAPI_URL}{SINGER_SONGS_METHOD}");
+const API_URL_PLAYLIST_INFO: &str = formatcp!("{KUGOU_API_GATEWAY}{PLAYLIST_INFO_METHOD}");
+const API_URL_PLAYLIST_SONGS: &str = formatcp!("{KUGOU_API_GATEWAY}{PLAYLIST_SONGS_METHOD}");
+const API_URL_SONG_DETAIL: &str = formatcp!("{KUGOU_API_GATEWAY}{SONG_DETAIL_METHOD}");
+const API_URL_SONG_LINK: &str = formatcp!("{TRACKER_URL}{SONG_LINK_METHOD}");
 
 const X_ROUTER_OPENAPI: &str = "openapi.kugou.com";
 const X_ROUTER_COMPLEX_SEARCH: &str = "complexsearch.kugou.com";
@@ -138,11 +167,10 @@ impl KugouMusic {
             ("mid", &header_mid),
         ];
 
-        let base_url = "https://userservice.kugou.com/risk/v1/r_register_dev";
         let query_string = serde_urlencoded::to_string(&final_query_params).map_err(|e| {
             LyricsHelperError::Internal(format!("Failed to build query string: {e}"))
         })?;
-        let full_url = format!("{base_url}?{query_string}");
+        let full_url = format!("{API_URL_REGISTER_DEV}?{query_string}");
 
         let resp = http_client
             .request_with_headers(
@@ -314,8 +342,7 @@ impl KugouMusic {
 
         let query_string = serde_urlencoded::to_string(&business_params)
             .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
-        let base_url = "https://expendablekmr.kugou.com/container/v2/image";
-        let full_url = format!("{base_url}?{query_string}");
+        let full_url = format!("{API_URL_IMAGE_BATCH}?{query_string}");
 
         let mid = hex::encode(Md5::digest(b"-"));
         let headers = [
@@ -333,7 +360,7 @@ impl KugouMusic {
         let response_text = response.text()?;
 
         tracing::trace!(
-            url = base_url,
+            url = API_URL_IMAGE_BATCH,
             response.body = %response_text,
             "原始 JSON 响应"
         );
@@ -437,10 +464,12 @@ impl Provider for KugouMusic {
         business_params.insert("albumhide".to_string(), "0".to_string());
         business_params.insert("nocollect".to_string(), "0".to_string());
 
-        let url = format!("{KUGOU_API_GATEWAY}/v3/search/song");
-
         let resp: models::SearchSongResponse = self
-            .execute_signed_get(&url, business_params, Some(X_ROUTER_COMPLEX_SEARCH))
+            .execute_signed_get(
+                API_URL_SEARCH_SONG,
+                business_params,
+                Some(X_ROUTER_COMPLEX_SEARCH),
+            )
             .await?;
 
         if resp.status != 1 || resp.err_code != Some(0) {
@@ -495,9 +524,8 @@ impl Provider for KugouMusic {
     /// 4. 解密 KRC 歌词。
     #[instrument(skip(self))]
     async fn get_full_lyrics(&self, song_hash: &str) -> Result<FullLyricsResult> {
-        let search_lyrics_url = format!(
-            "https://lyrics.kugou.com/search?ver=1&man=yes&client=pc&keyword=&hash={song_hash}"
-        );
+        let search_lyrics_url =
+            format!("{LYRICS_API_URL}/search?ver=1&man=yes&client=pc&keyword=&hash={song_hash}");
         let search_resp_text = self.http_client.get(&search_lyrics_url).await?.text()?;
 
         tracing::trace!(
@@ -521,7 +549,7 @@ impl Provider for KugouMusic {
             .ok_or(LyricsHelperError::LyricNotFound)?;
 
         let download_url = format!(
-            "https://lyrics.kugou.com/download?ver=1&client=pc&id={}&accesskey={}&fmt=krc&charset=utf8",
+            "{LYRICS_API_URL}/download?ver=1&client=pc&id={}&accesskey={}&fmt=krc&charset=utf8",
             best_candidate.id, best_candidate.accesskey
         );
 
@@ -553,7 +581,7 @@ impl Provider for KugouMusic {
 
         let options = ConversionOptions::default();
         let mut parsed_data = converter::parse_and_merge(&conversion_input, &options)?;
-        parsed_data.source_name = "kugou".to_string();
+        parsed_data.source_name = self.name().to_string();
 
         let raw_lyrics = RawLyrics {
             format: "krc".to_string(),
@@ -574,9 +602,8 @@ impl Provider for KugouMusic {
             is_buy: 0,
         };
 
-        let url = format!("{KUGOU_API_GATEWAY}/kmr/v2/albums");
         let resp: models::AlbumDetailResponse = self
-            .execute_signed_post(&url, &payload, Some(X_ROUTER_OPENAPI))
+            .execute_signed_post(API_URL_ALBUM_DETAIL, &payload, Some(X_ROUTER_OPENAPI))
             .await?;
 
         if resp.status != 1 || resp.error_code != 0 {
@@ -639,10 +666,8 @@ impl Provider for KugouMusic {
             pagesize: page_size,
             is_buy: "",
         };
-        let url = format!("{KUGOU_API_GATEWAY}/v1/album_audio/lite");
-
         let resp: models::AlbumSongsResponse = self
-            .execute_signed_post(&url, &payload, Some(X_ROUTER_OPENAPI))
+            .execute_signed_post(API_URL_ALBUM_SONGS, &payload, Some(X_ROUTER_OPENAPI))
             .await?;
 
         if resp.status != 1 || resp.error_code != 0 {
@@ -719,9 +744,8 @@ impl Provider for KugouMusic {
             area_code: "all",
         };
 
-        let url = "https://openapi.kugou.com/kmr/v1/audio_group/author";
         let resp: models::KmrSingerSongsResponse = self
-            .execute_signed_post(url, &payload, Some(X_ROUTER_OPENAPI))
+            .execute_signed_post(API_URL_SINGER_SONGS, &payload, Some(X_ROUTER_OPENAPI))
             .await?;
 
         if resp.status != 1 || resp.error_code != 0 {
@@ -773,8 +797,7 @@ impl Provider for KugouMusic {
                 userid: "0",
                 token: "",
             };
-            let url = format!("{KUGOU_API_GATEWAY}/v3/get_list_info");
-            self.execute_signed_post(&url, &payload, Some(X_ROUTER_PUB_SONGS))
+            self.execute_signed_post(API_URL_PLAYLIST_INFO, &payload, Some(X_ROUTER_PUB_SONGS))
                 .await?
         };
 
@@ -799,9 +822,8 @@ impl Provider for KugouMusic {
             business_params.insert("type".to_string(), "1".to_string());
             business_params.insert("mode".to_string(), "1".to_string());
 
-            let url = format!("{KUGOU_API_GATEWAY}/pubsongs/v2/get_other_list_file_nofilt");
-
-            self.execute_signed_get(&url, business_params, None).await?
+            self.execute_signed_get(API_URL_PLAYLIST_SONGS, business_params, None)
+                .await?
         };
 
         let songs = songs_resp.data.map_or(vec![], |d| {
@@ -873,9 +895,8 @@ impl Provider for KugouMusic {
             ],
         };
 
-        let url = format!("{KUGOU_API_GATEWAY}/v2/get_res_privilege/lite");
         let resp: models::SongDetailResponse = self
-            .execute_signed_post(&url, &payload, Some(X_ROUTER_MEDIA_STORE))
+            .execute_signed_post(API_URL_SONG_DETAIL, &payload, Some(X_ROUTER_MEDIA_STORE))
             .await?;
 
         if resp.status != 1 || resp.error_code != 0 {
@@ -965,10 +986,8 @@ impl Provider for KugouMusic {
             vip_type: 0,
         };
 
-        let url = "http://tracker.kugou.com/v6/priv_url";
-
         let resp: models::SongUrlNewResponse = self
-            .execute_signed_post(url, &payload, Some(X_ROUTER_TRACKER))
+            .execute_signed_post(API_URL_SONG_LINK, &payload, Some(X_ROUTER_TRACKER))
             .await?;
 
         for data_item in &resp.data {
