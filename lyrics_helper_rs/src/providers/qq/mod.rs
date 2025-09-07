@@ -4,32 +4,37 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, LazyLock},
-    time::Duration,
+    sync::{Arc, LazyLock, RwLock},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use chrono::{Datelike, Local};
-use fancy_regex::Regex;
+use regex::Regex;
 
 use lyrics_helper_core::{
     Artist, ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, Language,
     LyricFormat, ParsedSourceData, RawLyrics, SearchResult, Track, model::generic,
 };
 use quick_xml::{Reader, events::Event};
+use rand::random;
+use serde::Deserialize;
 use serde_json::json;
-use tracing::{info, instrument, trace, warn};
+use tracing::{error, info, instrument, trace, warn};
+use url::Url;
 use uuid::Uuid;
 
 use crate::{
+    LoginCredentials, LoginResult, ProviderAuthState, UserProfile,
     config::{load_cached_config, save_cached_config},
     converter,
     error::{LyricsHelperError, Result},
-    http::HttpClient,
+    http::{HttpClient, HttpMethod},
     providers::{
         Provider,
-        qq::models::{LrcApiResponse, QQMusicCoverSize},
+        login::LoginProvider,
+        qq::models::{LrcApiResponse, QQMusicCoverSize, QRCodeInfo, QRCodeStatus},
     },
 };
 
@@ -37,6 +42,7 @@ pub mod device;
 pub mod models;
 pub mod qimei;
 pub mod qrc_codec;
+pub mod sign;
 
 const MUSIC_U_FCG_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 
@@ -77,11 +83,13 @@ const LRC_LYRIC_URL: &str = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_n
 
 const LYRIC_DOWNLOAD_URL: &str = "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg";
 
+static PTUICB_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ptuiCB\((.*)\)").unwrap());
+
 static QRC_LYRIC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"LyricContent="([^"]*)""#).unwrap());
 
-static AMP_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"&(?![a-zA-Z]{2,6};|#[0-9]{2,4};)").unwrap());
+static AMP_RE: LazyLock<fancy_regex::Regex> =
+    LazyLock::new(|| fancy_regex::Regex::new(r"&(?![a-zA-Z]{2,6};|#[0-9]{2,4};)").unwrap());
 
 static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").unwrap());
 
@@ -89,6 +97,7 @@ static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").
 pub struct QQMusic {
     http_client: Arc<dyn HttpClient>,
     qimei: String,
+    auth_state: Arc<RwLock<Option<ProviderAuthState>>>,
 }
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
@@ -128,6 +137,7 @@ impl Provider for QQMusic {
         Ok(Self {
             http_client,
             qimei: qimei_result.q36,
+            auth_state: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -510,17 +520,135 @@ impl Provider for QQMusic {
     }
 }
 
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+impl LoginProvider for QQMusic {
+    #[instrument(skip(self, credentials), fields(provider = "qq"))]
+    async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult> {
+        let LoginCredentials::QQMusicByCookie { cookies } = credentials else {
+            return Err(LyricsHelperError::LoginFailed("无效的凭据类型".to_string()));
+        };
+
+        let cookie_map = Self::parse_cookies(cookies);
+        let musicid_str = cookie_map
+            .get("uin")
+            .or_else(|| cookie_map.get("musicid"))
+            .ok_or_else(|| {
+                LyricsHelperError::LoginFailed("Cookie中缺少 'uin' 或 'musicid'".into())
+            })?;
+        let musickey = cookie_map
+            .get("qqmusic_key")
+            .or_else(|| cookie_map.get("musickey"))
+            .ok_or_else(|| {
+                LyricsHelperError::LoginFailed("Cookie中缺少 'qqmusic_key' 或 'musickey'".into())
+            })?;
+
+        let musicid = musicid_str
+            .trim_start_matches('o')
+            .parse::<u64>()
+            .map_err(|_| LyricsHelperError::LoginFailed("无法将 'uin' 解析为数字".into()))?;
+
+        let temp_auth_state = ProviderAuthState::QQMusic {
+            musicid,
+            musickey: musickey.clone(),
+            refresh_key: cookie_map.get("refresh_key").cloned(),
+            encrypt_uin: cookie_map.get("encrypt_uin").cloned(),
+        };
+        self.set_auth_state(&temp_auth_state)?;
+
+        #[derive(Deserialize)]
+        struct UserInfoResponse {
+            #[serde(rename = "uin")]
+            user_id: i64,
+            nick: String,
+            headurl: String,
+        }
+
+        // 验证凭据
+        let user_info_data = self
+            .execute_api_request(
+                "music.UserInfo.userInfoServer",
+                "GetLoginUserInfo",
+                json!({}),
+                &[0],
+            )
+            .await
+            .map_err(|e| LyricsHelperError::LoginFailed(format!("会话验证失败: {e}")))?;
+
+        let user_info: UserInfoResponse = serde_json::from_value(user_info_data)?;
+
+        let profile = UserProfile {
+            user_id: user_info.user_id,
+            nickname: user_info.nick,
+            avatar_url: user_info.headurl,
+        };
+
+        Ok(LoginResult {
+            profile,
+            auth_state: temp_auth_state,
+        })
+    }
+
+    fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
+        if let ProviderAuthState::QQMusic { .. } = auth_state {
+            self.auth_state.write().map_or_else(
+                |_| Err(LyricsHelperError::Internal("无法获取写锁".into())),
+                |mut state| {
+                    *state = Some(auth_state.clone());
+                    Ok(())
+                },
+            )
+        } else {
+            Err(LyricsHelperError::ApiError("无效的 AuthState 类型".into()))
+        }
+    }
+
+    fn get_auth_state(&self) -> Option<ProviderAuthState> {
+        self.auth_state.read().ok().and_then(|s| s.clone())
+    }
+
+    #[instrument(skip(self), fields(provider = "qq"))]
+    async fn verify_session(&self) -> Result<()> {
+        if self.get_auth_state().is_none() {
+            return Err(LyricsHelperError::LoginFailed("未设置登录状态".into()));
+        }
+
+        self.execute_api_request(
+            "music.UserInfo.userInfoServer",
+            "GetLoginUserInfo",
+            json!({}),
+            &[0],
+        )
+        .await
+        .map_err(|e| LyricsHelperError::LoginFailed(format!("会话已失效: {e}")))?;
+
+        Ok(())
+    }
+}
+
 impl QQMusic {
     fn build_comm(&self) -> serde_json::Value {
-        json!({
-            "cv": 13_020_508,   // Client Version?
-            "ct": 11,           // Client Type?
-            "v": 13_020_508,    // Version?
-            "QIMEI36": &self.qimei,
-            "tmeAppID": "qqmusic",
-            "inCharset": "utf-8",
-            "outCharset": "utf-8"
-        })
+        let mut comm_map = serde_json::Map::from_iter(vec![
+            ("cv".to_string(), json!(13_020_508)),
+            ("ct".to_string(), json!(11)),
+            ("v".to_string(), json!(13_020_508)),
+            ("QIMEI36".to_string(), json!(&self.qimei)),
+            ("tmeAppID".to_string(), json!("qqmusic")),
+            ("inCharset".to_string(), json!("utf-8")),
+            ("outCharset".to_string(), json!("utf-8")),
+        ]);
+
+        if let Ok(state_guard) = self.auth_state.read()
+            && let Some(ProviderAuthState::QQMusic {
+                musicid, musickey, ..
+            }) = &*state_guard
+        {
+            comm_map.insert("qq".to_string(), json!(musicid.to_string()));
+            comm_map.insert("authst".to_string(), json!(musickey));
+            comm_map.insert("tmeLoginType".to_string(), json!(2));
+        }
+
+        serde_json::Value::Object(comm_map)
     }
 
     #[instrument(skip(self, param), fields(module = %module, method = %method))]
@@ -543,7 +671,31 @@ impl QQMusic {
             }
         });
 
-        let response = self.http_client.post_json(url, &payload).await?;
+        let body = serde_json::to_vec(&payload)?;
+
+        let cookie_header: Option<String> = self.auth_state.read().map_or(None, |state_guard| {
+            if let Some(ProviderAuthState::QQMusic {
+                musicid, musickey, ..
+            }) = &*state_guard
+            {
+                Some(format!(
+                    "uin={musicid}; qqmusic_key={musickey}; qm_keyst={musickey};"
+                ))
+            } else {
+                None
+            }
+        });
+
+        let mut headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
+        if let Some(cookie) = &cookie_header {
+            headers.push(("Cookie", cookie.as_str()));
+        }
+
+        let response = self
+            .http_client
+            .request_with_headers(HttpMethod::Post, url, &headers, Some(&body))
+            .await?;
+
         let response_text = response.text()?;
 
         trace!(
@@ -773,7 +925,7 @@ impl QQMusic {
             return content;
         }
 
-        if let Ok(Some(caps)) = QRC_LYRIC_RE.captures(&fixed_text)
+        if let Some(caps) = QRC_LYRIC_RE.captures(&fixed_text)
             && let Some(content) = caps.get(1)
         {
             return content
@@ -926,7 +1078,7 @@ impl QQMusic {
     ///
     /// 如果音节后带数字声调，则判定为粤语。否则视为日语。
     fn detect_romanization_language(roma_text: &str) -> String {
-        if YUE_RE.is_match(roma_text).unwrap_or(false) {
+        if YUE_RE.is_match(roma_text) {
             "yue-Latn".to_string()
         } else {
             "ja-Latn".to_string()
@@ -1225,6 +1377,282 @@ impl QQMusic {
             "",
             self.name(),
         )
+    }
+
+    fn parse_cookies(cookies: &str) -> HashMap<String, String> {
+        cookies
+            .split(';')
+            .filter_map(|s| {
+                let mut parts = s.trim().splitn(2, '=');
+                match (parts.next(), parts.next()) {
+                    (Some(key), Some(value)) if !key.is_empty() => {
+                        Some((key.to_string(), value.to_string()))
+                    }
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn hash33(s: &str) -> i64 {
+        let mut hash: i64 = 0;
+        for char_code in s.chars().map(|c| c as i64) {
+            hash = hash
+                .wrapping_shl(5)
+                .wrapping_add(hash)
+                .wrapping_add(char_code);
+        }
+        hash & 0x7FFF_FFFF
+    }
+
+    pub async fn get_qrcode(&self) -> Result<QRCodeInfo> {
+        const QRCODE_URL: &str = "https://ssl.ptlogin2.qq.com/ptqrshow";
+
+        let headers = [("Referer", "https://xui.ptlogin2.qq.com/")];
+        let params = [
+            ("appid", "716027609"),
+            ("e", "2"),
+            ("l", "M"),
+            ("s", "3"),
+            ("d", "72"),
+            ("v", "4"),
+            ("daid", "383"),
+            ("pt_3rd_aid", "100497308"),
+        ];
+
+        let t_param = random::<f64>().to_string();
+
+        let mut final_params = params.to_vec();
+        final_params.push(("t", &t_param));
+
+        let response = self
+            .http_client
+            .get_with_params_and_headers(QRCODE_URL, &final_params, &headers)
+            .await?;
+
+        let qrsig = response
+            .headers
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+            .and_then(|(_, v)| {
+                v.split(';')
+                    .find(|s| s.trim().starts_with("qrsig="))
+                    .map(|s| s.trim().trim_start_matches("qrsig=").to_string())
+            })
+            .ok_or_else(|| LyricsHelperError::LoginFailed("未能从响应中获取qrsig".to_string()))?;
+
+        if qrsig.is_empty() {
+            return Err(LyricsHelperError::LoginFailed(
+                "获取到的qrsig为空".to_string(),
+            ));
+        }
+
+        Ok(QRCodeInfo {
+            image_data: response.body,
+            qrsig,
+        })
+    }
+
+    pub async fn check_qrcode_status(&self, qrsig: &str) -> Result<QRCodeStatus> {
+        const POLL_URL: &str = "https://ssl.ptlogin2.qq.com/ptqrlogin";
+
+        let headers = [(
+            "Referer".to_string(),
+            "https://xui.ptlogin2.qq.com/".to_string(),
+        )];
+
+        let headers_slice: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let current_ts = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let ptqrtoken = Self::hash33(qrsig).to_string();
+        let action = format!("0-0-{current_ts}");
+
+        let params = [
+            ("u1", "https://graph.qq.com/oauth2.0/login_jump"),
+            ("ptqrtoken", &ptqrtoken),
+            ("ptredirect", "0"),
+            ("h", "1"),
+            ("t", "1"),
+            ("g", "1"),
+            ("from_ui", "1"),
+            ("ptlang", "2052"),
+            ("action", &action),
+            ("js_ver", "20102616"),
+            ("js_type", "1"),
+            ("pt_uistyle", "40"),
+            ("aid", "716027609"),
+            ("daid", "383"),
+            ("pt_3rd_aid", "100497308"),
+            ("has_onekey", "1"),
+        ];
+
+        let response = self
+            .http_client
+            .get_with_params_and_headers(POLL_URL, &params, &headers_slice)
+            .await?;
+
+        let text = response.text()?;
+        let captures = PTUICB_REGEX
+            .captures(&text)
+            .and_then(|caps| caps.get(1))
+            .ok_or_else(|| LyricsHelperError::LoginFailed("无法解析ptuiCB响应".to_string()))?;
+
+        let args: Vec<&str> = captures
+            .as_str()
+            .split(',')
+            .map(|s| s.trim_matches('\''))
+            .collect();
+        let status_code = args
+            .first()
+            .ok_or_else(|| LyricsHelperError::LoginFailed("ptuiCB响应中缺少状态码".to_string()))?;
+
+        let status = match *status_code {
+            "0" => {
+                let url = args.get(2).ok_or_else(|| {
+                    LyricsHelperError::LoginFailed("ptuiCB响应中缺少重定向URL".to_string())
+                })?;
+                QRCodeStatus::Confirmed {
+                    url: (*url).to_string(),
+                }
+            }
+            "65" => QRCodeStatus::TimedOut,
+            "66" => QRCodeStatus::WaitingForScan,
+            "67" => QRCodeStatus::Scanned,
+            "68" => QRCodeStatus::Refused,
+            code => QRCodeStatus::Error(format!("未知的状态码: {code}")),
+        };
+
+        Ok(status)
+    }
+
+    fn g_tk_hash(s: &str) -> i64 {
+        let mut hash: i64 = 5381;
+        for char_code in s.chars().map(|c| c as i64) {
+            hash = hash
+                .wrapping_shl(5)
+                .wrapping_add(hash)
+                .wrapping_add(char_code);
+        }
+        hash & 0x7FFF_FFFF
+    }
+
+    #[instrument(skip(self, redirect_url), fields(provider = "qq"))]
+    pub async fn finalize_login_with_url(&self, redirect_url: &str) -> Result<ProviderAuthState> {
+        info!(url = %redirect_url, "正在向 check_sig URL 发起GET请求...");
+
+        let headers = [(
+            "Referer".to_string(),
+            "https://xui.ptlogin2.qq.com/".to_string(),
+        )];
+
+        let headers_slice: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let check_sig_response = self
+            .http_client
+            .request_with_headers(HttpMethod::Get, redirect_url, &headers_slice, None)
+            .await
+            .map_err(|e| {
+                error!("GET重定向URL时出错: {:?}", e);
+                e
+            })?;
+
+        let p_skey = check_sig_response
+            .headers
+            .iter()
+            .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
+            .find_map(|(_, v)| {
+                v.split(';')
+                    .find(|s| s.trim().starts_with("p_skey="))
+                    .map(|s| s.trim().trim_start_matches("p_skey=").to_string())
+            })
+            .ok_or_else(|| {
+                error!("未能从响应头中找到 p_skey cookie");
+                LyricsHelperError::LoginFailed("未能从响应头中找到p_skey".to_string())
+            })?;
+
+        let g_tk = Self::g_tk_hash(&p_skey).to_string();
+        let auth_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string();
+        let ui = Uuid::new_v4().to_string();
+
+        const AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
+        let form_data = [
+            ("response_type", "code"),
+            ("client_id", "100497308"),
+            (
+                "redirect_uri",
+                "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/",
+            ),
+            ("scope", "get_user_info,get_app_friends"),
+            ("state", "state"),
+            ("switch", ""),
+            ("from_ptlogin", "1"),
+            ("src", "1"),
+            ("update_auth", "1"),
+            ("openapi", "1010_1030"),
+            ("g_tk", &g_tk),
+            ("auth_time", &auth_time),
+            ("ui", &ui),
+        ];
+
+        let final_redirect_url = self
+            .http_client
+            .post_form_for_redirect(AUTHORIZE_URL, &form_data)
+            .await?;
+
+        let parsed_url = Url::parse(&final_redirect_url)
+            .map_err(|_| LyricsHelperError::LoginFailed("无法解析最终的重定向URL".to_string()))?;
+
+        let code = parsed_url
+            .query_pairs()
+            .find_map(|(key, value)| if key == "code" { Some(value) } else { None })
+            .ok_or_else(|| LyricsHelperError::LoginFailed("最终URL中缺少'code'参数".to_string()))?;
+
+        let login_data = self
+            .execute_api_request(
+                "QQConnectLogin.LoginServer",
+                "QQLogin",
+                json!({ "code": code }),
+                &[0],
+            )
+            .await?;
+
+        #[derive(Deserialize)]
+        struct LoginData {
+            musicid: u64,
+            musickey: String,
+            #[serde(rename = "encryptUin")]
+            encrypt_uin: Option<String>,
+            refresh_key: Option<String>,
+        }
+
+        #[derive(Deserialize)]
+        struct LoginResponse {
+            data: LoginData,
+        }
+
+        let response: LoginResponse = serde_json::from_value(login_data)?;
+        let credentials = response.data;
+
+        Ok(ProviderAuthState::QQMusic {
+            musicid: credentials.musicid,
+            musickey: credentials.musickey,
+            refresh_key: credentials.refresh_key,
+            encrypt_uin: credentials.encrypt_uin,
+        })
     }
 }
 

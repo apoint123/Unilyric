@@ -284,14 +284,14 @@ pub async fn get_qimei(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{http::ReqwestClient, providers::qq::device::Device};
+    use crate::{http::WreqClient, providers::qq::device::Device};
 
     #[tokio::test]
     #[ignore]
     async fn test_get_qimei_online() {
         let device = Device::new();
         let api_version = "13.2.5.8";
-        let http_client = ReqwestClient::new().unwrap();
+        let http_client = WreqClient::new().unwrap();
         let qimei_result = get_qimei(&http_client, &device, api_version).await;
 
         assert!(

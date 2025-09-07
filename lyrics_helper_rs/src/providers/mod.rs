@@ -12,7 +12,7 @@ pub mod qq;
 use std::sync::Arc;
 
 use crate::error::Result;
-use crate::http::{HttpClient, ReqwestClient};
+use crate::http::{HttpClient, WreqClient};
 pub use login::LoginProvider;
 
 use async_trait::async_trait;
@@ -24,12 +24,12 @@ use lyrics_helper_core::{
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait Provider: Send + Sync {
-    /// 使用默认的 Reqwest HTTP 客户端创建一个新的 Provider 实例。
+    /// 使用默认的 `WreqClient` HTTP 客户端创建一个新的 Provider 实例。
     async fn new() -> Result<Self>
     where
         Self: Sized,
     {
-        let http_client = Arc::new(ReqwestClient::new()?);
+        let http_client = Arc::new(WreqClient::new()?);
         Self::with_http_client(http_client).await
     }
 

@@ -15,10 +15,10 @@ use lyrics_helper_core::{
 use md5::{Digest, Md5};
 use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, seq::SliceRandom};
-use reqwest::header::{CONTENT_TYPE, REFERER, USER_AGENT};
 use serde::Serialize;
 use serde_json::json;
 use tracing::trace;
+use wreq::header::{CONTENT_TYPE, REFERER, USER_AGENT};
 
 use crate::{
     converter,
@@ -841,6 +841,11 @@ impl LoginProvider for NeteaseClient {
                     profile: user_profile,
                     auth_state: ProviderAuthState::Netease,
                 })
+            }
+            LoginCredentials::QQMusicByCookie { .. } => {
+                return Err(LyricsHelperError::LoginFailed(
+                    "不应该对网易云音乐执行QQ音乐的登录方法".to_string(),
+                ));
             }
         }
     }

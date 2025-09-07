@@ -91,7 +91,7 @@ use std::{
 };
 
 use crate::{
-    http::{HttpClient, ReqwestClient},
+    http::{HttpClient, WreqClient},
     model::auth::ProviderSession,
 };
 
@@ -437,7 +437,7 @@ impl LyricsHelper {
         let mut provider_initializers = Vec::new();
 
         for name in &provider_names {
-            clients.insert(name.clone(), Arc::new(ReqwestClient::new()?));
+            clients.insert(name.clone(), Arc::new(WreqClient::new()?));
         }
         self.http_clients = clients;
 

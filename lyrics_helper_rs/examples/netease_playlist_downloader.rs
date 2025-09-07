@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use lyrics_helper_rs::http::reqwest_client::ReqwestClient;
+use lyrics_helper_rs::http::WreqClient;
 use lyrics_helper_rs::providers::Provider;
 use lyrics_helper_rs::providers::netease::NeteaseClient;
 
@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     }
     let playlist_id = &args[1];
 
-    let http_client = Arc::new(ReqwestClient::new()?);
+    let http_client = Arc::new(WreqClient::new()?);
     let provider = NeteaseClient::with_http_client(http_client).await?;
     // .with_cookie(cookie);
 

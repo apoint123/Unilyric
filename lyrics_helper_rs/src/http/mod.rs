@@ -1,15 +1,15 @@
 //! HTTP客户端抽象层，用于解耦不同环境下的HTTP请求实现。
 
-use std::{collections::HashMap, fmt::Debug};
+use std::fmt::Debug;
 
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
 use crate::error::{LyricsHelperError, Result};
 
-pub mod reqwest_client;
+pub mod wreq_client;
 
-pub use self::reqwest_client::ReqwestClient;
+pub use self::wreq_client::WreqClient;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_client;
@@ -37,7 +37,7 @@ pub struct HttpResponse {
     /// HTTP状态码
     pub status: u16,
     /// 响应头
-    pub headers: HashMap<String, String>,
+    pub headers: Vec<(String, String)>,
     /// 响应体
     pub body: Vec<u8>,
 }
@@ -102,4 +102,7 @@ pub trait HttpClient: Send + Sync + Debug {
 
     /// 从 JSON 字符串中导入 Cookies，覆盖现有状态
     fn set_cookies(&self, cookies_json: &str) -> Result<()>;
+
+    /// 发送POST表单请求，但不遵循重定向，而是返回 Location 头
+    async fn post_form_for_redirect(&self, url: &str, form: &[(&str, &str)]) -> Result<String>;
 }

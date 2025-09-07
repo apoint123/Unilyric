@@ -499,7 +499,7 @@ mod tests {
 
         let provider = AmllTtmlDatabase {
             index: Arc::new(vec![index_entry.clone()]),
-            http_client: Arc::new(crate::http::ReqwestClient::new().unwrap()),
+            http_client: Arc::new(crate::http::WreqClient::new().unwrap()),
             lyrics_url_template: format!(
                 "{RAW_CONTENT_BASE_URL}/{REPO_OWNER}/{REPO_NAME}/{REPO_BRANCH}/raw-lyrics/{{song_id}}"
             ),

@@ -1055,9 +1055,8 @@ mod tests {
     async fn get_dfid() -> &'static str {
         TEST_DFID
             .get_or_init(|| async {
-                let http_client = Arc::new(
-                    crate::http::ReqwestClient::new().expect("Failed to create HTTP client"),
-                );
+                let http_client =
+                    Arc::new(crate::http::WreqClient::new().expect("Failed to create HTTP client"));
                 let new_instance = KugouMusic::register_via_network(http_client)
                     .await
                     .expect("获取 DFID 失败");
@@ -1073,7 +1072,7 @@ mod tests {
     async fn get_test_provider() -> KugouMusic {
         let dfid = get_dfid().await;
         let http_client =
-            Arc::new(crate::http::ReqwestClient::new().expect("Failed to create HTTP client"));
+            Arc::new(crate::http::WreqClient::new().expect("Failed to create HTTP client"));
         KugouMusic::from_dfid(dfid.to_string(), http_client)
     }
 

@@ -563,3 +563,27 @@ pub struct LrcApiResponse {
     pub lyric: Option<String>,
     pub trans: Option<String>,
 }
+
+// =================================================================
+// 扫码登录过程中的信息和状态
+// =================================================================
+
+/// 二维码请求返回的信息
+#[derive(Debug, Clone)]
+pub struct QRCodeInfo {
+    /// 二维码图片的原始PNG数据
+    pub image_data: Vec<u8>,
+    /// 用于后续轮询状态的会话ID
+    pub qrsig: String,
+}
+
+/// 二维码登录过程中的状态
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QRCodeStatus {
+    WaitingForScan,
+    Scanned,
+    Confirmed { url: String },
+    TimedOut,
+    Refused,
+    Error(String),
+}

@@ -16,6 +16,7 @@ pub struct UserProfile {
 #[derive(Clone, Debug)]
 pub enum LoginCredentials<'a> {
     NeteaseByCookie { music_u: &'a str },
+    QQMusicByCookie { cookies: &'a str },
 }
 
 #[derive(Clone, Debug)]
@@ -24,9 +25,14 @@ pub struct LoginResult {
     pub auth_state: ProviderAuthState,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub enum ProviderAuthState {
-    QQMusic { qimei36: String, qimei_key: String },
+    QQMusic {
+        musicid: u64,
+        musickey: String,
+        refresh_key: Option<String>,
+        encrypt_uin: Option<String>,
+    },
     Netease,
 }
 

@@ -1,10 +1,17 @@
-//! `reqwest` 客户端的默认实现。
+//! `wreq` 客户端的默认实现。
 
 use async_trait::async_trait;
 use cookie_store::{CookieStore, RawCookie, serde::json};
 use parking_lot::Mutex;
-use reqwest::{Url, header::HeaderMap, header::HeaderValue};
-use std::{collections::HashMap, sync::Arc};
+use serde_json;
+use std::sync::Arc;
+use url::Url;
+use wreq::{
+    Uri,
+    header::{CONTENT_TYPE, HeaderMap, HeaderValue},
+};
+
+use wreq_util::Emulation;
 
 use crate::{
     error::{LyricsHelperError, Result},
@@ -22,8 +29,12 @@ impl SharedCookieStore {
     }
 }
 
-impl reqwest::cookie::CookieStore for SharedCookieStore {
-    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Url) {
+impl wreq::cookie::CookieStore for SharedCookieStore {
+    fn set_cookies(&self, cookie_headers: &mut dyn Iterator<Item = &HeaderValue>, url: &Uri) {
+        let Ok(url_as_url) = Url::parse(&url.to_string()) else {
+            return;
+        };
+
         let mut store = self.store.lock();
 
         let cookies = cookie_headers.filter_map(|val| {
@@ -31,44 +42,62 @@ impl reqwest::cookie::CookieStore for SharedCookieStore {
                 .ok()
                 .and_then(|s| RawCookie::parse(s.to_owned()).ok())
         });
-        store.store_response_cookies(cookies, url);
+        store.store_response_cookies(cookies, &url_as_url);
     }
 
-    fn cookies(&self, url: &Url) -> Option<HeaderValue> {
+    fn cookies(&self, url: &Uri) -> Vec<HeaderValue> {
+        let Ok(url_as_url) = Url::parse(&url.to_string()) else {
+            return vec![];
+        };
+
         let cookie_string = self
             .store
             .lock()
-            .get_request_values(url)
+            .get_request_values(&url_as_url)
             .map(|(name, value)| format!("{name}={value}"))
             .collect::<Vec<_>>()
             .join("; ");
 
         if cookie_string.is_empty() {
-            None
+            vec![]
         } else {
-            HeaderValue::from_str(&cookie_string).ok()
+            HeaderValue::from_str(&cookie_string)
+                .map(|h| vec![h])
+                .unwrap_or_default()
         }
     }
 }
 
-/// 包装了 `reqwest::Client` 的 `HttpClient` 实现。
-#[derive(Debug, Clone)]
-pub struct ReqwestClient {
-    client: reqwest::Client,
+/// 包装了 `wreq::Client` 的 `HttpClient` 实现。
+#[derive(Clone)]
+pub struct WreqClient {
+    client: wreq::Client,
     cookie_store: Arc<SharedCookieStore>,
 }
 
-impl Default for ReqwestClient {
-    fn default() -> Self {
-        Self::new().expect("Failed to create default ReqwestClient")
+impl std::fmt::Debug for WreqClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WreqClient")
+            .field("client", &"<wreq::Client>")
+            .field("cookie_store", &self.cookie_store)
+            .finish()
     }
 }
 
-impl ReqwestClient {
-    /// 创建一个新的 `ReqwestClient` 实例。
+impl Default for WreqClient {
+    fn default() -> Self {
+        Self::new().expect("Failed to create default WreqClient")
+    }
+}
+
+impl WreqClient {
+    /// 创建一个新的 `WreqClient` 实例。
     pub fn new() -> Result<Self> {
         let cookie_store = Arc::new(SharedCookieStore::new());
-        let builder = reqwest::Client::builder().cookie_provider(Arc::clone(&cookie_store));
+
+        let builder = wreq::Client::builder()
+            .emulation(Emulation::Chrome130)
+            .cookie_provider(Arc::clone(&cookie_store));
 
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.timeout(std::time::Duration::from_secs(10));
@@ -88,7 +117,7 @@ impl ReqwestClient {
 
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-impl HttpClient for ReqwestClient {
+impl HttpClient for WreqClient {
     fn get_cookies(&self) -> Result<String> {
         let store = self.cookie_store.store.lock();
         let mut writer = Vec::new();
@@ -120,10 +149,13 @@ impl HttpClient for ReqwestClient {
     }
 
     async fn post_json(&self, url: &str, json: &serde_json::Value) -> Result<HttpResponse> {
+        let body =
+            serde_json::to_vec(json).map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
         let response = self
             .client
             .post(url)
-            .json(json)
+            .header(CONTENT_TYPE, "application/json")
+            .body(body)
             .send()
             .await
             .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
@@ -185,10 +217,39 @@ impl HttpClient for ReqwestClient {
 
         convert_response(response).await
     }
+
+    async fn post_form_for_redirect(&self, url: &str, form: &[(&str, &str)]) -> Result<String> {
+        let no_redirect_client = wreq::Client::builder()
+            .emulation(Emulation::Chrome130)
+            .cookie_provider(Arc::clone(&self.cookie_store))
+            .redirect(wreq::redirect::Policy::none())
+            .build()
+            .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
+
+        let response = no_redirect_client
+            .post(url)
+            .form(form)
+            .send()
+            .await
+            .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
+
+        if response.status().is_redirection() {
+            response
+                .headers()
+                .get(wreq::header::LOCATION)
+                .and_then(|loc| loc.to_str().ok())
+                .map(String::from)
+                .ok_or_else(|| LyricsHelperError::Http("重定向响应中未找到Location头".to_string()))
+        } else {
+            Err(LyricsHelperError::Http(format!(
+                "预期一个重定向，但收到了状态码: {}",
+                response.status()
+            )))
+        }
+    }
 }
 
-/// 将 `reqwest::Response` 转换为自定义的 `HttpResponse`。
-async fn convert_response(response: reqwest::Response) -> Result<HttpResponse> {
+async fn convert_response(response: wreq::Response) -> Result<HttpResponse> {
     let status = response.status().as_u16();
     let headers = convert_headers(response.headers());
     let body = response
@@ -204,20 +265,17 @@ async fn convert_response(response: reqwest::Response) -> Result<HttpResponse> {
     })
 }
 
-/// 将 `reqwest` 的 `HeaderMap` 转换为 `HashMap<String, String>`。
-fn convert_headers(header_map: &HeaderMap) -> HashMap<String, String> {
-    header_map
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|value_str| (name.as_str().to_string(), value_str.to_string()))
-        })
-        .collect()
+fn convert_headers(header_map: &HeaderMap) -> Vec<(String, String)> {
+    let mut headers = Vec::new();
+    for (name, value) in header_map {
+        if let Ok(value_str) = value.to_str() {
+            headers.push((name.as_str().to_string(), value_str.to_string()));
+        }
+    }
+    headers
 }
 
-impl From<HttpMethod> for reqwest::Method {
+impl From<HttpMethod> for wreq::Method {
     fn from(method: HttpMethod) -> Self {
         match method {
             HttpMethod::Get => Self::GET,
