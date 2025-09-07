@@ -819,35 +819,36 @@ const fn get_user_agent(client_type: ClientType) -> &'static str {
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LoginProvider for NeteaseClient {
     async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult> {
-        match credentials {
-            LoginCredentials::NeteaseByCookie { music_u } => {
-                let mut temp_store = cookie_store::CookieStore::default();
-                let cookie_str = format!("MUSIC_U={music_u}");
-                let url = API_BASE_URL.parse().unwrap();
-                temp_store.store_response_cookies(
-                    std::iter::once(cookie_store::RawCookie::parse(cookie_str).unwrap()),
-                    &url,
-                );
-                let mut writer = Vec::new();
-                json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer).unwrap();
-                let cookie_json = String::from_utf8(writer).unwrap();
+        let LoginCredentials::NeteaseByCookie { music_u } = credentials else {
+            return Err(LyricsHelperError::LoginFailed("无效的凭据类型".to_string()));
+        };
 
-                self.http_client.set_cookies(&cookie_json)?;
+        let mut temp_store = cookie_store::CookieStore::default();
+        let cookie_str = format!("MUSIC_U={music_u}");
+        let url = API_BASE_URL
+            .parse()
+            .map_err(|e| LyricsHelperError::Internal(format!("无法解析API基础URL: {e}")))?;
 
-                let user_profile = self.fetch_user_profile().await?;
-                *self.user_profile.lock() = Some(user_profile.clone());
+        let raw_cookie = cookie_store::RawCookie::parse(cookie_str)
+            .map_err(|e| LyricsHelperError::Internal(format!("Cookie解析失败: {e}")))?;
+        temp_store.store_response_cookies(std::iter::once(raw_cookie), &url);
 
-                Ok(LoginResult {
-                    profile: user_profile,
-                    auth_state: ProviderAuthState::Netease,
-                })
-            }
-            LoginCredentials::QQMusicByCookie { .. } => {
-                return Err(LyricsHelperError::LoginFailed(
-                    "不应该对网易云音乐执行QQ音乐的登录方法".to_string(),
-                ));
-            }
-        }
+        let mut writer = Vec::new();
+        json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer)
+            .map_err(|e| LyricsHelperError::Internal(format!("Cookie序列化失败: {e}")))?;
+
+        let cookie_json = String::from_utf8(writer)
+            .map_err(|e| LyricsHelperError::Internal(format!("Cookie JSON转换UTF-8失败: {e}")))?;
+
+        self.http_client.set_cookies(&cookie_json)?;
+
+        let user_profile = self.fetch_user_profile().await?;
+        *self.user_profile.lock() = Some(user_profile.clone());
+
+        Ok(LoginResult {
+            profile: user_profile,
+            auth_state: ProviderAuthState::Netease,
+        })
     }
 
     async fn verify_session(&self) -> Result<()> {
