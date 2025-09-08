@@ -200,6 +200,7 @@ where
         (0.40, ArtistMatchType::Medium),
         (0.15, ArtistMatchType::Low),
     ];
+    const LEVENSHTEIN_THRESHOLD: f64 = 88.0;
 
     let list1_raw = artists1?;
     let list2_raw = artists2?;
@@ -228,10 +229,32 @@ where
         return Some(ArtistMatchType::High);
     }
 
-    let set1: HashSet<_> = list1.iter().collect();
-    let set2: HashSet<_> = list2.iter().collect();
-    let intersection_size = set1.intersection(&set2).count();
-    let union_size = set1.union(&set2).count();
+    let mut intersection_size = 0;
+    let mut matched_indices_in_list2 = HashSet::new();
+
+    for artist1 in &list1 {
+        let mut best_match_idx = None;
+        for (i, artist2) in list2.iter().enumerate() {
+            if matched_indices_in_list2.contains(&i) {
+                continue;
+            }
+
+            if artist2.contains(artist1)
+                || artist1.contains(artist2)
+                || compute_text_same(artist1, artist2) > LEVENSHTEIN_THRESHOLD
+            {
+                best_match_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(idx) = best_match_idx {
+            intersection_size += 1;
+            matched_indices_in_list2.insert(idx);
+        }
+    }
+
+    let union_size = list1.len() + list2.len() - intersection_size;
     if union_size == 0 {
         return Some(ArtistMatchType::Perfect);
     }
