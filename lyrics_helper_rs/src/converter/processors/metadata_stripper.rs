@@ -2,7 +2,7 @@
 
 use std::{
     borrow::Cow,
-    collections::BTreeMap,
+    collections::HashMap,
     sync::{Mutex, OnceLock},
 };
 
@@ -10,10 +10,10 @@ use regex::{Regex, RegexBuilder};
 use tracing::{debug, trace, warn};
 
 use crate::converter::LyricLine;
-use lyrics_helper_core::{ContentType, MetadataStripperFlags, MetadataStripperOptions};
+use lyrics_helper_core::{MetadataStripperFlags, MetadataStripperOptions};
 
 type RegexCacheKey = (String, bool); // (pattern, case_sensitive)
-type RegexCacheMap = BTreeMap<RegexCacheKey, Regex>;
+type RegexCacheMap = HashMap<RegexCacheKey, Regex>;
 
 fn get_regex_cache() -> &'static Mutex<RegexCacheMap> {
     static REGEX_CACHE: OnceLock<Mutex<RegexCacheMap>> = OnceLock::new();
@@ -24,10 +24,12 @@ fn get_regex_cache() -> &'static Mutex<RegexCacheMap> {
 fn get_cached_regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
     let key = (pattern.to_string(), case_sensitive);
     let cache_mutex = get_regex_cache();
-    let mut cache = cache_mutex.lock().unwrap();
 
-    if let Some(regex) = cache.get(&key) {
-        return Some(regex.clone());
+    {
+        let cache = cache_mutex.lock().unwrap();
+        if let Some(regex) = cache.get(&key) {
+            return Some(regex.clone());
+        }
     }
 
     let Ok(new_regex) = RegexBuilder::new(pattern)
@@ -39,23 +41,156 @@ fn get_cached_regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
         return None;
     };
 
-    let regex_to_return = new_regex.clone();
-    cache.insert(key, new_regex);
-    drop(cache);
-
-    Some(regex_to_return)
+    let mut cache = cache_mutex.lock().unwrap();
+    Some(cache.entry(key).or_insert(new_regex).clone())
 }
 
-/// 辅助函数：从 `LyricLine` 获取用于匹配的纯文本内容。
-fn get_plain_text_from_new_lyric_line(line: &LyricLine) -> String {
-    if let Some(main_track) = line
-        .tracks
-        .iter()
-        .find(|t| t.content_type == ContentType::Main)
-    {
-        return main_track.content.text().trim().to_string();
+fn get_text(line: &LyricLine) -> String {
+    line.main_text().unwrap_or_default()
+}
+
+struct StrippingRules<'a> {
+    prepared_keywords: Cow<'a, [String]>,
+    keyword_case_sensitive: bool,
+    compiled_regexes: Vec<Regex>,
+}
+
+impl<'a> StrippingRules<'a> {
+    fn new(options: &'a MetadataStripperOptions) -> Self {
+        let compiled_regexes = if options
+            .flags
+            .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
+            && !options.regex_patterns.is_empty()
+        {
+            options
+                .regex_patterns
+                .iter()
+                .filter_map(|pattern_str| {
+                    if pattern_str.trim().is_empty() {
+                        return None;
+                    }
+                    get_cached_regex(
+                        pattern_str,
+                        options
+                            .flags
+                            .contains(MetadataStripperFlags::REGEX_CASE_SENSITIVE),
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let keyword_case_sensitive = options
+            .flags
+            .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE);
+        let prepared_keywords: Cow<'a, [String]> = if keyword_case_sensitive {
+            Cow::Borrowed(&options.keywords)
+        } else {
+            Cow::Owned(options.keywords.iter().map(|k| k.to_lowercase()).collect())
+        };
+
+        Self {
+            prepared_keywords,
+            keyword_case_sensitive,
+            compiled_regexes,
+        }
     }
-    String::new()
+
+    fn has_rules(&self) -> bool {
+        !self.prepared_keywords.is_empty() || !self.compiled_regexes.is_empty()
+    }
+}
+
+fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
+    let text_for_keyword_check = {
+        let mut text = line_to_check.trim();
+
+        // 处理意外包含了 LRC 标签的情况
+        // 这在我们的数据模型中不应该发生
+        if text.starts_with('[') && text.ends_with(']') {
+            text = &text[1..text.len() - 1];
+        } else if text.starts_with('[') {
+            if let Some(end_bracket_idx) = text.find(']') {
+                text = text[end_bracket_idx + 1..].trim_start();
+            }
+        // 某些奇怪的歌词可能会在前面加上背景人声或者演唱者标记之类的东西
+        // 通常不太可能又有这些东西又是元数据行
+        } else if text.starts_with('(') && text.ends_with(')') {
+            text = &text[1..text.len() - 1];
+        } else if text.starts_with('(')
+            && let Some(end_paren_idx) = text.find(')')
+        {
+            text = text[end_paren_idx + 1..].trim_start();
+        }
+        text
+    };
+
+    if !rules.prepared_keywords.is_empty() {
+        let prepared_line: Cow<str> = if rules.keyword_case_sensitive {
+            Cow::Borrowed(text_for_keyword_check)
+        } else {
+            Cow::Owned(text_for_keyword_check.to_lowercase())
+        };
+
+        for keyword in rules.prepared_keywords.iter() {
+            if let Some(stripped) = prepared_line.strip_prefix(keyword)
+                && (stripped.trim_start().starts_with(':')
+                    || stripped.trim_start().starts_with('：'))
+            {
+                return true;
+            }
+        }
+    }
+
+    if !rules.compiled_regexes.is_empty()
+        && rules
+            .compiled_regexes
+            .iter()
+            .any(|regex| regex.is_match(line_to_check))
+    {
+        return true;
+    }
+
+    false
+}
+
+fn find_first_lyric_line_index(lines: &[LyricLine], rules: &StrippingRules, limit: usize) -> usize {
+    let mut last_matching_header_index: Option<usize> = None;
+
+    for (i, line_item) in lines.iter().enumerate().take(limit) {
+        let line_text = get_text(line_item);
+        if line_matches_rules(&line_text, rules) {
+            last_matching_header_index = Some(i);
+        }
+    }
+
+    last_matching_header_index.map_or(0, |idx| idx + 1)
+}
+
+fn find_last_lyric_line_exclusive_index(
+    lines: &[LyricLine],
+    first_lyric_index: usize,
+    rules: &StrippingRules,
+    limit: usize,
+) -> usize {
+    if first_lyric_index >= lines.len() {
+        return first_lyric_index;
+    }
+
+    let footer_scan_start_index = lines.len().saturating_sub(limit).max(first_lyric_index);
+
+    let first_matching_footer_index = lines
+        .iter()
+        .enumerate()
+        .skip(footer_scan_start_index)
+        .find(|(_i, line_item)| {
+            let line_text = get_text(line_item);
+            line_matches_rules(&line_text, rules)
+        })
+        .map(|(index, _line)| index);
+
+    first_matching_footer_index.unwrap_or(lines.len())
 }
 
 /// 从 `LyricLine` 列表中移除元数据行。
@@ -68,123 +203,26 @@ pub fn strip_descriptive_metadata_lines(
         return;
     }
 
-    let keywords_to_use: &[String] = &options.keywords;
-    let use_regex = options
-        .flags
-        .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
-        && !options.regex_patterns.is_empty();
+    let rules = StrippingRules::new(options);
 
-    if lines.is_empty() || (keywords_to_use.is_empty() && !use_regex) {
+    if lines.is_empty() || !rules.has_rules() {
         return;
     }
 
     let original_count = lines.len();
 
-    let compiled_regexes: Vec<Regex> = if use_regex {
-        options
-            .regex_patterns
-            .iter()
-            .filter_map(|pattern_str| {
-                if pattern_str.trim().is_empty() {
-                    return None;
-                }
-                get_cached_regex(
-                    pattern_str,
-                    options
-                        .flags
-                        .contains(MetadataStripperFlags::REGEX_CASE_SENSITIVE),
-                )
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let header_limit = options.header_scan_limit.calculate(original_count);
+    let footer_limit = options.footer_scan_limit.calculate(original_count);
 
-    let prepared_keywords: Cow<'_, [String]> = if options
-        .flags
-        .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE)
-    {
-        Cow::Borrowed(keywords_to_use)
-    } else {
-        Cow::Owned(keywords_to_use.iter().map(|k| k.to_lowercase()).collect())
-    };
-    let keyword_case_sensitive = options
-        .flags
-        .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE);
+    let first_lyric_index = find_first_lyric_line_index(lines, &rules, header_limit);
 
-    let line_matches_any_rule = |line_to_check: &str| -> bool {
-        if !keywords_to_use.is_empty() {
-            let mut text_after_prefix = line_to_check.trim_start();
-            if text_after_prefix.starts_with('[') {
-                if let Some(end_bracket_idx) = text_after_prefix.find(']') {
-                    text_after_prefix = text_after_prefix[end_bracket_idx + 1..].trim_start();
-                }
-            } else if text_after_prefix.starts_with('(')
-                && let Some(end_paren_idx) = text_after_prefix.find(')')
-            {
-                text_after_prefix = text_after_prefix[end_paren_idx + 1..].trim_start();
-            }
+    let last_lyric_exclusive_index =
+        find_last_lyric_line_exclusive_index(lines, first_lyric_index, &rules, footer_limit);
 
-            let prepared_line: Cow<str> = if keyword_case_sensitive {
-                Cow::Borrowed(text_after_prefix)
-            } else {
-                Cow::Owned(text_after_prefix.to_lowercase())
-            };
-
-            for keyword in prepared_keywords.iter() {
-                if let Some(stripped) = prepared_line.strip_prefix(keyword)
-                    && (stripped.trim_start().starts_with(':')
-                        || stripped.trim_start().starts_with('：'))
-                {
-                    return true;
-                }
-            }
-        }
-
-        if !compiled_regexes.is_empty()
-            && compiled_regexes
-                .iter()
-                .any(|regex| regex.is_match(line_to_check))
-        {
-            return true;
-        }
-
-        false
-    };
-
-    let mut last_matching_header_index: Option<usize> = None;
-    let header_scan_limit = 20.min(lines.len());
-    for (i, line_item) in lines.iter().enumerate().take(header_scan_limit) {
-        let line_text = get_plain_text_from_new_lyric_line(line_item);
-        if line_matches_any_rule(&line_text) {
-            last_matching_header_index = Some(i);
-        }
-    }
-    let first_lyric_line_index = last_matching_header_index.map_or(0, |idx| idx + 1);
-
-    let mut last_lyric_line_exclusive_index = lines.len();
-    if first_lyric_line_index < lines.len() {
-        let end_lookback_count = 10;
-        let footer_scan_start_index = lines
-            .len()
-            .saturating_sub(end_lookback_count)
-            .max(first_lyric_line_index);
-        for i in (footer_scan_start_index..lines.len()).rev() {
-            let line_text = get_plain_text_from_new_lyric_line(&lines[i]);
-            if line_matches_any_rule(&line_text) {
-                last_lyric_line_exclusive_index = i;
-            } else {
-                break;
-            }
-        }
-    } else {
-        last_lyric_line_exclusive_index = first_lyric_line_index;
-    }
-
-    if first_lyric_line_index < last_lyric_line_exclusive_index {
-        lines.drain(last_lyric_line_exclusive_index..);
-        lines.drain(..first_lyric_line_index);
-    } else if first_lyric_line_index > 0 || last_lyric_line_exclusive_index < original_count {
+    if first_lyric_index < last_lyric_exclusive_index {
+        lines.drain(last_lyric_exclusive_index..);
+        lines.drain(..first_lyric_index);
+    } else if first_lyric_index > 0 || last_lyric_exclusive_index < original_count {
         lines.clear();
     }
 
@@ -194,5 +232,177 @@ pub fn strip_descriptive_metadata_lines(
             original_count,
             lines.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lyrics_helper_core::{
+        AnnotatedTrack, ContentType, LyricLine, LyricSyllable, LyricTrack, MetadataStripperFlags,
+        MetadataStripperOptions, Word,
+    };
+
+    fn create_test_lines(texts: &[&str]) -> Vec<LyricLine> {
+        texts
+            .iter()
+            .enumerate()
+            .map(|(i, &text)| {
+                let mut line = LyricLine::new(i as u64 * 1000, i as u64 * 1000 + 1000);
+
+                let syllable = LyricSyllable {
+                    text: text.to_string(),
+                    ..Default::default()
+                };
+                let track = AnnotatedTrack {
+                    content_type: ContentType::Main,
+                    content: LyricTrack {
+                        words: vec![Word {
+                            syllables: vec![syllable],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                line.add_track(track);
+                line
+            })
+            .collect()
+    }
+
+    fn lines_to_texts(lines: &[LyricLine]) -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| line.main_text().unwrap_or_default())
+            .collect()
+    }
+
+    #[test]
+    fn test_stripper_disabled() {
+        let mut lines = create_test_lines(&["Artist: Me", "Lyric line"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::empty(),
+            keywords: vec!["Artist".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+
+        assert_eq!(lines_to_texts(&lines), vec!["Artist: Me", "Lyric line"]);
+    }
+
+    #[test]
+    fn test_no_rules_does_nothing() {
+        let mut lines = create_test_lines(&["Artist: Me", "Lyric line"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: Vec::new(),
+            regex_patterns: Vec::new(),
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["Artist: Me", "Lyric line"]);
+    }
+
+    #[test]
+    fn test_strip_header_keywords_basic() {
+        let mut lines = create_test_lines(&["Artist: A", "Album: B", "Lyric 1", "Lyric 2"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["Artist".to_string(), "Album".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["Lyric 1", "Lyric 2"]);
+    }
+
+    #[test]
+    fn test_keyword_case_insensitivity() {
+        let mut lines = create_test_lines(&["artist: A", "Lyric 1"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["Artist".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["Lyric 1"]);
+    }
+
+    #[test]
+    fn test_keywords_with_lrc_tags_and_whitespace() {
+        let mut lines = create_test_lines(&["[ti:Title]", "[00:01.00] Artist : A", "Lyric 1"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["ti".to_string(), "Artist".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["Lyric 1"]);
+    }
+
+    #[test]
+    fn test_keywords_with_full_width_colon() {
+        let mut lines = create_test_lines(&["作曲：某人", "Lyric 1"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["作曲".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["Lyric 1"]);
+    }
+
+    #[test]
+    fn test_regex_case_sensitivity() {
+        let mut lines = create_test_lines(&["NOTE: important", "note: less important", "Lyric 1"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED
+                | MetadataStripperFlags::ENABLE_REGEX_STRIPPING
+                | MetadataStripperFlags::REGEX_CASE_SENSITIVE,
+            regex_patterns: vec![r"^NOTE:".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(
+            lines_to_texts(&lines),
+            vec!["note: less important", "Lyric 1"]
+        );
+    }
+
+    #[test]
+    fn test_all_lines_are_metadata() {
+        let mut lines = create_test_lines(&["Artist: A", "Album: B", "Source: Web"]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec![
+                "Artist".to_string(),
+                "Album".to_string(),
+                "Source".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert!(lines.is_empty(), "Expected lines to be empty");
+    }
+
+    #[test]
+    fn test_empty_input_vec() {
+        let mut lines = create_test_lines(&[]);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["Artist".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert!(lines.is_empty());
     }
 }

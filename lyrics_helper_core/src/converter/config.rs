@@ -236,6 +236,44 @@ fn default_regex_patterns() -> Vec<String> {
     default_stripper_config().regex_patterns.clone()
 }
 
+/// 元数据扫描行数的限制
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanLimitConfig {
+    /// 扫描行数的比例 (例如, 0.1 表示 10%)。
+    pub ratio: f32,
+    /// 扫描的最小行数
+    pub min_lines: usize,
+    /// 扫描的最大行数
+    pub max_lines: usize,
+}
+
+impl ScanLimitConfig {
+    pub fn calculate(&self, total_lines: usize) -> usize {
+        let proportional_lines = (total_lines as f32 * self.ratio).ceil() as usize;
+
+        proportional_lines
+            .max(self.min_lines)
+            .min(self.max_lines)
+            .min(total_lines)
+    }
+}
+
+fn default_header_scan_limit() -> ScanLimitConfig {
+    ScanLimitConfig {
+        ratio: 0.2,
+        min_lines: 20,
+        max_lines: 70,
+    }
+}
+
+fn default_footer_scan_limit() -> ScanLimitConfig {
+    ScanLimitConfig {
+        ratio: 0.2,
+        min_lines: 20,
+        max_lines: 50,
+    }
+}
+
 /// 配置元数据行清理器的选项。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataStripperOptions {
@@ -247,9 +285,19 @@ pub struct MetadataStripperOptions {
     #[serde(default = "default_keywords")]
     pub keywords: Vec<String>,
 
-    /// 用于匹配并移除任意行的正则表达式列表。
+    /// 正则表达式列表。
+    ///
+    /// 匹配后，会移除开头或结尾到该行的所有内容。
     #[serde(default = "default_regex_patterns")]
     pub regex_patterns: Vec<String>,
+
+    /// 头部扫描的行数限制。
+    #[serde(default = "default_header_scan_limit")]
+    pub header_scan_limit: ScanLimitConfig,
+
+    /// 尾部扫描的行数限制。
+    #[serde(default = "default_footer_scan_limit")]
+    pub footer_scan_limit: ScanLimitConfig,
 }
 
 impl Default for MetadataStripperOptions {
@@ -258,6 +306,8 @@ impl Default for MetadataStripperOptions {
             flags: Default::default(),
             keywords: default_keywords(),
             regex_patterns: default_regex_patterns(),
+            header_scan_limit: default_header_scan_limit(),
+            footer_scan_limit: default_footer_scan_limit(),
         }
     }
 }

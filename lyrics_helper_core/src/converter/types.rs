@@ -136,7 +136,7 @@ pub struct FuriganaSyllable {
     pub timing: Option<(u64, u64)>,
 }
 
-/// 表示一个语义上的"单词"或"词组"，主要为振假名服务。
+/// 表示一个语义上的"单词"或"词组"。
 ///
 /// 主要为了 QRC 的振假名信息服务，其它解析器应该将整行作为一个词组。
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
@@ -256,7 +256,7 @@ impl LyricTrack {
                 }
             })
             .collect::<String>()
-            .trim_end()
+            .trim() // 我们的数据结构应该确保了不会出现首尾空格
             .to_string()
     }
 }
@@ -287,7 +287,7 @@ impl LyricLine {
         self.tracks_by_type(ContentType::Main)
     }
 
-    /// 返回一个迭代器，用于遍历所有背景人声音轨 (`ContentType::Background`)。
+    /// 返回一个迭代器，用于遍历所有背景人声轨道 (`ContentType::Background`)。
     pub fn background_tracks(&self) -> impl Iterator<Item = &AnnotatedTrack> {
         self.tracks_by_type(ContentType::Background)
     }
@@ -298,7 +298,7 @@ impl LyricLine {
         self.main_tracks().next()
     }
 
-    /// 获取第一个背景人声音轨（如果存在）。
+    /// 获取第一个背景人声轨道（如果存在）。
     #[must_use]
     pub fn background_track(&self) -> Option<&AnnotatedTrack> {
         self.background_tracks().next()
@@ -451,6 +451,8 @@ impl LyricLine {
 #[builder(default)]
 pub struct LyricSyllable {
     /// 音节的文本内容。
+    ///
+    /// 应确保这里不包含空格。空格使用下面的 `ends_with_space` 来表示。
     #[builder(setter(into))]
     pub text: String,
     /// 音节开始时间，相对于歌曲开始的绝对时间（毫秒）。
