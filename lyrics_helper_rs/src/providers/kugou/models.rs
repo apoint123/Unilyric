@@ -57,6 +57,10 @@ pub struct SongInfo {
     #[serde(rename = "OriSongName")]
     pub song_name: String,
 
+    /// 歌曲后缀，例如 "(DJ版)"。
+    #[serde(rename = "Suffix")]
+    pub suffix: String,
+
     /// 专辑名。
     pub album_name: String,
 

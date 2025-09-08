@@ -485,7 +485,11 @@ impl Provider for KugouMusic {
                 .info
                 .into_iter()
                 .map(|song| SearchResult {
-                    title: song.song_name,
+                    title: if song.suffix.is_empty() {
+                        song.song_name
+                    } else {
+                        format!("{} {}", song.song_name, song.suffix.trim())
+                    },
                     artists: song
                         .singers
                         .into_iter()
