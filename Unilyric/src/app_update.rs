@@ -146,8 +146,8 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                         if let Some(time) = new_info.position_report_time {
                             current_info.position_report_time = Some(time);
                         }
-                        if let Some(playing) = new_info.is_playing {
-                            current_info.is_playing = Some(playing);
+                        if let Some(status) = new_info.playback_status {
+                            current_info.playback_status = Some(status);
                         }
 
                         if let Some(cover) = new_info.cover_data {

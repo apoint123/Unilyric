@@ -129,11 +129,12 @@ fn send_cover_to_ws(tx: &TokioSender<ClientMessage>, cover_data: &[u8]) {
 }
 
 fn send_play_state_to_ws(tx: &TokioSender<ClientMessage>, info: &smtc_suite::NowPlayingInfo) {
-    if let Some(is_playing) = info.is_playing {
-        let msg = if is_playing {
-            ClientMessage::OnResumed
-        } else {
-            ClientMessage::OnPaused
+    if let Some(status) = info.playback_status {
+        let msg = match status {
+            smtc_suite::PlaybackStatus::Playing => ClientMessage::OnResumed,
+            smtc_suite::PlaybackStatus::Paused | smtc_suite::PlaybackStatus::Stopped => {
+                ClientMessage::OnPaused
+            }
         };
         handle_websocket_send_error(tx.try_send(msg), "播放状态");
     }

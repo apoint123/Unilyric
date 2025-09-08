@@ -1712,11 +1712,11 @@ impl UniLyricApp {
                 now_playing.album_title.as_deref().unwrap_or("未知")
             ));
 
-            if let Some(playing) = now_playing.is_playing {
-                ui.label(if playing {
-                    "状态: 播放中"
-                } else {
-                    "状态: 已暂停"
+            if let Some(status) = now_playing.playback_status {
+                ui.label(match status {
+                    smtc_suite::PlaybackStatus::Playing => "状态: 播放中",
+                    smtc_suite::PlaybackStatus::Paused => "状态: 已暂停",
+                    smtc_suite::PlaybackStatus::Stopped => "状态: 已停止",
                 });
             }
 
