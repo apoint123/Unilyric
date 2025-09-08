@@ -7,7 +7,6 @@ use ferrous_opencc::OpenCC;
 use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
     BuiltinConfigExt, ChineseConversionMode, ChineseConversionOptions, ContentType, LyricLine,
-    LyricSyllable, LyricTrack, TrackMetadataKey, Word,
 };
 use pinyin::ToPinyin;
 use std::sync::LazyLock;
@@ -124,46 +123,20 @@ impl ChineseConversionProcessor {
 
         for line in lines.iter_mut() {
             for at in &mut line.tracks {
-                if at.content_type != ContentType::Main {
+                if !matches!(at.content_type, ContentType::Main | ContentType::Background) {
                     continue;
                 }
 
-                let translation_exists = at.translations.iter().any(|track| {
-                    track
-                        .metadata
-                        .get(&TrackMetadataKey::Language)
-                        .is_some_and(|lang| lang == target_lang_tag)
-                });
-
-                if translation_exists {
+                if at.has_translation(target_lang_tag) {
                     continue;
                 }
 
-                let main_text: String = at
-                    .content
-                    .words
-                    .iter()
-                    .flat_map(|w| &w.syllables)
-                    .map(|s| s.text.as_str())
-                    .collect();
+                let original_text = at.content.text();
 
-                if !main_text.is_empty() {
-                    let converted_text = convert(&main_text, config);
+                if !original_text.is_empty() {
+                    let converted_text = convert(&original_text, config);
 
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(TrackMetadataKey::Language, target_lang_tag.to_string());
-
-                    let translation_track = LyricTrack {
-                        words: vec![Word {
-                            syllables: vec![LyricSyllable {
-                                text: converted_text,
-                                ..Default::default()
-                            }],
-                            ..Default::default()
-                        }],
-                        metadata,
-                    };
-                    at.translations.push(translation_track);
+                    at.add_translation(&converted_text, target_lang_tag);
                 }
             }
         }
@@ -246,27 +219,11 @@ mod tests {
         AnnotatedTrack, ChineseConversionMode, ContentType, LyricLine, LyricSyllable, LyricTrack,
         Word,
     };
-    use std::collections::HashMap;
 
     fn new_track_line(text: &str) -> LyricLine {
-        let content_track = LyricTrack {
-            words: vec![Word {
-                syllables: vec![LyricSyllable {
-                    text: text.to_string(),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-        LyricLine {
-            tracks: vec![AnnotatedTrack {
-                content_type: ContentType::Main,
-                content: content_track,
-                ..Default::default()
-            }],
-            ..Default::default()
-        }
+        let mut line = LyricLine::default();
+        line.add_content_track(ContentType::Main, text);
+        line
     }
 
     fn new_syllable_track_line(syllables: Vec<&str>) -> LyricLine {
@@ -310,8 +267,7 @@ mod tests {
             ..Default::default()
         };
         ChineseConversionProcessor::process(&mut lines, &options);
-        let main_track = &lines[0].tracks[0].content;
-        assert_eq!(main_track.words[0].syllables[0].text, "我是簡體字。");
+        assert_eq!(lines[0].main_text().unwrap(), "我是簡體字。");
     }
 
     #[test]
@@ -363,51 +319,43 @@ mod tests {
 
         ChineseConversionProcessor::process(&mut lines, &options);
 
-        assert_eq!(lines[0].tracks[0].translations.len(), 1);
-        let translation_track = lines[0].tracks[0].translations.first().unwrap();
+        let line = &lines[0];
+        let translation = line
+            .get_translation_by_lang("zh-Hant-TW")
+            .expect("应该找到 zh-Hant-TW 翻译");
 
-        assert_eq!(translation_track.words[0].syllables[0].text, "滑鼠和鍵盤");
-        assert_eq!(
-            translation_track
-                .metadata
-                .get(&TrackMetadataKey::Language)
-                .map(String::as_str),
-            Some("zh-Hant-TW")
-        );
+        assert_eq!(translation.text(), "滑鼠和鍵盤");
     }
 
     #[test]
     fn test_add_translation_mode_skip_if_exists() {
         let mut line = new_track_line("简体");
 
-        let mut metadata = HashMap::new();
-        metadata.insert(TrackMetadataKey::Language, "zh-Hant".to_string());
-        let existing_translation = LyricTrack {
-            words: vec![Word {
-                syllables: vec![LyricSyllable {
-                    text: "預設繁體".to_string(),
-                    ..Default::default()
-                }],
-                ..Default::default()
-            }],
-            metadata,
-        };
-
-        line.tracks[0].translations.push(existing_translation);
+        line.add_translation(ContentType::Main, "預設繁體", Some("zh-Hant"));
 
         let mut lines = vec![line];
+
         let options = ChineseConversionOptions {
             config: Some(BuiltinConfig::S2t),
             mode: ChineseConversionMode::AddAsTranslation,
             target_lang_tag: Some("zh-Hant".to_string()),
         };
+
         ChineseConversionProcessor::process(&mut lines, &options);
-        assert_eq!(lines[0].tracks[0].translations.len(), 1);
-        let translation_text = lines[0].tracks[0].translations.first().unwrap().words[0].syllables
-            [0]
-        .text
-        .clone();
-        assert_eq!(translation_text, "預設繁體");
+
+        let processed_line = &lines[0];
+
+        assert_eq!(
+            processed_line.main_track().unwrap().translations.len(),
+            1,
+            "不应添加新的翻译"
+        );
+
+        let translation = processed_line
+            .get_translation_by_lang("zh-Hant")
+            .expect("应该能找到预设的 zh-Hant 翻译");
+
+        assert_eq!(translation.text(), "預設繁體", "已存在的翻译内容不应被改变");
     }
 
     #[test]

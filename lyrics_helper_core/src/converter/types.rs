@@ -175,6 +175,36 @@ pub struct AnnotatedTrack {
     pub romanizations: Vec<LyricTrack>,
 }
 
+impl AnnotatedTrack {
+    /// 为该轨道添加一个翻译。
+    pub fn add_translation(&mut self, text: impl Into<String>, language: &str) {
+        let translation_track = LyricTrack {
+            words: vec![Word {
+                syllables: vec![LyricSyllable {
+                    text: text.into(),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            metadata: std::collections::HashMap::from([(
+                TrackMetadataKey::Language,
+                language.to_string(),
+            )]),
+        };
+        self.translations.push(translation_track);
+    }
+
+    /// 根据语言标签检查翻译是否已存在。
+    pub fn has_translation(&self, lang_tag: &str) -> bool {
+        self.translations.iter().any(|track| {
+            track
+                .metadata
+                .get(&TrackMetadataKey::Language)
+                .is_some_and(|lang| lang == lang_tag)
+        })
+    }
+}
+
 /// 表示一位演唱者的类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AgentType {
