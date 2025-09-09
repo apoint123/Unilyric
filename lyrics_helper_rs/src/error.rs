@@ -71,6 +71,10 @@ pub enum LyricsHelperError {
     #[error("内部错误: {0}")]
     Internal(String),
 
+    /// 任务被取消
+    #[error("任务被取消")]
+    Cancelled,
+
     /// API 请求被限流
     #[error("API 请求被限流: {0}")]
     RateLimited(String),

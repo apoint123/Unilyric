@@ -17,6 +17,7 @@ use tokio::{
     sync::mpsc::{Sender as TokioSender, channel as tokio_channel},
     task::JoinHandle,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::amll_connector::types::UiUpdate;
 use crate::app_ui::SettingsCategory;
@@ -239,6 +240,7 @@ pub(super) struct AutoFetchState {
     pub(super) result_rx: StdReceiver<AutoFetchResult>,
     pub(super) result_tx: StdSender<AutoFetchResult>,
 
+    pub current_fetch_cancellation_token: Option<CancellationToken>,
     pub(super) current_ui_populated: bool,
     pub(super) last_source_format: Option<LyricFormat>,
     pub(super) local_cache_status: Arc<StdMutex<AutoSearchStatus>>,
@@ -257,6 +259,7 @@ impl AutoFetchState {
         Self {
             result_rx,
             result_tx,
+            current_fetch_cancellation_token: None,
             current_ui_populated: false,
             last_source_format: None,
             local_cache_status: Arc::new(StdMutex::new(AutoSearchStatus::default())),

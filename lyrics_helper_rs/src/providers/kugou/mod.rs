@@ -1027,7 +1027,7 @@ impl Provider for KugouMusic {
             let size_str = match size {
                 CoverSize::Thumbnail => "150",
                 CoverSize::Medium => "240",
-                CoverSize::Large => "",
+                CoverSize::Large => "800",
             };
             Ok(cover_url_template.replace("{size}", size_str))
         } else {

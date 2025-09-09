@@ -69,6 +69,10 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                         || app.player.current_now_playing.artist != new_info.artist;
 
                     if is_new_song {
+                        if let Some(token) = app.fetcher.current_fetch_cancellation_token.take() {
+                            token.cancel();
+                        }
+
                         {
                             let settings = app.app_settings.lock().unwrap();
                             if settings.calibrate_timeline_on_song_change
@@ -419,7 +423,15 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 }
             }
             AutoFetchResult::FetchError(err) => {
-                error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err.to_string());
+                let is_cancelled = if let AppError::LyricsHelper(inner_err) = &err {
+                    matches!(**inner_err, lyrics_helper_rs::LyricsHelperError::Cancelled)
+                } else {
+                    false
+                };
+
+                if !is_cancelled {
+                    error!("[UniLyricApp] 自动获取歌词时发生错误: {}", err.to_string());
+                }
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
             AutoFetchResult::RequestCache => {

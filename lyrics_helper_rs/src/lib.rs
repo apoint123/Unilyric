@@ -101,6 +101,7 @@ use lyrics_helper_core::{
     FullLyricsResult, LyricFormat, LyricsAndMetadata, ParsedSourceData, SearchResult, Track,
 };
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 pub use crate::error::{LyricsHelperError, Result};
 pub use crate::model::auth::{
@@ -725,6 +726,7 @@ impl LyricsHelper {
     /// # 参数
     /// * `track_meta` - 要搜索的歌曲元数据。
     /// * `mode` - 搜索模式。
+    /// * `cancellation_token` - 用于取消搜索。
     ///
     /// # 返回
     /// * `Ok(Some(ComprehensiveSearchResult))` - 如果成功找到歌词，包含歌词和所有候选项。
@@ -734,6 +736,7 @@ impl LyricsHelper {
         &self,
         track_meta: &Track<'a>,
         mode: &SearchMode,
+        cancellation_token: Option<CancellationToken>,
     ) -> Result<SearchLyricsComprehensiveFuture<'a>> {
         if self.providers.is_empty() {
             return Err(LyricsHelperError::ProvidersNotInitialized);
@@ -753,7 +756,8 @@ impl LyricsHelper {
         let track_meta = track_meta.clone();
 
         Ok(Box::pin(async move {
-            search_comprehensive_unified(&providers_to_search, &track_meta).await
+            search_comprehensive_unified(&providers_to_search, &track_meta, cancellation_token)
+                .await
         }))
     }
 
@@ -1015,6 +1019,7 @@ async fn search_lyrics_parallel(
 async fn search_comprehensive_unified(
     providers: &[Arc<dyn Provider + Send + Sync>],
     track_meta: &Track<'_>,
+    cancellation_token: Option<CancellationToken>,
 ) -> Result<Option<ComprehensiveSearchResult>> {
     let search_futures = providers
         .iter()
@@ -1047,7 +1052,20 @@ async fn search_comprehensive_unified(
             .iter()
             .find(|p| p.name() == candidate.provider_name)
         {
-            match provider.get_full_lyrics(&candidate.provider_id).await {
+            let fetch_future = provider.get_full_lyrics(&candidate.provider_id);
+
+            let lyrics_result = if let Some(token) = &cancellation_token {
+                tokio::select! {
+                    () = token.cancelled() => {
+                        Err(LyricsHelperError::Cancelled)
+                    }
+                    res = fetch_future => res,
+                }
+            } else {
+                fetch_future.await
+            };
+
+            match lyrics_result {
                 Ok(lyrics_data) => {
                     tracing::info!(
                         "成功获取到歌词。最佳匹配项来自 '{}': '{}'",
@@ -1065,6 +1083,9 @@ async fn search_comprehensive_unified(
                 }
                 Err(LyricsHelperError::LyricNotFound) => {
                     tracing::info!("候选项 '{}' 无歌词，尝试下一个。", candidate.title);
+                }
+                Err(LyricsHelperError::Cancelled) => {
+                    return Err(LyricsHelperError::Cancelled);
                 }
                 Err(e) => {
                     tracing::warn!(

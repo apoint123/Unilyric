@@ -10,6 +10,7 @@ use smtc_suite::NowPlayingInfo;
 
 use lyrics_helper_core::model::track::{LyricsAndMetadata, Track};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 const COVER_SIMILARITY_THRESHOLD: u32 = 10;
@@ -173,6 +174,8 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     let app_settings = app.app_settings.lock().unwrap().clone();
     let result_tx = app.fetcher.result_tx.clone();
     let target_format = app.lyrics.target_format;
+    let cancellation_token = CancellationToken::new();
+    app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
 
     app.fetcher.last_source_format = None;
     *app.fetcher.qqmusic_status.lock().unwrap() = AutoSearchStatus::Searching;
@@ -201,7 +204,11 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             let amll_search_result = {
                 let future_res = {
                     let helper_guard = helper.lock().await;
-                    helper_guard.search_lyrics_comprehensive(&track_to_search, &amll_mode)
+                    helper_guard.search_lyrics_comprehensive(
+                        &track_to_search,
+                        &amll_mode,
+                        Some(cancellation_token.clone()),
+                    )
                 };
                 match future_res {
                     Ok(future) => future.await,
@@ -244,7 +251,11 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
         let regular_search_result = {
             let future_res = {
                 let helper_guard = helper.lock().await;
-                helper_guard.search_lyrics_comprehensive(&track_to_search, &regular_search_mode)
+                helper_guard.search_lyrics_comprehensive(
+                    &track_to_search,
+                    &regular_search_mode,
+                    Some(cancellation_token.clone()),
+                )
             };
             match future_res {
                 Ok(future) => future.await,
@@ -261,6 +272,10 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             }
             Ok(None) => {}
             Err(e) => {
+                let lyrics_helper_rs::LyricsHelperError::Cancelled = e else {
+                    return;
+                };
+
                 error!("[AutoFetch] 常规搜索时发生错误: {}", e);
                 if final_lyrics.is_none() {
                     if result_tx.send(AutoFetchResult::FetchError(e.into())).is_err() {
@@ -393,6 +408,9 @@ pub(super) fn trigger_manual_refetch_for_source(
     };
     *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Searching;
 
+    let cancellation_token = CancellationToken::new();
+    app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
+
     let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
@@ -426,9 +444,12 @@ pub(super) fn trigger_manual_refetch_for_source(
         let search_result = {
             let search_future_result = {
                 let helper_guard = helper.lock().await;
-                helper_guard.search_lyrics_comprehensive(&track_to_search, &search_mode)
+                helper_guard.search_lyrics_comprehensive(
+                    &track_to_search,
+                    &search_mode,
+                    Some(cancellation_token.clone()),
+                )
             };
-
             match search_future_result {
                 Ok(future) => future.await,
                 Err(e) => Err(e),
