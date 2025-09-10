@@ -294,6 +294,9 @@ keywords = [
     "联合出品Published",
     "出品人Presenter",
     "封面插画Cover illustration",
+    "和音 Bvox",
+    "混音 Mixed by",
+    "母带 Mastered by",
 ]
 
 regex_patterns = [
