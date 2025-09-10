@@ -410,15 +410,14 @@ impl UniLyricApp {
                         ));
                     }
                 });
-                // TDOO: 把元数据修好
-                // ui_right.add_space(BUTTON_STRIP_SPACING);
-                // if ui_right.button("元数据").clicked() {
-                //     self.send_action(crate::app_actions::UserAction::UI(
-                //         crate::app_actions::UIAction::ShowPanel(
-                //             crate::app_actions::PanelType::Metadata,
-                //         ),
-                //     ));
-                // }
+                ui_right.add_space(BUTTON_STRIP_SPACING);
+                if ui_right.button("元数据").clicked() {
+                    self.send_action(crate::app_actions::UserAction::UI(
+                        crate::app_actions::UIAction::ShowPanel(
+                            crate::app_actions::PanelType::Metadata,
+                        ),
+                    ));
+                }
                 ui_right.add_space(BUTTON_STRIP_SPACING);
                 let mut wrap_text_copy = self.ui.wrap_text;
                 if ui_right.checkbox(&mut wrap_text_copy, "自动换行").changed() {
@@ -1720,28 +1719,6 @@ impl UniLyricApp {
                 });
             }
 
-            ui.strong("时间轴偏移:");
-            ui.horizontal(|h_ui| {
-                h_ui.label("偏移量:");
-                let mut current_offset = self.player.smtc_time_offset_ms;
-                let response = h_ui.add(
-                    egui::DragValue::new(&mut current_offset)
-                        .speed(10.0)
-                        .suffix(" ms"),
-                );
-                if response.changed() {
-                    self.player.smtc_time_offset_ms = current_offset;
-                    if let Ok(mut settings) = self.app_settings.lock()
-                        && settings.smtc_time_offset_ms != self.player.smtc_time_offset_ms
-                    {
-                        settings.smtc_time_offset_ms = self.player.smtc_time_offset_ms;
-                        if let Err(e) = settings.save() {
-                            tracing::error!("[Unilyric UI] 侧边栏偏移量持久化到设置失败: {}", e);
-                        }
-                    }
-                }
-            });
-
             if let Some(cover_bytes) = &now_playing.cover_data
                 && !cover_bytes.is_empty()
             {
@@ -1760,6 +1737,27 @@ impl UniLyricApp {
                         .maintain_aspect_ratio(true)
                         .bg_fill(Color32::TRANSPARENT),
                 );
+            }
+
+            ui.strong("时间轴偏移:");
+            let mut offset_action_to_send = None;
+            ui.horizontal(|h_ui| {
+                h_ui.label("偏移量:");
+                let mut current_offset = self.player.smtc_time_offset_ms;
+                let response = h_ui.add(
+                    egui::DragValue::new(&mut current_offset)
+                        .speed(10.0)
+                        .suffix(" ms"),
+                );
+                if response.changed() {
+                    offset_action_to_send = Some(UserAction::Player(
+                        PlayerAction::SetSmtcTimeOffset(current_offset),
+                    ));
+                }
+            });
+
+            if let Some(action) = offset_action_to_send {
+                self.send_action(action);
             }
         } else {
             ui.weak("无SMTC信息 / 未选择特定源");

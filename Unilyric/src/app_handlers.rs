@@ -961,6 +961,19 @@ impl UniLyricApp {
                 tracing::info!("[PlayerAction] 发送音频捕获命令: {:?}", smtc_command);
                 command_tx.try_send(smtc_command)
             }
+            PlayerAction::SetSmtcTimeOffset(offset) => {
+                self.player.smtc_time_offset_ms = offset;
+
+                if let Ok(mut settings) = self.app_settings.lock()
+                    && settings.smtc_time_offset_ms != offset
+                {
+                    settings.smtc_time_offset_ms = offset;
+                    if let Err(e) = settings.save() {
+                        warn!("[PlayerAction] 保存偏移量设置失败: {}", e);
+                    }
+                }
+                command_tx.try_send(MediaCommand::SetProgressOffset(offset))
+            }
         };
 
         if let Err(e) = send_result {
@@ -1090,13 +1103,25 @@ impl UniLyricApp {
                         }
                     }
 
+                    {
+                        let mut app_settings_guard = self.app_settings.lock().unwrap();
+                        *app_settings_guard = *settings.clone();
+                        self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
+                    }
+
+                    let old_offset = self.app_settings.lock().unwrap().smtc_time_offset_ms;
                     let old_audio_capture_setting =
                         self.app_settings.lock().unwrap().send_audio_data_to_player;
 
                     {
                         let mut app_settings_guard = self.app_settings.lock().unwrap();
                         *app_settings_guard = *settings.clone();
-                        self.player.smtc_time_offset_ms = app_settings_guard.smtc_time_offset_ms;
+                    }
+
+                    if settings.smtc_time_offset_ms != old_offset {
+                        self.send_action(UserAction::Player(PlayerAction::SetSmtcTimeOffset(
+                            settings.smtc_time_offset_ms,
+                        )));
                     }
 
                     if settings.send_audio_data_to_player != old_audio_capture_setting {

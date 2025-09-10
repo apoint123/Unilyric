@@ -187,12 +187,12 @@ pub(super) struct PlayerState {
 }
 
 impl PlayerState {
-    fn new(_settings: &AppSettings, command_tx: Option<TokioSender<MediaCommand>>) -> Self {
+    fn new(settings: &AppSettings, command_tx: Option<TokioSender<MediaCommand>>) -> Self {
         Self {
             command_tx,
             current_now_playing: NowPlayingInfo::default(),
             available_sessions: Vec::new(),
-            smtc_time_offset_ms: 0,
+            smtc_time_offset_ms: settings.smtc_time_offset_ms,
             last_requested_session_id: None,
             is_first_song_processed: false,
         }
@@ -392,6 +392,12 @@ impl UniLyricApp {
                 smtc_suite::MediaManager::start().expect("smtc-suite 启动失败");
 
             player_state = PlayerState::new(&settings, Some(smtc_controller.command_tx.clone()));
+
+            let _ = smtc_controller
+                .command_tx
+                .try_send(MediaCommand::SetProgressOffset(
+                    settings.smtc_time_offset_ms,
+                ));
 
             let conversion_mode = if settings.enable_t2s_for_auto_search {
                 TextConversionMode::TraditionalToSimplified

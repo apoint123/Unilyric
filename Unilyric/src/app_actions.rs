@@ -70,6 +70,8 @@ pub enum DownloaderAction {
 pub enum PlayerAction {
     /// 让 smtc-suite 选择一个新的媒体会话。
     SelectSmtcSession(String),
+    /// 设置时间轴偏移量
+    SetSmtcTimeOffset(i64),
     /// 保存当前歌词到本地缓存。
     SaveToLocalCache,
     /// 更新封面数据。
