@@ -16,6 +16,7 @@ dependencies = [
  "egui-toast",
  "egui_extras",
  "ferrous-opencc",
+ "filetime",
  "fontdb",
  "futures-util",
  "image",
@@ -2164,6 +2165,18 @@ dependencies = [
  "anyhow",
  "bincode 2.0.1",
  "fst",
+]
+
+[[package]]
+name = "filetime"
+version = "0.2.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc0505cd1b6fa6580283f6bdf70a73fcf4aba1184038c90902b92b3dd0df63ed"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "libredox",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5447,7 +5460,6 @@ dependencies = [
 [[package]]
 name = "smtc-suite"
 version = "2.5.1"
-source = "git+https://github.com/apoint123/smtc-suite#6e4fae11313bb9d14563daa789bc6742322dae39"
 dependencies = [
  "bitflags 2.9.4",
  "cbindgen",

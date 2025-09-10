@@ -18,6 +18,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::types::UiUpdate;
 use crate::app_ui::SettingsCategory;
@@ -280,6 +281,7 @@ pub(super) struct LocalCacheState {
     pub(super) index: Arc<StdMutex<Vec<LocalLyricCacheEntry>>>,
     pub(super) index_path: Option<std::path::PathBuf>,
     pub(super) dir_path: Option<std::path::PathBuf>,
+    pub(super) cover_cache_dir: Option<std::path::PathBuf>,
 }
 
 pub(super) struct UniLyricApp {
@@ -476,8 +478,8 @@ impl UniLyricApp {
         };
 
         app.load_local_cache();
-
         app.trigger_provider_loading();
+        app.trigger_cache_cleanup();
 
         app
     }
@@ -517,10 +519,10 @@ impl UniLyricApp {
                         .insert(0, font_key);
                     user_font_loaded = true;
                 } else {
-                    tracing::error!("读取字体文件失败: {}", font_family_name);
+                    error!("读取字体文件失败: {}", font_family_name);
                 }
             } else {
-                tracing::warn!("未找到上次选择的字体: {}", font_family_name);
+                warn!("未找到上次选择的字体: {}", font_family_name);
             }
         }
 
@@ -560,10 +562,20 @@ impl UniLyricApp {
             if !cache_dir.exists()
                 && let Err(e) = std::fs::create_dir_all(&cache_dir)
             {
-                tracing::error!("[UniLyricApp] 无法创建本地歌词目录 {cache_dir:?}: {e}");
+                error!("[UniLyricApp] 无法创建本地歌词目录 {cache_dir:?}: {e}");
                 return;
             }
             self.local_cache.dir_path = Some(cache_dir.clone());
+
+            let cover_cache_dir = data_dir.join("local_cover_cache");
+
+            if !cover_cache_dir.exists()
+                && let Err(e) = std::fs::create_dir_all(&cover_cache_dir)
+            {
+                error!("[UniLyricApp] 无法创建封面缓存目录 {cover_cache_dir:?}: {e}");
+            }
+
+            self.local_cache.cover_cache_dir = Some(cover_cache_dir);
 
             let index_file = cache_dir.join("local_lyrics_index.jsonl");
             if index_file.exists()
@@ -577,7 +589,7 @@ impl UniLyricApp {
                     .filter_map(|line| serde_json::from_str(&line).ok())
                     .collect();
 
-                tracing::info!(
+                info!(
                     "[UniLyricApp] 从 {:?} 加载了 {} 条本地缓存歌词索引。",
                     index_file,
                     cache_entries.len()
@@ -590,19 +602,75 @@ impl UniLyricApp {
 
     pub(super) fn send_shutdown_signals(&mut self) {
         if let Some(tx) = &self.player.command_tx {
-            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite ...");
+            debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite ...");
             let _ = tx.try_send(MediaCommand::Shutdown);
         }
 
         if let Some(tx) = &self.amll_connector.command_tx {
-            tracing::debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
+            debug!("[Shutdown] 正在发送 Shutdown 命令到 actor...");
             let _ = tx.try_send(ConnectorCommand::Shutdown);
         }
 
         if let Some(handle) = self.amll_connector.actor_handle.take() {
-            tracing::info!("[Shutdown] 正在等待 AMLL connector actor 任务结束...");
+            info!("[Shutdown] 正在等待 AMLL connector actor 任务结束...");
             let _ = self.tokio_runtime.block_on(handle);
-            tracing::info!("[Shutdown] AMLL connector actor 任务已成功结束。");
+            info!("[Shutdown] AMLL connector actor 任务已成功结束。");
         }
     }
+
+    fn trigger_cache_cleanup(&self) {
+        let settings = self.app_settings.lock().unwrap().clone();
+        if !settings.enable_cover_cache_cleanup {
+            return;
+        }
+
+        if let Some(cover_cache_dir) = self.local_cache.cover_cache_dir.clone() {
+            self.tokio_runtime.spawn(async move {
+                cleanup_cover_cache(cover_cache_dir, settings.max_cover_cache_files).await;
+            });
+        }
+    }
+}
+
+async fn cleanup_cover_cache(cache_dir: std::path::PathBuf, max_files: usize) {
+    let entries = match std::fs::read_dir(&cache_dir) {
+        Ok(entries) => entries,
+        Err(e) => {
+            error!("[CacheCleanup] 无法读取缓存目录 {:?}: {}", cache_dir, e);
+            return;
+        }
+    };
+
+    let mut files_with_meta = Vec::new();
+    for entry in entries.flatten() {
+        if let Ok(metadata) = entry.metadata()
+            && metadata.is_file()
+            && let Ok(modified) = metadata.modified()
+        {
+            files_with_meta.push((entry.path(), modified));
+        }
+    }
+
+    if files_with_meta.len() <= max_files {
+        return;
+    }
+
+    files_with_meta.sort_unstable_by_key(|a| a.1);
+
+    let files_to_delete_count = files_with_meta.len() - max_files;
+    let mut deleted_count = 0;
+
+    for (path, _) in files_with_meta.iter().take(files_to_delete_count) {
+        if std::fs::remove_file(path).is_ok() {
+            deleted_count += 1;
+        } else {
+            warn!("[CacheCleanup] 删除文件 {:?} 失败", path);
+        }
+    }
+
+    if deleted_count > 0 {
+        info!("[CacheCleanup] 删除了 {} 个封面。", deleted_count);
+    }
+
+    info!("[CacheCleanup] 封面缓存清理任务完成。");
 }

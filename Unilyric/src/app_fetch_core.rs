@@ -9,9 +9,10 @@ use lyrics_helper_rs::SearchMode;
 use smtc_suite::NowPlayingInfo;
 
 use lyrics_helper_core::model::track::{LyricsAndMetadata, Track};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const COVER_SIMILARITY_THRESHOLD: u32 = 10;
 
@@ -174,6 +175,8 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     let app_settings = app.app_settings.lock().unwrap().clone();
     let result_tx = app.fetcher.result_tx.clone();
     let target_format = app.lyrics.target_format;
+    let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
+
     let cancellation_token = CancellationToken::new();
     app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
 
@@ -345,10 +348,14 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 return;
             }
 
+            let smtc_cover_hash = track_info.cover_data_hash.unwrap_or(0);
+
             let final_cover_data = fetch_and_validate_cover(
                 helper.clone(),
                 &final_candidates,
                 smtc_cover_data,
+                smtc_cover_hash,
+                cover_cache_dir,
                 "混合搜索",
             )
             .await;
@@ -379,7 +386,7 @@ pub(super) fn trigger_manual_refetch_for_source(
     let track_info = match app.player.current_now_playing.clone() {
         info if info.title.is_some() => info,
         _ => {
-            tracing::warn!("[ManualRefetch] 无SMTC信息，无法重新搜索。");
+            warn!("[ManualRefetch] 无SMTC信息，无法重新搜索。");
             return;
         }
     };
@@ -398,6 +405,7 @@ pub(super) fn trigger_manual_refetch_for_source(
 
     let target_format = app.lyrics.target_format;
     let app_settings = app.app_settings.lock().unwrap().clone();
+    let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
 
     let status_arc_to_update = match source_to_refetch {
         AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),
@@ -408,10 +416,9 @@ pub(super) fn trigger_manual_refetch_for_source(
     };
     *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Searching;
 
+    let result_tx = app.fetcher.result_tx.clone();
     let cancellation_token = CancellationToken::new();
     app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
-
-    let result_tx = app.fetcher.result_tx.clone();
 
     app.tokio_runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
@@ -447,7 +454,7 @@ pub(super) fn trigger_manual_refetch_for_source(
                 helper_guard.search_lyrics_comprehensive(
                     &track_to_search,
                     &search_mode,
-                    Some(cancellation_token.clone()),
+                    Some(cancellation_token),
                 )
             };
             match search_future_result {
@@ -518,10 +525,14 @@ pub(super) fn trigger_manual_refetch_for_source(
                     return;
                 }
 
+                let smtc_cover_hash = track_info.cover_data_hash.unwrap_or(0);
+
                 let final_cover_data = fetch_and_validate_cover(
                     helper.clone(),
                     &comprehensive_result.all_search_candidates,
                     smtc_cover_data,
+                    smtc_cover_hash,
+                    cover_cache_dir,
                     "手动重搜",
                 )
                 .await;
@@ -540,7 +551,12 @@ pub(super) fn trigger_manual_refetch_for_source(
                 *status_arc_to_update.lock().unwrap() = AutoSearchStatus::NotFound;
             }
             Err(e) => {
-                *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Error(e.to_string());
+                if let lyrics_helper_rs::LyricsHelperError::Cancelled = e {
+                    info!("[ManualRefetch] 手动重搜任务被取消。");
+                    *status_arc_to_update.lock().unwrap() = AutoSearchStatus::NotAttempted;
+                } else {
+                    *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Error(e.to_string());
+                }
             }
         }
     });
@@ -556,15 +572,20 @@ pub(super) fn clear_last_fetch_results(app: &mut UniLyricApp) {
 
 /// 对比两张图片的感知哈希，判断它们是否相似。
 fn are_images_similar(image_data1: &[u8], image_data2: &[u8]) -> bool {
+    const PRE_RESIZE_DIM: u32 = 256;
     let check = || -> Result<bool, String> {
         let image1 =
             image::load_from_memory(image_data1).map_err(|e| format!("无法加载图片1: {}", e))?;
         let image2 =
             image::load_from_memory(image_data2).map_err(|e| format!("无法加载图片2: {}", e))?;
 
+        let thumbnail1 = image1.thumbnail(PRE_RESIZE_DIM, PRE_RESIZE_DIM);
+        let thumbnail2 = image2.thumbnail(PRE_RESIZE_DIM, PRE_RESIZE_DIM);
+
         let hasher = HasherConfig::new().to_hasher();
-        let hash1 = hasher.hash_image(&image1);
-        let hash2 = hasher.hash_image(&image2);
+
+        let hash1 = hasher.hash_image(&thumbnail1);
+        let hash2 = hasher.hash_image(&thumbnail2);
         let distance = hash1.dist(&hash2);
 
         info!(
@@ -589,23 +610,68 @@ async fn fetch_and_validate_cover(
     helper: std::sync::Arc<tokio::sync::Mutex<lyrics_helper_rs::LyricsHelper>>,
     candidates: &[SearchResult],
     smtc_cover_data: Option<Vec<u8>>,
+    smtc_cover_hash: u64,
+    cache_dir: Option<PathBuf>,
     log_prefix: &str,
 ) -> Option<Vec<u8>> {
+    if smtc_cover_hash != 0
+        && let Some(dir) = &cache_dir
+    {
+        let cache_file_path = dir.join(format!("{}.jpg", smtc_cover_hash));
+        if cache_file_path.exists()
+            && let Ok(data) = std::fs::read(&cache_file_path)
+        {
+            info!("[CoverCache] 命中封面缓存: {}", cache_file_path.display());
+
+            let path_clone = cache_file_path.clone();
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = filetime::set_file_mtime(path_clone, filetime::FileTime::now()) {
+                    warn!("[CoverCache] 更新文件时间戳失败: {}", e);
+                }
+            });
+
+            return Some(data);
+        }
+    }
+
     let provider_cover = {
         let helper_guard = helper.lock().await;
         helper_guard.get_best_cover(candidates).await
     };
 
-    match (provider_cover, smtc_cover_data) {
-        (Some(provider_bytes), Some(smtc_bytes)) => {
-            if are_images_similar(&provider_bytes, &smtc_bytes) {
+    if let (Some(provider_bytes), Some(smtc_bytes)) = (provider_cover, smtc_cover_data) {
+        let provider_bytes_for_check = provider_bytes.clone();
+
+        let is_similar_result = tokio::task::spawn_blocking(move || {
+            are_images_similar(&provider_bytes_for_check, &smtc_bytes)
+        })
+        .await;
+
+        match is_similar_result {
+            Ok(true) => {
                 info!("{}: 封面验证成功，使用提供商的封面。", log_prefix);
+                if smtc_cover_hash != 0
+                    && let Some(dir) = cache_dir
+                {
+                    let cache_file_path = dir.join(format!("{}.jpg", smtc_cover_hash));
+                    if let Err(e) = std::fs::write(&cache_file_path, &provider_bytes) {
+                        warn!("[CoverCache] 写入封面缓存失败: {}", e);
+                    } else {
+                        info!("[CoverCache] 封面缓存至: {}", cache_file_path.display());
+                    }
+                }
                 Some(provider_bytes)
-            } else {
+            }
+            Ok(false) => {
                 info!("{}: 封面验证失败（不匹配）。", log_prefix);
                 None
             }
+            Err(e) => {
+                error!("[CoverCompare] spawn_blocking 任务失败: {}", e);
+                None
+            }
         }
-        (_, _) => None,
+    } else {
+        None
     }
 }

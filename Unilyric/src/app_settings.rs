@@ -94,6 +94,8 @@ pub struct AppSettings {
     pub auto_cache_max_count: usize,
     pub calibrate_timeline_on_song_change: bool,
     pub flicker_play_pause_on_song_change: bool,
+    pub enable_cover_cache_cleanup: bool,
+    pub max_cover_cache_files: usize,
 }
 
 impl Default for AppSettings {
@@ -147,6 +149,8 @@ impl Default for AppSettings {
             auto_cache_max_count: 500,
             calibrate_timeline_on_song_change: false,
             flicker_play_pause_on_song_change: false,
+            enable_cover_cache_cleanup: true,
+            max_cover_cache_files: 500,
         }
     }
 }
