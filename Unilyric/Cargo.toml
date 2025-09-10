@@ -38,3 +38,4 @@ lyrics_helper_core = { path = "../lyrics_helper_core" }
 anyhow = "1.0.99"
 tokio-util = "0.7.16"
 filetime = "0.2.26"
+strum = "0.27.2"

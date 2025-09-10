@@ -5,6 +5,7 @@ use crate::app_settings::AppSettings;
 use crate::error::AppResult;
 use crate::types::LrcContentType;
 use egui_toast::Toast;
+use lyrics_helper_core::CanonicalMetadataKey;
 use lyrics_helper_core::FullConversionResult;
 use lyrics_helper_core::LyricFormat;
 use lyrics_helper_core::LyricsAndMetadata;
@@ -39,16 +40,16 @@ pub enum LyricsAction {
     ConvertChinese(ferrous_opencc::config::BuiltinConfig),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
-    AddMetadata,                             // 添加新的元数据条目
-    DeleteMetadata(usize),                   // 删除指定索引的元数据条目
-    UpdateMetadataKey(usize, String),        // 更新指定索引的元数据键
-    UpdateMetadataValue(usize, String),      // 更新指定索引的元数据值
-    ToggleMetadataPinned(usize),             // 切换指定索引的元数据固定状态
-    LrcInputChanged(String, LrcContentType), // 当LRC文本框内容改变时
-    MainInputChanged(String),                // 当主输入文本框内容改变时
+    AddMetadata(CanonicalMetadataKey),
+    DeleteMetadata(usize),
+    UpdateMetadataKey(usize, CanonicalMetadataKey),
+    UpdateMetadataValue(usize, String),
+    ToggleMetadataPinned(usize),
+    LrcInputChanged(String, LrcContentType),
+    MainInputChanged(String),
     ClearAllData,
     LoadFetchedResult(FullLyricsResult),
-    ApplyFetchedLyrics(Box<LyricsAndMetadata>), // 应用获取到的歌词
+    ApplyFetchedLyrics(Box<LyricsAndMetadata>),
     LoadFileContent(String, std::path::PathBuf),
     ApplyProcessor(ProcessorType),
 }

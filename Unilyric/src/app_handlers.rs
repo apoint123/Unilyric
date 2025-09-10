@@ -121,16 +121,7 @@ impl UniLyricApp {
 
         let target_format = self.lyrics.target_format;
 
-        self.lyrics.metadata_manager.sync_store_from_ui_entries();
-        let metadata_overrides = Some(
-            self.lyrics
-                .metadata_manager
-                .store
-                .get_all_data()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
-        );
+        let metadata_overrides = Some(self.lyrics.metadata_manager.get_metadata_for_backend());
 
         self.tokio_runtime.spawn(async move {
             let result = lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
@@ -200,15 +191,19 @@ impl UniLyricApp {
 
         // 4. 准备用户手动输入的元数据
         self.lyrics.metadata_manager.sync_store_from_ui_entries();
-        let metadata_overrides = Some(
-            self.lyrics
-                .metadata_manager
-                .store
-                .get_all_data()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect(),
-        );
+
+        let store_data = self.lyrics.metadata_manager.store.get_all_data();
+
+        let metadata_overrides = if !store_data.is_empty() {
+            Some(
+                store_data
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.clone()))
+                    .collect(),
+            )
+        } else {
+            None
+        };
 
         let input = ConversionInput {
             main_lyric,
@@ -351,6 +346,23 @@ impl UniLyricApp {
         }
     }
 
+    fn handle_load_full_lyrics_result(
+        &mut self,
+        result: lyrics_helper_core::model::track::FullLyricsResult,
+    ) -> ActionResult {
+        self.clear_lyrics_state_for_new_song_internal();
+        self.fetcher.current_ui_populated = true;
+        self.lyrics.metadata_source_is_download = true;
+        self.lyrics.input_text = result.raw.content;
+        self.lyrics.source_format = result.parsed.source_format;
+        self.lyrics
+            .metadata_manager
+            .load_from_parsed_data(&result.parsed);
+        self.lyrics.parsed_lyric_data = Some(result.parsed);
+        self.dispatch_regeneration_task();
+        ActionResult::Success
+    }
+
     /// 子事件处理器
     fn handle_lyrics_action(&mut self, action: LyricsAction) -> ActionResult {
         match action {
@@ -378,30 +390,20 @@ impl UniLyricApp {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
 
+                        self.lyrics
+                            .metadata_manager
+                            .load_from_parsed_data(&full_result.source_data);
+
                         self.lyrics.display_translation_lrc_output =
                             self.generate_lrc_from_aux_track(&full_result.source_data, true);
                         self.lyrics.display_romanization_lrc_output =
                             self.generate_lrc_from_aux_track(&full_result.source_data, false);
 
-                        self.lyrics
-                            .metadata_manager
-                            .load_from_parsed_data(&full_result.source_data);
-
-                        if self.amll_connector.config.lock().unwrap().enabled {
-                            if let Some(tx) = &self.amll_connector.command_tx {
-                                tracing::info!(
-                                    "[AMLL] 转换完成，正在自动发送 TTML 歌词到 Player。"
-                                );
-                                if tx.try_send(SendLyric(full_result.source_data)).is_err() {
-                                    tracing::error!(
-                                        "[AMLL] (转换完成时) 发送 TTML 歌词失败 (通道已满或关闭)。"
-                                    );
-                                }
-                            } else {
-                                tracing::warn!(
-                                    "[AMLL] AMLL Connector 已启用但 command_tx 不可用。"
-                                );
-                            }
+                        if self.amll_connector.config.lock().unwrap().enabled
+                            && let Some(tx) = &self.amll_connector.command_tx
+                            && tx.try_send(SendLyric(full_result.source_data)).is_err()
+                        {
+                            tracing::error!("[AMLL] 发送 TTML 歌词失败。");
                         }
                         ActionResult::Success
                     }
@@ -475,86 +477,25 @@ impl UniLyricApp {
                 self.clear_lyrics_state_for_new_song_internal();
                 ActionResult::Success
             }
-            LyricsAction::AddMetadata => {
-                let new_entry_id_num = self.lyrics.metadata_manager.ui_entries.len() as u32
-                    + rand::rng().random::<u32>();
-
-                let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
-                self.lyrics
-                    .metadata_manager
-                    .ui_entries
-                    .push(crate::types::EditableMetadataEntry {
-                        key: format!("新键_{}", new_entry_id_num % 100),
-                        value: "".to_string(),
-                        is_pinned: false,
-                        is_from_file: false,
-                        id: new_id,
-                    });
-                self.trigger_convert();
+            LyricsAction::AddMetadata(key_to_add) => {
+                self.lyrics.metadata_manager.add_new_ui_entry(key_to_add);
+                self.dispatch_regeneration_task();
                 ActionResult::Success
             }
             LyricsAction::DeleteMetadata(index) => {
-                if index < self.lyrics.metadata_manager.ui_entries.len() {
-                    self.lyrics.metadata_manager.ui_entries.remove(index);
-                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
+                if self.lyrics.metadata_manager.remove_ui_entry(index) {
                     self.dispatch_regeneration_task();
                     ActionResult::Success
                 } else {
                     ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
-            LyricsAction::UpdateMetadataKey(index, new_key) => {
-                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
-                    entry.key = new_key;
-                    entry.is_from_file = false;
-                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
-                    self.dispatch_regeneration_task();
-                    ActionResult::Success
-                } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
-                }
-            }
-            LyricsAction::UpdateMetadataValue(index, new_value) => {
-                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
-                    entry.value = new_value;
-                    entry.is_from_file = false;
-                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
-                    self.dispatch_regeneration_task();
-                    ActionResult::Success
-                } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
-                }
-            }
-            LyricsAction::ToggleMetadataPinned(index) => {
-                if let Some(entry) = self.lyrics.metadata_manager.ui_entries.get_mut(index) {
-                    entry.is_pinned = !entry.is_pinned;
-                    entry.is_from_file = false;
-                    self.lyrics.metadata_manager.sync_store_from_ui_entries();
-                    self.dispatch_regeneration_task();
-                    ActionResult::Success
-                } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
-                }
-            }
-            LyricsAction::LoadFetchedResult(result) => {
-                // 手动加载的逻辑，无条件执行
-                info!("[ProcessFetched] 用户或系统请求加载一个歌词结果。");
 
-                self.fetcher.current_ui_populated = true;
-
-                self.clear_lyrics_state_for_new_song_internal();
-
-                let parsed_data = result.parsed;
-                let raw_data = result.raw;
-
-                self.lyrics.input_text = raw_data.content;
-                self.lyrics.source_format = parsed_data.source_format;
-                self.fetcher.last_source_format = Some(parsed_data.source_format);
-                self.lyrics.metadata_source_is_download = true;
-
-                self.trigger_convert();
+            LyricsAction::UpdateMetadataKey(..) | LyricsAction::UpdateMetadataValue(..) => {
+                self.dispatch_regeneration_task();
                 ActionResult::Success
             }
+            LyricsAction::ToggleMetadataPinned(..) => ActionResult::Success,
             LyricsAction::LrcInputChanged(text, content_type) => {
                 let lrc_lines = match lyrics_helper_rs::converter::parsers::lrc_parser::parse_lrc(
                     &text,
@@ -583,35 +524,17 @@ impl UniLyricApp {
                 ActionResult::Success
             }
             LyricsAction::MainInputChanged(text) => {
+                self.clear_lyrics_state_for_new_song_internal();
                 self.lyrics.input_text = text;
-                self.lyrics.metadata_manager.store.clear();
-                self.lyrics.metadata_manager.ui_entries.clear();
-
                 if !self.lyrics.conversion_in_progress && !self.lyrics.input_text.trim().is_empty()
                 {
                     self.trigger_convert();
                 }
                 ActionResult::Success
             }
-
-            LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata) => {
-                if self.lyrics.conversion_in_progress {
-                    return ActionResult::Warning("转换正在进行中".to_string());
-                }
-
-                self.fetcher.current_ui_populated = true;
-
-                let parsed_data = lyrics_and_metadata.lyrics.parsed;
-                let raw_data = lyrics_and_metadata.lyrics.raw;
-
-                self.lyrics.source_format = parsed_data.source_format;
-                self.fetcher.last_source_format = Some(parsed_data.source_format);
-                self.lyrics.input_text = raw_data.content;
-
-                self.lyrics.parsed_lyric_data = Some(parsed_data);
-                self.trigger_convert();
-
-                ActionResult::Success
+            LyricsAction::LoadFetchedResult(result) => self.handle_load_full_lyrics_result(result),
+            LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata_box) => {
+                self.handle_load_full_lyrics_result(lyrics_and_metadata_box.lyrics)
             }
             LyricsAction::ApplyProcessor(processor) => {
                 let Some(parsed_data) = self.lyrics.parsed_lyric_data.as_mut() else {
@@ -798,8 +721,11 @@ impl UniLyricApp {
         self.lyrics.loaded_translation_lrc = None;
         self.lyrics.loaded_romanization_lrc = None;
         self.lyrics.current_markers.clear();
-        self.lyrics.metadata_manager.ui_entries.clear();
-        self.lyrics.metadata_manager.store.clear();
+        self.lyrics
+            .metadata_manager
+            .ui_entries
+            .retain(|entry| entry.is_pinned);
+        self.lyrics.metadata_manager.sync_store_from_ui_entries();
     }
 
     fn handle_file_action(&mut self, action: FileAction) -> ActionResult {

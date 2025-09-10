@@ -7,7 +7,9 @@ use std::sync::{
 };
 
 use egui_toast::Toasts;
-use lyrics_helper_core::{FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData};
+use lyrics_helper_core::{
+    CanonicalMetadataKey, FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData,
+};
 use lyrics_helper_core::{SearchResult, model::track::FullLyricsResult};
 use lyrics_helper_rs::LyricsHelperError;
 use rand::Rng;
@@ -318,22 +320,101 @@ pub(super) struct UiMetadataManager {
 }
 
 impl UiMetadataManager {
-    pub fn load_from_parsed_data(&mut self, parsed: &ParsedSourceData) {
-        self.store.clear();
-        self.store.load_from_raw(&parsed.raw_metadata);
-        self.rebuild_ui_entries();
+    pub fn add_new_ui_entry(&mut self, key: CanonicalMetadataKey) {
+        let new_entry_id_num = self.ui_entries.len() as u32 + rand::rng().random::<u32>();
+        let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
+        self.ui_entries.push(EditableMetadataEntry {
+            key,
+            value: "".to_string(),
+            is_pinned: false,
+            is_from_file: false,
+            id: new_id,
+        });
+    }
+
+    pub fn remove_ui_entry(&mut self, index: usize) -> bool {
+        if index < self.ui_entries.len() {
+            self.ui_entries.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn get_metadata_for_backend(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut grouped_by_key = std::collections::HashMap::<String, Vec<String>>::new();
+        for entry in &self.ui_entries {
+            let key_string = entry.key.to_string();
+            if !key_string.trim().is_empty() {
+                grouped_by_key
+                    .entry(key_string)
+                    .or_default()
+                    .push(entry.value.clone());
+            }
+        }
+        grouped_by_key
+    }
+
+    pub fn merge_from_backend(&mut self, parsed: &ParsedSourceData) {
+        let old_entries = std::mem::take(&mut self.ui_entries);
+        let pinned_entries: Vec<EditableMetadataEntry> =
+            old_entries.into_iter().filter(|e| e.is_pinned).collect();
+        let pinned_keys: std::collections::HashSet<CanonicalMetadataKey> =
+            pinned_entries.iter().map(|e| e.key.clone()).collect();
+        let mut new_non_conflicting_entries: Vec<EditableMetadataEntry> = Vec::new();
+        let mut loaded_count = 0;
+        for (key_str, values) in &parsed.raw_metadata {
+            if let Ok(canonical_key) = key_str.parse::<CanonicalMetadataKey>() {
+                if !pinned_keys.contains(&canonical_key) {
+                    for value in values {
+                        loaded_count += 1;
+                        new_non_conflicting_entries.push(EditableMetadataEntry {
+                            key: canonical_key.clone(),
+                            value: value.clone(),
+                            is_pinned: false,
+                            is_from_file: true,
+                            id: egui::Id::new(format!(
+                                "meta_entry_{}",
+                                rand::rng().random::<u64>()
+                            )),
+                        });
+                    }
+                }
+            } else {
+                warn!("无法从源解析元数据键 '{}'，已跳过。", key_str);
+            }
+        }
+        let mut final_entries = pinned_entries;
+        final_entries.extend(new_non_conflicting_entries);
+
+        final_entries.sort_unstable_by(|a, b| {
+            let rank_a = a.key.get_order_rank();
+            let rank_b = b.key.get_order_rank();
+            if rank_a != rank_b {
+                rank_a.cmp(&rank_b)
+            } else if let (
+                CanonicalMetadataKey::Custom(key_a),
+                CanonicalMetadataKey::Custom(key_b),
+            ) = (&a.key, &b.key)
+            {
+                key_a.cmp(key_b)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+        self.ui_entries = final_entries;
+        self.sync_store_from_ui_entries();
     }
 
     pub fn sync_store_from_ui_entries(&mut self) {
         self.store.clear();
         let mut grouped_by_key = HashMap::<String, Vec<String>>::new();
         for entry in &self.ui_entries {
-            if !entry.key.trim().is_empty() && !entry.value.trim().is_empty() {
-                grouped_by_key
-                    .entry(entry.key.clone())
-                    .or_default()
-                    .push(entry.value.clone());
-            }
+            let key_string = entry.key.to_string();
+            grouped_by_key
+                .entry(key_string)
+                .or_default()
+                .push(entry.value.clone());
         }
 
         for (key, values) in grouped_by_key {
@@ -341,30 +422,10 @@ impl UiMetadataManager {
         }
     }
 
-    fn rebuild_ui_entries(&mut self) {
-        let old_ui_state: HashMap<String, (bool, bool)> = self
-            .ui_entries
-            .iter()
-            .map(|e| (e.key.clone(), (e.is_pinned, e.is_from_file)))
-            .collect();
-
-        self.ui_entries.clear();
-
-        for (key, values) in self.store.get_all_data() {
-            let key_str = key.to_string();
-            let (is_pinned, is_from_file) =
-                old_ui_state.get(&key_str).copied().unwrap_or((false, true));
-
-            for value in values {
-                self.ui_entries.push(EditableMetadataEntry {
-                    key: key_str.clone(),
-                    value: value.clone(),
-                    is_pinned,
-                    is_from_file,
-                    id: egui::Id::new(format!("meta_entry_{}", rand::rng().random::<u64>())),
-                });
-            }
-        }
+    pub fn load_from_parsed_data(&mut self, parsed: &ParsedSourceData) {
+        self.store.clear();
+        self.store.load_from_raw(&parsed.raw_metadata);
+        self.merge_from_backend(parsed);
     }
 }
 

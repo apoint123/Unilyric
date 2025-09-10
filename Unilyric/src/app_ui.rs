@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use crate::amll_connector::WebsocketStatus;
 use crate::app_definition::{PreviewState, SearchState, UniLyricApp};
 
@@ -12,7 +14,7 @@ use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, T
 use egui::Color32;
 use ferrous_opencc::config::BuiltinConfig;
 use log::LevelFilter;
-use lyrics_helper_core::FullLyricsResult;
+use lyrics_helper_core::{CanonicalMetadataKey, FullLyricsResult};
 
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
 const BUTTON_STRIP_SPACING: f32 = 4.0;
@@ -983,6 +985,7 @@ impl UniLyricApp {
             }
 
             let mut deletion_index: Option<usize> = None;
+            let mut previous_key: Option<&CanonicalMetadataKey> = None;
 
             for (index, entry) in self
                 .lyrics
@@ -992,7 +995,10 @@ impl UniLyricApp {
                 .enumerate()
             {
                 let item_id = entry.id;
-
+                let is_first_in_group = previous_key != Some(&entry.key);
+                if is_first_in_group && index > 0 {
+                    scroll_ui.separator();
+                }
                 scroll_ui.horizontal(|row_ui| {
                     if row_ui.checkbox(&mut entry.is_pinned, "").changed() {
                         actions_to_send.push(UserAction::Lyrics(Box::new(
@@ -1001,17 +1007,66 @@ impl UniLyricApp {
                     }
                     row_ui
                         .label("固定")
-                        .on_hover_text("勾选后，此条元数据在加载新歌词时将尝试保留其值");
+                        .on_hover_text("勾选后, 此条元数据在加载新歌词时将尝试保留其值");
 
-                    row_ui.add_space(5.0);
-                    row_ui.label("键:");
-                    let key_edit_response = row_ui.add_sized(
-                        [row_ui.available_width() * 0.3, 0.0],
-                        egui::TextEdit::singleline(&mut entry.key)
-                            .id_salt(item_id.with("key_edit"))
-                            .hint_text("元数据键"),
-                    );
-                    if key_edit_response.lost_focus() && key_edit_response.changed() {
+                    let key_editor_width = row_ui.available_width() * 0.3;
+                    let mut key_changed_this_frame = false;
+
+                    if is_first_in_group {
+                        row_ui.add_space(5.0);
+                        row_ui.label("键:");
+                        if let CanonicalMetadataKey::Custom(custom_key_str) = &mut entry.key {
+                            let response = row_ui.add_sized(
+                                [key_editor_width, 0.0],
+                                egui::TextEdit::singleline(custom_key_str)
+                                    .id_salt(item_id.with("key_edit_custom")),
+                            );
+                            if response.lost_focus() && response.changed() {
+                                if let Ok(parsed_key) =
+                                    CanonicalMetadataKey::from_str(custom_key_str)
+                                {
+                                    entry.key = parsed_key;
+                                }
+                                key_changed_this_frame = true;
+                            }
+                        } else {
+                            egui::ComboBox::from_id_salt(item_id.with("key_combo"))
+                                .selected_text(entry.key.to_string())
+                                .width(key_editor_width)
+                                .show_ui(row_ui, |combo_ui| {
+                                    use strum::IntoEnumIterator;
+                                    for key_variant in CanonicalMetadataKey::iter() {
+                                        if combo_ui
+                                            .selectable_value(
+                                                &mut entry.key,
+                                                key_variant.clone(),
+                                                key_variant.to_string(),
+                                            )
+                                            .changed()
+                                        {
+                                            key_changed_this_frame = true;
+                                        }
+                                    }
+                                    combo_ui.separator();
+                                    if combo_ui.selectable_label(false, "自定义").clicked() {
+                                        entry.key =
+                                            CanonicalMetadataKey::Custom("custom".to_string());
+                                        key_changed_this_frame = true;
+                                    }
+                                });
+                        }
+                    } else {
+                        let style = row_ui.style();
+                        let space_for_pin_label = row_ui.text_style_height(&egui::TextStyle::Body);
+                        let space_for_key_label =
+                            style.spacing.item_spacing.x + style.spacing.interact_size.x;
+
+                        row_ui.add_space(
+                            space_for_pin_label + space_for_key_label + key_editor_width,
+                        );
+                    }
+
+                    if key_changed_this_frame {
                         actions_to_send.push(UserAction::Lyrics(Box::new(
                             LyricsAction::UpdateMetadataKey(index, entry.key.clone()),
                         )));
@@ -1024,7 +1079,7 @@ impl UniLyricApp {
                             .id_salt(item_id.with("value_edit"))
                             .hint_text("元数据值"),
                     );
-                    if value_edit_response.lost_focus() && value_edit_response.changed() {
+                    if value_edit_response.lost_focus() {
                         actions_to_send.push(UserAction::Lyrics(Box::new(
                             LyricsAction::UpdateMetadataValue(index, entry.value.clone()),
                         )));
@@ -1034,7 +1089,7 @@ impl UniLyricApp {
                         deletion_index = Some(index);
                     }
                 });
-                scroll_ui.separator();
+                previous_key = Some(&entry.key);
             }
 
             if let Some(index_to_delete) = deletion_index {
@@ -1043,9 +1098,26 @@ impl UniLyricApp {
                 ))));
             }
 
-            if scroll_ui.button("添加新元数据").clicked() {
-                actions_to_send.push(UserAction::Lyrics(Box::new(LyricsAction::AddMetadata)));
-            }
+            scroll_ui.separator();
+
+            scroll_ui.menu_button("添加新元数据...", |menu| {
+                use strum::IntoEnumIterator;
+                for key_variant in CanonicalMetadataKey::iter() {
+                    if menu.button(key_variant.to_string()).clicked() {
+                        actions_to_send.push(UserAction::Lyrics(Box::new(
+                            LyricsAction::AddMetadata(key_variant),
+                        )));
+                        menu.close_menu();
+                    }
+                }
+                menu.separator();
+                if menu.button("自定义键").clicked() {
+                    actions_to_send.push(UserAction::Lyrics(Box::new(LyricsAction::AddMetadata(
+                        CanonicalMetadataKey::Custom("custom".to_string()),
+                    ))));
+                    menu.close_menu();
+                }
+            });
         });
 
         for action in actions_to_send {

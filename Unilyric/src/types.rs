@@ -1,12 +1,12 @@
 use chrono::{DateTime, Local};
-use lyrics_helper_core::{LyricFormat, LyricLine, LyricsAndMetadata};
+use lyrics_helper_core::{CanonicalMetadataKey, LyricFormat, LyricLine, LyricsAndMetadata};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditableMetadataEntry {
-    pub key: String,
+    pub key: CanonicalMetadataKey,
     pub value: String,
     pub is_pinned: bool,
     pub is_from_file: bool,

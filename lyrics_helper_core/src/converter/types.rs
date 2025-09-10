@@ -505,7 +505,7 @@ pub struct LyricSyllable {
 //=============================================================================
 
 /// 定义元数据的规范化键。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
 pub enum CanonicalMetadataKey {
     /// 歌曲标题。
     Title,
@@ -535,6 +535,7 @@ pub enum CanonicalMetadataKey {
     TtmlAuthorGithubLogin,
 
     /// 用于所有其他未明确定义的标准或非标准元数据键。
+    #[strum(disabled)]
     Custom(String),
 }
 
@@ -547,11 +548,11 @@ impl fmt::Display for CanonicalMetadataKey {
             CanonicalMetadataKey::Language => "Language",
             CanonicalMetadataKey::Offset => "Offset",
             CanonicalMetadataKey::Songwriter => "Songwriter",
-            CanonicalMetadataKey::NcmMusicId => "NcmMusicId",
-            CanonicalMetadataKey::QqMusicId => "QqMusicId",
+            CanonicalMetadataKey::NcmMusicId => "NCMMusicId",
+            CanonicalMetadataKey::QqMusicId => "QQMusicId",
             CanonicalMetadataKey::SpotifyId => "SpotifyId",
             CanonicalMetadataKey::AppleMusicId => "AppleMusicId",
-            CanonicalMetadataKey::Isrc => "Isrc",
+            CanonicalMetadataKey::Isrc => "ISRC",
             CanonicalMetadataKey::TtmlAuthorGithub => "TtmlAuthorGithub",
             CanonicalMetadataKey::TtmlAuthorGithubLogin => "TtmlAuthorGithubLogin",
             CanonicalMetadataKey::Custom(s) => s.as_str(),
@@ -577,6 +578,26 @@ impl CanonicalMetadataKey {
                 | Self::TtmlAuthorGithub
                 | Self::TtmlAuthorGithubLogin
         )
+    }
+
+    /// 返回一个用于排序的数字权重。
+    pub fn get_order_rank(&self) -> i32 {
+        match self {
+            Self::Title => 0,
+            Self::Artist => 1,
+            Self::Album => 2,
+            Self::Songwriter => 3,
+            Self::Language => 4,
+            Self::Offset => 5,
+            Self::NcmMusicId => 10,
+            Self::QqMusicId => 11,
+            Self::SpotifyId => 12,
+            Self::AppleMusicId => 13,
+            Self::Isrc => 14,
+            Self::TtmlAuthorGithub => 20,
+            Self::TtmlAuthorGithubLogin => 21,
+            Self::Custom(_) => 1000,
+        }
     }
 }
 
