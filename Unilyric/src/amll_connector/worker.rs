@@ -4,6 +4,7 @@ use std::{
     sync::mpsc::Sender as StdSender,
     time::{Duration, Instant},
 };
+use tracing::{debug, error, info, warn};
 
 use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
 use tokio::{
@@ -72,13 +73,13 @@ fn handle_websocket_send_error<T>(result: Result<(), TrySendError<T>>, message_t
     match result {
         Ok(_) => {}
         Err(TrySendError::Full(_)) => {
-            tracing::warn!(
+            warn!(
                 "[AMLL Actor] WebSocket 发送队列已满，丢弃 {} 消息",
                 message_type
             );
         }
         Err(TrySendError::Closed(_)) => {
-            tracing::debug!(
+            debug!(
                 "[AMLL Actor] WebSocket 客户端通道已关闭，无法发送 {} 消息",
                 message_type
             );
@@ -91,7 +92,7 @@ async fn handle_smtc_send_error<T>(
     command_type: &str,
 ) {
     if let Err(e) = result {
-        tracing::error!("[AMLL Actor] 向 SMTC 发送 {} 命令失败: {}", command_type, e);
+        error!("[AMLL Actor] 向 SMTC 发送 {} 命令失败: {}", command_type, e);
     }
 }
 
@@ -206,7 +207,7 @@ fn try_start_connection(
             });
         }
         Err(e) => {
-            tracing::error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
+            error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
             state.connection = ConnectionState::Disconnected;
             let _ = update_tx.send(UiUpdate {
                 payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(format!(
@@ -247,24 +248,19 @@ fn handle_smtc_update(
     let payload = match update {
         MediaUpdate::TrackChanged(new_info) => {
             let is_new_song = state.last_track_info.as_ref().is_none_or(|cached| {
-                cached.title != new_info.title || cached.artist != new_info.artist
+                cached.title != new_info.title
+                    || cached.artist != new_info.artist
+                    || cached.duration_ms != new_info.duration_ms
             });
-
-            let cover_has_changed = state
-                .last_track_info
-                .as_ref()
-                .map_or(new_info.cover_data.is_some(), |cached| {
-                    cached.cover_data != new_info.cover_data
-                });
 
             if let ConnectionState::Running { tx, .. } = &state.connection {
                 if is_new_song {
-                    tracing::debug!("[AMLL Actor] 检测到新歌曲，发送元数据。");
+                    debug!("[AMLL Actor] 检测到新歌曲，发送元数据。");
                     send_music_info_to_ws(tx, &new_info);
                 }
 
-                if cover_has_changed && let Some(ref cover_data) = new_info.cover_data {
-                    tracing::debug!("[AMLL Actor] 检测到封面更新，发送封面数据。");
+                if let Some(ref cover_data) = new_info.cover_data {
+                    debug!("[AMLL Actor] 检测到封面更新，发送封面数据。");
                     send_cover_to_ws(tx, cover_data);
                 }
 
@@ -344,7 +340,7 @@ async fn handle_app_command(
             }
         }
         ConnectorCommand::UpdateActorSettings(new_settings) => {
-            tracing::debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
+            debug!("[AMLL Actor] 收到设置更新: {:?}", new_settings);
             state.actor_settings = new_settings;
         }
         ConnectorCommand::DisconnectWebsocket => {
@@ -408,7 +404,7 @@ async fn handle_player_control_command(
     media_cmd: SmtcControlCommand,
     smtc_command_tx: &TokioSender<MediaCommand>,
 ) {
-    tracing::info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
+    info!("[AMLL Actor] 从客户端收到媒体命令: {:?}", media_cmd);
     let command_to_send = MediaCommand::Control(media_cmd);
     handle_smtc_send_error(
         smtc_command_tx.send(command_to_send).await,
@@ -473,8 +469,8 @@ pub async fn amll_connector_actor(
 
                         if !matches!(next_action, PostShutdownAction::Restart) && !was_successful_close {
                             match &result {
-                                Ok(Err(e)) => tracing::warn!("[AMLL Actor] WebSocket 客户端异常终止: {}", e),
-                                Err(e) => tracing::error!("[AMLL Actor] WebSocket 任务 panicked: {}", e),
+                                Ok(Err(e)) => warn!("[AMLL Actor] WebSocket 客户端异常终止: {}", e),
+                                Err(e) => error!("[AMLL Actor] WebSocket 任务 panicked: {}", e),
                                 _ => {}
                             }
 
@@ -482,7 +478,7 @@ pub async fn amll_connector_actor(
                             const MAX_RETRIES: u32 = 3;
 
                             if state.retry_attempts > MAX_RETRIES {
-                                tracing::error!("[AMLL Actor] 已达到最大重连次数 ({})，将停止自动重连。", MAX_RETRIES);
+                                error!("[AMLL Actor] 已达到最大重连次数 ({})，将停止自动重连。", MAX_RETRIES);
                                 let _ = update_tx.send(UiUpdate {
                                     payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error("已达到最大重连次数".to_string())),
                                     repaint_needed: true,
@@ -493,7 +489,7 @@ pub async fn amll_connector_actor(
                                 let reconnect_delay = Duration::from_secs(delay_secs);
 
                                 let status_msg = format!("连接失败，正在重试 ({}/{})", state.retry_attempts, MAX_RETRIES);
-                                tracing::info!("[AMLL Actor] {}将在 {:?} 后进行...", status_msg, reconnect_delay);
+                                info!("[AMLL Actor] {}将在 {:?} 后进行...", status_msg, reconnect_delay);
 
                                 let _ = update_tx.send(UiUpdate {
                                     payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(status_msg)),
@@ -528,7 +524,7 @@ pub async fn amll_connector_actor(
             },
 
             Some(status) = ws_status_rx.recv() => {
-                tracing::debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
+                debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
 
                 if matches!(status, WebsocketStatus::Connected) {
                     let command = MediaCommand::SetHighFrequencyProgressUpdates(true);
