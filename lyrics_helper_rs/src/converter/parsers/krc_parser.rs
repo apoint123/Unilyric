@@ -45,7 +45,15 @@ pub fn parse_krc(content: &str) -> Result<ParsedSourceData, ConvertError> {
         let line_num = i + 1;
         let trimmed_line = line_str.trim();
 
-        if trimmed_line.is_empty() || trimmed_line.starts_with("[language:") {
+        if trimmed_line.is_empty()
+            || trimmed_line.starts_with("[language:")
+            || trimmed_line.starts_with("[id:")
+            || trimmed_line.starts_with("[hash:")
+            || trimmed_line.starts_with("[total:")
+            || trimmed_line.starts_with("[qq:")
+            || trimmed_line.starts_with("[offset:")
+            || trimmed_line.starts_with("[sign:")
+        {
             continue;
         }
         if parse_and_store_metadata(trimmed_line, &mut raw_metadata) {
