@@ -637,7 +637,7 @@ impl Provider for KugouMusic {
                     })
                     .collect::<Vec<_>>();
 
-                let cover_url = data.img_url.map(|url| url.replace("{size}", ""));
+                let cover_url = data.img_url.map(|url| url.replace("{size}", "800"));
 
                 Ok(generic::Album {
                     id: id.clone(),

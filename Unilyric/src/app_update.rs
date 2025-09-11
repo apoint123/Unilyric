@@ -379,21 +379,11 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     .join("/");
 
                 if current_title == title && current_artist == artist {
-                    app.player.current_now_playing.cover_data = cover_data.clone();
-
-                    if let Some(cover_bytes) = cover_data
-                        && let Some(command_tx) = &app.amll_connector.command_tx
-                    {
-                        let send_result = command_tx.try_send(
-                            crate::amll_connector::types::ConnectorCommand::SendCover(cover_bytes),
-                        );
-                        if let Err(e) = send_result {
-                            warn!("[AutoFetch] 发送封面到 WebSocket 失败: {}", e);
-                        } else {
-                            debug!("[AutoFetch] 已发送封面到 WebSocket");
-                        }
+                    if let Some(new_cover_bytes) = cover_data {
+                        app.send_action(UserAction::Player(PlayerAction::UpdateCover(Some(
+                            new_cover_bytes,
+                        ))));
                     }
-                    app.egui_ctx.request_repaint();
                 } else {
                     debug!(
                         "[CoverUpdate] 封面已过时 (当前歌曲: '{} - {}', 封面所属: '{} - {}')，已丢弃。",
@@ -453,6 +443,9 @@ pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
         }
         AppView::Downloader => {
             app.draw_downloader_view(ctx);
+        }
+        AppView::BatchConverter => {
+            app.draw_batch_converter_view(ctx);
         }
     }
 

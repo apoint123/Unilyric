@@ -5,6 +5,7 @@ use crate::app_settings::AppSettings;
 use crate::error::AppResult;
 use crate::types::LrcContentType;
 use egui_toast::Toast;
+use lyrics_helper_core::BatchTaskUpdate;
 use lyrics_helper_core::CanonicalMetadataKey;
 use lyrics_helper_core::FullConversionResult;
 use lyrics_helper_core::LyricFormat;
@@ -22,6 +23,7 @@ pub enum UserAction {
     Settings(SettingsAction),
     AmllConnector(AmllConnectorAction),
     Downloader(Box<DownloaderAction>),
+    BatchConverter(BatchConverterAction),
 }
 
 // 子事件枚举定义
@@ -144,4 +146,16 @@ pub enum ProcessorType {
     MetadataStripper,
     SyllableSmoother,
     AgentRecognizer,
+}
+
+#[derive(Debug, Clone)]
+pub enum BatchConverterAction {
+    SelectInputDir,
+    SelectOutputDir,
+    SetTargetFormat(LyricFormat),
+    ScanTasks,
+    StartConversion,
+    TaskUpdate(BatchTaskUpdate),
+    ConversionCompleted,
+    Reset,
 }

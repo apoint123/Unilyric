@@ -8,7 +8,8 @@ use std::sync::{
 
 use egui_toast::Toasts;
 use lyrics_helper_core::{
-    CanonicalMetadataKey, FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData,
+    BatchConversionConfig, BatchFileId, BatchLoadedFile, CanonicalMetadataKey,
+    FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData,
 };
 use lyrics_helper_core::{SearchResult, model::track::FullLyricsResult};
 use lyrics_helper_rs::LyricsHelperError;
@@ -40,6 +41,7 @@ pub(super) enum AppView {
     #[default]
     Editor,
     Downloader,
+    BatchConverter,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -318,6 +320,7 @@ pub(super) struct UniLyricApp {
     pub(super) local_cache: LocalCacheState,
     pub(super) amll_connector: AmllConnectorState,
     pub(super) downloader: DownloaderState,
+    pub(super) batch_converter: BatchConverterState,
 
     // --- 核心依赖与配置 ---
     pub(super) lyrics_helper_state: LyricsHelperState,
@@ -466,6 +469,26 @@ impl UiMetadataManager {
     }
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) enum BatchConverterStatus {
+    #[default]
+    Idle,
+    Ready,
+    Converting,
+    Completed,
+    Failed(String),
+}
+
+#[derive(Clone, Default)]
+pub(super) struct BatchConverterState {
+    pub(super) input_dir: Option<std::path::PathBuf>,
+    pub(super) output_dir: Option<std::path::PathBuf>,
+    pub(super) target_format: LyricFormat,
+    pub(super) tasks: Vec<BatchConversionConfig>,
+    pub(super) file_lookup: HashMap<BatchFileId, BatchLoadedFile>,
+    pub(super) status: BatchConverterStatus,
+}
+
 impl UniLyricApp {
     pub(super) fn new(
         cc: &eframe::CreationContext,
@@ -569,6 +592,7 @@ impl UniLyricApp {
             fetcher: auto_fetch_state,
             local_cache,
             downloader: DownloaderState::default(),
+            batch_converter: BatchConverterState::default(),
             lyrics_helper_state,
             app_settings: Arc::new(StdMutex::new(settings)),
             tokio_runtime,

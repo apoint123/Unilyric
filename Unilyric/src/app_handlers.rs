@@ -4,10 +4,12 @@ use std::sync::Arc;
 use crate::amll_connector::types::ActorSettings;
 use crate::amll_connector::{AMLLConnectorConfig, ConnectorCommand};
 use crate::app_actions::{
-    AmllConnectorAction, DownloaderAction, FileAction, LyricsAction, PanelType, PlayerAction,
-    ProcessorType, SettingsAction, UIAction, UserAction,
+    AmllConnectorAction, BatchConverterAction, DownloaderAction, FileAction, LyricsAction,
+    PanelType, PlayerAction, ProcessorType, SettingsAction, UIAction, UserAction,
 };
-use crate::app_definition::{AppView, DownloaderState, PreviewState, SearchState, UniLyricApp};
+use crate::app_definition::{
+    AppView, BatchConverterStatus, DownloaderState, PreviewState, SearchState, UniLyricApp,
+};
 use crate::app_handlers::ConnectorCommand::SendLyric;
 use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
 use crate::app_settings::AppAmllMirror;
@@ -272,6 +274,9 @@ impl UniLyricApp {
             }
             UserAction::Downloader(downloader_action) => {
                 self.handle_downloader_action(*downloader_action)
+            }
+            UserAction::BatchConverter(batch_action) => {
+                self.handle_batch_converter_action(batch_action)
             }
         }
     }
@@ -866,8 +871,7 @@ impl UniLyricApp {
             warn!("[PlayerAction] 无法处理播放器动作，因为 smtc-suite 控制器不可用。");
             return ActionResult::Warning("媒体服务未初始化".to_string());
         };
-
-        let send_result = match action {
+        match action {
             PlayerAction::SelectSmtcSession(session_id) => {
                 let session_id_for_state: Option<String> = if session_id.is_empty() {
                     tracing::info!("[PlayerAction] 自动选择会话。");
@@ -884,7 +888,10 @@ impl UniLyricApp {
                         tracing::warn!("[PlayerAction] 保存上次选择的SMTC会话ID失败: {}", e);
                     }
                 }
-                command_tx.try_send(MediaCommand::SelectSession(session_id))
+                if let Err(e) = command_tx.try_send(MediaCommand::SelectSession(session_id)) {
+                    error!("[PlayerAction] 发送命令到 smtc-suite 失败: {}", e);
+                    return ActionResult::Error(AppError::Custom("发送命令失败".to_string()));
+                }
             }
             PlayerAction::SaveToLocalCache => {
                 return match self.save_lyrics_to_local_cache() {
@@ -907,7 +914,6 @@ impl UniLyricApp {
                 }
 
                 self.egui_ctx.request_repaint();
-                return ActionResult::Success;
             }
             PlayerAction::ToggleAudioCapture(enable) => {
                 let smtc_command = if enable {
@@ -916,7 +922,10 @@ impl UniLyricApp {
                     MediaCommand::StopAudioCapture
                 };
                 tracing::info!("[PlayerAction] 发送音频捕获命令: {:?}", smtc_command);
-                command_tx.try_send(smtc_command)
+                if let Err(e) = command_tx.try_send(smtc_command) {
+                    error!("[PlayerAction] 发送命令到 smtc-suite 失败: {}", e);
+                    return ActionResult::Error(AppError::Custom("发送命令失败".to_string()));
+                }
             }
             PlayerAction::SetSmtcTimeOffset(offset) => {
                 self.player.smtc_time_offset_ms = offset;
@@ -929,16 +938,117 @@ impl UniLyricApp {
                         warn!("[PlayerAction] 保存偏移量设置失败: {}", e);
                     }
                 }
-                command_tx.try_send(MediaCommand::SetProgressOffset(offset))
+                if let Err(e) = command_tx.try_send(MediaCommand::SetProgressOffset(offset)) {
+                    error!("[PlayerAction] 发送命令到 smtc-suite 失败: {}", e);
+                    return ActionResult::Error(AppError::Custom("发送命令失败".to_string()));
+                }
             }
-        };
-
-        if let Err(e) = send_result {
-            error!("[PlayerAction] 发送命令到 smtc-suite 失败: {}", e);
-            return ActionResult::Error(AppError::Custom("发送命令失败".to_string()));
         }
-
         ActionResult::Success
+    }
+
+    fn handle_batch_converter_action(&mut self, action: BatchConverterAction) -> ActionResult {
+        match action {
+            BatchConverterAction::SelectInputDir => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    self.batch_converter.input_dir = Some(path);
+                }
+                ActionResult::Success
+            }
+            BatchConverterAction::SelectOutputDir => {
+                if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                    self.batch_converter.output_dir = Some(path);
+                }
+                ActionResult::Success
+            }
+            BatchConverterAction::SetTargetFormat(format) => {
+                self.batch_converter.target_format = format;
+                ActionResult::Success
+            }
+            BatchConverterAction::ScanTasks => {
+                let Some(input_dir) = self.batch_converter.input_dir.clone() else {
+                    return ActionResult::Warning("输入目录未设置".to_string());
+                };
+                let target_format = self.batch_converter.target_format;
+
+                match lyrics_helper_rs::converter::processors::batch_processor::discover_and_pair_files(&input_dir) {
+                    Ok(file_groups) => {
+                        let (tasks, file_lookup) =
+                            lyrics_helper_rs::converter::processors::batch_processor::create_batch_tasks(
+                                file_groups,
+                                target_format,
+                            );
+                        self.batch_converter.tasks = tasks;
+                        self.batch_converter.file_lookup = file_lookup;
+                        self.batch_converter.status = BatchConverterStatus::Ready;
+                    }
+                    Err(e) => {
+                        self.batch_converter.status = BatchConverterStatus::Failed(e.to_string());
+                    }
+                }
+                ActionResult::Success
+            }
+            BatchConverterAction::StartConversion => {
+                if self.batch_converter.status != BatchConverterStatus::Ready {
+                    return ActionResult::Warning("当前状态无法开始转换。".to_string());
+                }
+
+                self.batch_converter.status = BatchConverterStatus::Converting;
+
+                let mut tasks = self.batch_converter.tasks.clone();
+                let file_lookup = self.batch_converter.file_lookup.clone();
+                let output_dir = self.batch_converter.output_dir.clone().unwrap();
+                let options = self.build_conversion_options();
+                let action_tx = self.action_tx.clone();
+
+                self.tokio_runtime.spawn(async move {
+                    // Execute the conversion in a background thread.
+                    let result = lyrics_helper_rs::converter::processors::batch_processor::execute_batch_conversion(
+                        &mut tasks,
+                        &file_lookup,
+                        &output_dir,
+                        &options
+                    );
+
+                    match result {
+                        Ok(()) => {
+                            for task in tasks {
+                                 let update_msg = lyrics_helper_core::BatchTaskUpdate {
+                                     entry_config_id: task.id,
+                                     new_status: task.status,
+                                 };
+                                 let _ = action_tx.send(UserAction::BatchConverter(BatchConverterAction::TaskUpdate(update_msg)));
+                            }
+                            let _ = action_tx.send(UserAction::BatchConverter(BatchConverterAction::ConversionCompleted));
+                        }
+                        Err(e) => {
+                             error!("[BatchConvert] 批量转换执行失败: {}", e);
+                        }
+                    }
+                });
+
+                ActionResult::Success
+            }
+            BatchConverterAction::TaskUpdate(update) => {
+                if let Some(task) = self
+                    .batch_converter
+                    .tasks
+                    .iter_mut()
+                    .find(|t| t.id == update.entry_config_id)
+                {
+                    task.status = update.new_status;
+                }
+                ActionResult::Success
+            }
+            BatchConverterAction::ConversionCompleted => {
+                self.batch_converter.status = BatchConverterStatus::Completed;
+                ActionResult::Success
+            }
+            BatchConverterAction::Reset => {
+                self.batch_converter = Default::default();
+                ActionResult::Success
+            }
+        }
     }
 
     fn save_lyrics_to_local_cache(&mut self) -> AppResult<()> {

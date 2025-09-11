@@ -172,6 +172,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     let smtc_duration = track_info.duration_ms;
     let smtc_cover_data = track_info.cover_data.clone();
 
+    let runtime = app.tokio_runtime.clone();
     let helper = Arc::clone(&app.lyrics_helper_state.helper);
     let app_settings = app.app_settings.lock().unwrap().clone();
     let result_tx = app.fetcher.result_tx.clone();
@@ -187,7 +188,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     *app.fetcher.netease_status.lock().unwrap() = AutoSearchStatus::Searching;
     *app.fetcher.amll_db_status.lock().unwrap() = AutoSearchStatus::Searching;
 
-    app.tokio_runtime.spawn(async move {
+    runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
         let track_to_search = Track {
             title: Some(&smtc_title),
@@ -408,6 +409,8 @@ pub(super) fn trigger_manual_refetch_for_source(
     let app_settings = app.app_settings.lock().unwrap().clone();
     let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
 
+    let runtime = app.tokio_runtime.clone();
+
     let status_arc_to_update = match source_to_refetch {
         AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),
         AutoSearchSource::Kugou => Arc::clone(&app.fetcher.kugou_status),
@@ -421,7 +424,7 @@ pub(super) fn trigger_manual_refetch_for_source(
     let cancellation_token = CancellationToken::new();
     app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
 
-    app.tokio_runtime.spawn(async move {
+    runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
         let track_to_search = Track {
             title: Some(&smtc_title),
