@@ -335,6 +335,7 @@ impl UiMetadataManager {
     pub fn remove_ui_entry(&mut self, index: usize) -> bool {
         if index < self.ui_entries.len() {
             self.ui_entries.remove(index);
+            self.sync_store_from_ui_entries();
             true
         } else {
             false

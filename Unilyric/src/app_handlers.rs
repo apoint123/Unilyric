@@ -346,6 +346,22 @@ impl UniLyricApp {
         }
     }
 
+    fn sync_and_regenerate_metadata(&mut self) {
+        self.lyrics.metadata_manager.sync_store_from_ui_entries();
+        if let Some(parsed_data) = &mut self.lyrics.parsed_lyric_data {
+            let new_raw_metadata = self
+                .lyrics
+                .metadata_manager
+                .store
+                .get_all_data()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect();
+            parsed_data.raw_metadata = new_raw_metadata;
+        }
+        self.dispatch_regeneration_task();
+    }
+
     fn handle_load_full_lyrics_result(
         &mut self,
         result: lyrics_helper_core::model::track::FullLyricsResult,
@@ -389,11 +405,6 @@ impl UniLyricApp {
                     Ok(full_result) => {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
-
-                        self.lyrics
-                            .metadata_manager
-                            .load_from_parsed_data(&full_result.source_data);
-
                         self.lyrics.display_translation_lrc_output =
                             self.generate_lrc_from_aux_track(&full_result.source_data, true);
                         self.lyrics.display_romanization_lrc_output =
@@ -479,20 +490,19 @@ impl UniLyricApp {
             }
             LyricsAction::AddMetadata(key_to_add) => {
                 self.lyrics.metadata_manager.add_new_ui_entry(key_to_add);
-                self.dispatch_regeneration_task();
+                self.sync_and_regenerate_metadata();
                 ActionResult::Success
             }
             LyricsAction::DeleteMetadata(index) => {
                 if self.lyrics.metadata_manager.remove_ui_entry(index) {
-                    self.dispatch_regeneration_task();
+                    self.sync_and_regenerate_metadata();
                     ActionResult::Success
                 } else {
                     ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
-
             LyricsAction::UpdateMetadataKey(..) | LyricsAction::UpdateMetadataValue(..) => {
-                self.dispatch_regeneration_task();
+                self.sync_and_regenerate_metadata();
                 ActionResult::Success
             }
             LyricsAction::ToggleMetadataPinned(..) => ActionResult::Success,
