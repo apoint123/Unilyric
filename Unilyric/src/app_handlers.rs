@@ -18,7 +18,6 @@ use lyrics_helper_core::{
     ChineseConversionMode, ChineseConversionOptions, ContentType, ConversionInput,
     ConversionOptions, InputFile, LyricFormat, LyricTrack, Track,
 };
-use rand::Rng;
 use smtc_suite::{MediaCommand, TextConversionMode};
 use tracing::warn;
 use tracing::{debug, error, info};
@@ -189,12 +188,10 @@ impl UniLyricApp {
             vec![]
         };
 
-        // 4. 准备用户手动输入的元数据
         self.lyrics.metadata_manager.sync_store_from_ui_entries();
-
         let store_data = self.lyrics.metadata_manager.store.get_all_data();
 
-        let metadata_overrides = if !store_data.is_empty() {
+        let additional_metadata = if !store_data.is_empty() {
             Some(
                 store_data
                     .iter()
@@ -210,7 +207,8 @@ impl UniLyricApp {
             translations,
             romanizations,
             target_format: self.lyrics.target_format,
-            user_metadata_overrides: metadata_overrides,
+            user_metadata_overrides: None,
+            additional_metadata,
         };
 
         self.tokio_runtime.spawn(async move {
@@ -362,6 +360,16 @@ impl UniLyricApp {
         self.dispatch_regeneration_task();
     }
 
+    fn update_and_save_pinned_metadata(&mut self) {
+        let pinned_data_to_save = self.lyrics.metadata_manager.get_pinned_entries_for_saving();
+        if let Ok(mut settings) = self.app_settings.lock() {
+            settings.pinned_metadata = pinned_data_to_save;
+            if let Err(e) = settings.save() {
+                warn!("[Settings] 保存固定的元数据失败: {}", e);
+            }
+        }
+    }
+
     fn handle_load_full_lyrics_result(
         &mut self,
         result: lyrics_helper_core::model::track::FullLyricsResult,
@@ -374,7 +382,10 @@ impl UniLyricApp {
         self.lyrics
             .metadata_manager
             .load_from_parsed_data(&result.parsed);
-        self.lyrics.parsed_lyric_data = Some(result.parsed);
+        let mut final_parsed_data = result.parsed;
+        let merged_raw_metadata = self.lyrics.metadata_manager.get_metadata_for_backend();
+        final_parsed_data.raw_metadata = merged_raw_metadata;
+        self.lyrics.parsed_lyric_data = Some(final_parsed_data);
         self.dispatch_regeneration_task();
         ActionResult::Success
     }
@@ -405,6 +416,11 @@ impl UniLyricApp {
                     Ok(full_result) => {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
+
+                        self.lyrics
+                            .metadata_manager
+                            .load_from_parsed_data(&full_result.source_data);
+
                         self.lyrics.display_translation_lrc_output =
                             self.generate_lrc_from_aux_track(&full_result.source_data, true);
                         self.lyrics.display_romanization_lrc_output =
@@ -496,6 +512,7 @@ impl UniLyricApp {
             LyricsAction::DeleteMetadata(index) => {
                 if self.lyrics.metadata_manager.remove_ui_entry(index) {
                     self.sync_and_regenerate_metadata();
+                    self.update_and_save_pinned_metadata();
                     ActionResult::Success
                 } else {
                     ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
@@ -503,9 +520,13 @@ impl UniLyricApp {
             }
             LyricsAction::UpdateMetadataKey(..) | LyricsAction::UpdateMetadataValue(..) => {
                 self.sync_and_regenerate_metadata();
+                self.update_and_save_pinned_metadata();
                 ActionResult::Success
             }
-            LyricsAction::ToggleMetadataPinned(..) => ActionResult::Success,
+            LyricsAction::ToggleMetadataPinned(..) => {
+                self.update_and_save_pinned_metadata();
+                ActionResult::Success
+            }
             LyricsAction::LrcInputChanged(text, content_type) => {
                 let lrc_lines = match lyrics_helper_rs::converter::parsers::lrc_parser::parse_lrc(
                     &text,
@@ -735,7 +756,7 @@ impl UniLyricApp {
             .metadata_manager
             .ui_entries
             .retain(|entry| entry.is_pinned);
-        self.lyrics.metadata_manager.sync_store_from_ui_entries();
+        self.lyrics.metadata_manager.store.clear();
     }
 
     fn handle_file_action(&mut self, action: FileAction) -> ActionResult {

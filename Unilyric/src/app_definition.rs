@@ -143,7 +143,30 @@ pub(super) struct LyricsHelperState {
 }
 
 impl LyricState {
-    fn new(_settings: &AppSettings) -> Self {
+    fn new(settings: &AppSettings) -> Self {
+        let mut metadata_manager = UiMetadataManager::default();
+
+        // 从设置中加载固定的元数据
+        for (key_str, values) in &settings.pinned_metadata {
+            if let Ok(key) = key_str.parse::<lyrics_helper_core::CanonicalMetadataKey>() {
+                for value in values {
+                    let new_entry_id_num =
+                        metadata_manager.ui_entries.len() as u32 + rand::rng().random::<u32>();
+                    let new_id =
+                        egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
+
+                    metadata_manager.ui_entries.push(EditableMetadataEntry {
+                        key: key.clone(),
+                        value: value.clone(),
+                        is_pinned: true,
+                        is_from_file: false,
+                        id: new_id,
+                    });
+                }
+            }
+        }
+        metadata_manager.sync_store_from_ui_entries();
+
         Self {
             input_text: String::new(),
             output_text: String::new(),
@@ -152,7 +175,7 @@ impl LyricState {
             parsed_lyric_data: None,
             loaded_translation_lrc: None,
             loaded_romanization_lrc: None,
-            metadata_manager: UiMetadataManager::default(),
+            metadata_manager,
             metadata_source_is_download: false,
             current_markers: Vec::new(),
             source_format: LyricFormat::Lrc,
@@ -360,14 +383,16 @@ impl UiMetadataManager {
         let old_entries = std::mem::take(&mut self.ui_entries);
         let pinned_entries: Vec<EditableMetadataEntry> =
             old_entries.into_iter().filter(|e| e.is_pinned).collect();
-        let pinned_keys: std::collections::HashSet<CanonicalMetadataKey> =
-            pinned_entries.iter().map(|e| e.key.clone()).collect();
+        let pinned_keys: std::collections::HashSet<(CanonicalMetadataKey, String)> = pinned_entries
+            .iter()
+            .map(|e| (e.key.clone(), e.value.clone()))
+            .collect();
         let mut new_non_conflicting_entries: Vec<EditableMetadataEntry> = Vec::new();
         let mut loaded_count = 0;
         for (key_str, values) in &parsed.raw_metadata {
             if let Ok(canonical_key) = key_str.parse::<CanonicalMetadataKey>() {
-                if !pinned_keys.contains(&canonical_key) {
-                    for value in values {
+                for value in values {
+                    if !pinned_keys.contains(&(canonical_key.clone(), value.clone())) {
                         loaded_count += 1;
                         new_non_conflicting_entries.push(EditableMetadataEntry {
                             key: canonical_key.clone(),
@@ -427,6 +452,17 @@ impl UiMetadataManager {
         self.store.clear();
         self.store.load_from_raw(&parsed.raw_metadata);
         self.merge_from_backend(parsed);
+    }
+
+    pub fn get_pinned_entries_for_saving(&self) -> HashMap<String, Vec<String>> {
+        let mut result = HashMap::<String, Vec<String>>::new();
+        for entry in self.ui_entries.iter().filter(|e| e.is_pinned) {
+            result
+                .entry(entry.key.to_string())
+                .or_default()
+                .push(entry.value.clone());
+        }
+        result
     }
 }
 

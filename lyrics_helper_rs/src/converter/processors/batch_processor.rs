@@ -213,6 +213,7 @@ pub fn execute_batch_conversion<S: BuildHasher>(
                 romanizations,
                 target_format: task.target_format,
                 user_metadata_overrides: None,
+                additional_metadata: None,
             };
 
             // 调用核心转换函数

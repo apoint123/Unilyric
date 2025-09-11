@@ -1278,6 +1278,7 @@ impl QQMusic {
             romanizations,
             target_format: LyricFormat::Lrc,
             user_metadata_overrides: None,
+            additional_metadata: None,
         };
         let mut parsed_data =
             converter::parse_and_merge(&conversion_input, &ConversionOptions::default())?;

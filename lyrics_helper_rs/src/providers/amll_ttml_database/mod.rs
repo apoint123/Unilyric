@@ -297,6 +297,7 @@ impl Provider for AmllTtmlDatabase {
             romanizations: vec![],
             target_format: LyricFormat::default(),
             user_metadata_overrides: None,
+            additional_metadata: None,
         };
 
         let mut parsed_data =

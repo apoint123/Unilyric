@@ -549,6 +549,7 @@ impl Provider for NeteaseClient {
             romanizations,
             target_format: LyricFormat::Lrc,
             user_metadata_overrides: None,
+            additional_metadata: None,
         };
 
         let mut parsed_data =

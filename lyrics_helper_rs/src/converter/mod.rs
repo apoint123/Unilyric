@@ -70,7 +70,7 @@ pub fn process_conversion_task(
 //  核心转换与生成逻辑
 // ==========================================================
 
-/// 将一个 `ConversionInput` 转换为指定格式的字符串。
+/// 将一个 `ConversionInput` 转换为 `FullConversionResult`
 ///
 /// # 参数
 ///
@@ -79,12 +79,22 @@ pub fn process_conversion_task(
 ///
 /// # 返回
 ///
-/// * `Result<String, ConvertError>` - 成功时返回生成的目标格式字符串。
+/// * `Result<FullConversionResult, ConvertError>` - 成功时返回 `FullConversionResult`。
 pub fn convert_single_lyric(
     input: &ConversionInput,
     options: &ConversionOptions,
 ) -> Result<FullConversionResult, ConvertError> {
-    let source_data = parse_and_merge(input, options)?;
+    let mut source_data = parse_and_merge(input, options)?;
+
+    if let Some(additional) = &input.additional_metadata {
+        for (key, values) in additional {
+            source_data
+                .raw_metadata
+                .entry(key.clone())
+                .or_default()
+                .extend(values.clone());
+        }
+    }
 
     generate_from_parsed(
         source_data,

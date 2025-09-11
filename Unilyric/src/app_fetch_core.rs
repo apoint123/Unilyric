@@ -92,6 +92,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                             romanizations: vec![],
                             target_format: LyricFormat::Ttml,
                             user_metadata_overrides: None,
+                            additional_metadata: None,
                         };
 
                         let options = ConversionOptions::default();

@@ -581,6 +581,7 @@ impl Provider for KugouMusic {
             romanizations: Vec::new(),
             target_format: LyricFormat::Krc,
             user_metadata_overrides: None,
+            additional_metadata: None,
         };
 
         let options = ConversionOptions::default();

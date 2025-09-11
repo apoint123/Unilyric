@@ -205,7 +205,7 @@ impl Default for InputFile {
 }
 
 /// 封装了调用核心歌词转换函数所需的所有输入参数。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConversionInput {
     /// 主歌词文件信息。
     pub main_lyric: InputFile,
@@ -216,9 +216,13 @@ pub struct ConversionInput {
     /// 目标歌词格式。
     pub target_format: LyricFormat,
     /// 可选的用户指定的元数据覆盖（原始键值对）。
+    ///
+    /// 这些内容会替换已有的元数据。
     pub user_metadata_overrides: Option<HashMap<String, Vec<String>>>,
-    // /// 可选的应用级别的固定元数据规则（原始键值对）。
-    // pub fixed_metadata_rules: Option<HashMap<String, Vec<String>>>,
+    /// 可选的应用级别的固定元数据规则（原始键值对）。
+    ///
+    /// 这些内容会被追加到已有的元数据中。
+    pub additional_metadata: Option<HashMap<String, Vec<String>>>,
 }
 
 // =============================================================================
