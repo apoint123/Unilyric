@@ -88,7 +88,6 @@ pub enum PanelType {
     Settings,
     Metadata,
     Log,
-    Markers,
     Translation,
     Romanization,
     AmllConnector,

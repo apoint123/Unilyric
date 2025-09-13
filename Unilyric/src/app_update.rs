@@ -480,15 +480,7 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
     }
 
     let lrc_panel_width = (available_width * 0.20).clamp(150.0, 350.0);
-    let markers_panel_width = (available_width * 0.18).clamp(120.0, 300.0);
 
-    if app.ui.show_markers_panel {
-        egui::SidePanel::right("markers_panel")
-            .default_width(markers_panel_width)
-            .show(ctx, |ui| {
-                app.draw_markers_panel_contents(ui, app.ui.wrap_text);
-            });
-    }
     if app.ui.show_translation_lrc_panel {
         egui::SidePanel::right("translation_lrc_panel")
             .default_width(lrc_panel_width)

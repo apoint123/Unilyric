@@ -156,11 +156,11 @@ impl From<&tracing::Level> for LogLevel {
 impl LogLevel {
     pub fn as_str(&self) -> &'static str {
         match self {
-            LogLevel::Info => "提示",
-            LogLevel::Warn => "警告",
-            LogLevel::Error => "错误",
-            LogLevel::Debug => "调试",
-            LogLevel::Trace => "追溯",
+            LogLevel::Info => "INFO",
+            LogLevel::Warn => "WARN",
+            LogLevel::Error => "ERROR",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Trace => "TRACE",
         }
     }
 

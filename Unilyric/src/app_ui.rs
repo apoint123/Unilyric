@@ -270,52 +270,39 @@ impl UniLyricApp {
                 );
             });
 
-            // --- 源格式选择 ---
-            ui_bar.add_space(16.0); // 添加一些间距
-            ui_bar.label("源格式:"); // 标签
-            let mut _source_format_changed_this_frame = false; // 标记源格式本帧是否改变（保留用于未来扩展）
-            let mut temp_source_format = self.lyrics.source_format; // 临时变量存储当前选择，以便检测变化
+            ui_bar.add_space(16.0);
+            ui_bar.label("源格式:");
+            let mut temp_source_format = self.lyrics.source_format;
 
-            // 使用 ComboBox (下拉选择框)
-            egui::ComboBox::from_id_salt("source_format_toolbar") // 为ComboBox提供唯一ID
-                .selected_text(self.lyrics.source_format.to_string()) // 显示当前选中的格式名称
+            egui::ComboBox::from_id_salt("source_format_toolbar")
+                .selected_text(self.lyrics.source_format.to_string())
                 .show_ui(ui_bar, |ui_combo| {
-                    // 构建下拉列表内容
                     for fmt_option in &self.lyrics.available_formats {
-                        // 遍历所有可用格式
                         let display_text = fmt_option.to_string();
-                        // 所有在 available_formats 中的格式都可以被选择为源格式
                         let is_selectable_source = true;
 
                         let response = ui_combo
                             .add_enabled_ui(is_selectable_source, |ui_selectable| {
-                                // 创建可选条目
                                 ui_selectable.selectable_value(
                                     &mut temp_source_format,
                                     *fmt_option,
                                     display_text,
                                 )
                             })
-                            .inner; // 获取内部响应
+                            .inner;
 
-                        if !is_selectable_source {
-                            // response = response.on_disabled_hover_text("此格式不能作为主转换源"); // 如果将来需要禁用某些源
-                        }
                         if response.clicked() && is_selectable_source {
-                            ui_combo.close_menu(); // 点击后关闭下拉菜单
+                            ui_combo.close_menu();
                         }
                     }
                 });
 
-            // 如果选择的源格式发生变化
             if temp_source_format != self.lyrics.source_format {
                 self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::SourceFormatChanged(temp_source_format),
                 )));
-                _source_format_changed_this_frame = true; // 保留标记用于UI逻辑
             }
 
-            // --- 目标格式选择 ---
             ui_bar.add_space(8.0);
             ui_bar.label("目标格式:");
             let mut _target_format_changed_this_frame = false;
@@ -335,30 +322,14 @@ impl UniLyricApp {
                     }
                 });
 
-            // 如果选择的目标格式发生变化
             if temp_target_format != self.lyrics.target_format {
                 self.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
                     crate::app_actions::LyricsAction::TargetFormatChanged(temp_target_format),
                 )));
-                _target_format_changed_this_frame = true; // 保留标记用于UI逻辑
             }
 
-            // --- 工具栏右侧按钮 ---
             ui_bar.with_layout(Layout::right_to_left(Align::Center), |ui_right| {
                 ui_right.menu_button("视图", |view_menu| {
-                    let mut show_markers_panel_copy = self.ui.show_markers_panel;
-                    if view_menu
-                        .checkbox(&mut show_markers_panel_copy, "标记面板")
-                        .changed()
-                    {
-                        self.send_action(crate::app_actions::UserAction::UI(
-                            crate::app_actions::UIAction::SetPanelVisibility(
-                                crate::app_actions::PanelType::Markers,
-                                show_markers_panel_copy,
-                            ),
-                        ));
-                    }
-
                     let mut show_translation_lrc_panel_copy = self.ui.show_translation_lrc_panel;
                     if view_menu
                         .checkbox(&mut show_translation_lrc_panel_copy, "翻译LRC面板")
@@ -393,7 +364,7 @@ impl UniLyricApp {
                         .add_enabled_ui(amll_connector_feature_enabled, |ui_enabled_check| {
                             let mut show_amll_sidebar_copy = self.ui.show_amll_connector_sidebar;
                             if ui_enabled_check
-                                .checkbox(&mut show_amll_sidebar_copy, "AMLL Connector侧边栏")
+                                .checkbox(&mut show_amll_sidebar_copy, "AMLL Connector 侧边栏")
                                 .changed()
                             {
                                 self.send_action(crate::app_actions::UserAction::UI(
@@ -705,7 +676,7 @@ impl UniLyricApp {
         );
         ui.checkbox(
             &mut self.ui.temp_edit_settings.always_search_all_sources,
-            "始终搜索所有源 (最准，但最慢)",
+            "始终搜索所有源 (推荐)",
         );
         ui.add_space(10.0);
         ui.checkbox(
@@ -1137,19 +1108,15 @@ impl UniLyricApp {
 
     /// 绘制底部日志面板。
     pub fn draw_log_panel(&mut self, ctx: &egui::Context) {
-        // 使用 TopBottomPanel 创建一个可调整大小的底部面板
         egui::TopBottomPanel::bottom("log_panel_id")
-            .resizable(true) // 允许用户拖动调整面板高度
-            .default_height(150.0) // 默认高度
-            .min_height(60.0) // 最小高度
-            .max_height(ctx.available_rect().height() * 0.7) // 最大高度不超过屏幕的70%
+            .resizable(true)
+            .default_height(150.0)
+            .min_height(60.0)
+            .max_height(ctx.available_rect().height() * 0.7)
             .show_animated(ctx, self.ui.show_bottom_log_panel, |ui| {
-                // 面板的显示/隐藏受 self.ui.show_bottom_log_panel 控制
-                // 面板头部：标题和按钮
                 ui.vertical_centered_justified(|ui_header| {
-                    // 使标题和按钮在水平方向上两端对齐
                     ui_header.horizontal(|h_ui| {
-                        h_ui.label(egui::RichText::new("日志").strong()); // 标题
+                        h_ui.label(egui::RichText::new("日志").strong());
                         h_ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |btn_ui| {
@@ -1165,48 +1132,37 @@ impl UniLyricApp {
                         );
                     });
                 });
-                ui.separator(); // 头部和内容区分割线
+                ui.separator();
 
-                // 使用可滚动区域显示日志条目
                 egui::ScrollArea::vertical()
-                    .auto_shrink([false, false]) // 不自动缩小，保持填充可用空间
-                    .stick_to_bottom(true) // 自动滚动到底部以显示最新日志
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
                     .show(ui, |scroll_ui| {
                         if self.ui.log_display_buffer.is_empty() {
-                            // 如果没有日志
                             scroll_ui.add_space(5.0);
                             scroll_ui.label(egui::RichText::new("暂无日志。").weak().italics());
                             scroll_ui.add_space(5.0);
                         } else {
-                            // 遍历并显示日志缓冲区中的每条日志
                             for entry in &self.ui.log_display_buffer {
                                 scroll_ui.horizontal_wrapped(|line_ui| {
-                                    // 每条日志一行，自动换行
-                                    // 时间戳
                                     line_ui.label(
                                         egui::RichText::new(
                                             entry.timestamp.format("[%H:%M:%S.%3f]").to_string(),
                                         )
-                                        .monospace()
-                                        .color(egui::Color32::DARK_GRAY), // 等宽字体，深灰色
+                                        .monospace(),
                                     );
                                     line_ui.add_space(4.0);
-                                    // 日志级别 (带颜色)
                                     line_ui.label(
                                         egui::RichText::new(format!("[{}]", entry.level.as_str()))
                                             .monospace()
                                             .color(entry.level.color())
-                                            .strong(), // 等宽，特定颜色，加粗
+                                            .strong(),
                                     );
                                     line_ui.add_space(4.0);
-                                    // 日志消息
-                                    line_ui.label(
-                                        egui::RichText::new(&entry.message).monospace().weak(),
-                                    ); // 等宽，弱化显示
+                                    line_ui.label(egui::RichText::new(&entry.message).monospace());
                                 });
                             }
                         }
-                        // 确保滚动区域至少有其声明的大小，即使内容不足
                         scroll_ui.allocate_space(scroll_ui.available_size_before_wrap());
                     });
             });
@@ -1541,52 +1497,6 @@ impl UniLyricApp {
         }
     }
 
-    /// 绘制标记信息面板的内容 (通常用于显示 ASS 文件中的 Comment 行标记)。
-    pub fn draw_markers_panel_contents(&mut self, ui: &mut egui::Ui, wrap_text_arg: bool) {
-        ui.add_space(TITLE_ALIGNMENT_OFFSET);
-        ui.heading("标记");
-        ui.separator();
-        let markers_text_content = self
-            .lyrics
-            .current_markers
-            .iter()
-            .map(|(ln, txt)| format!("ASS 行 {ln}: {txt}"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let scroll_area = if wrap_text_arg {
-            egui::ScrollArea::vertical().id_salt("markers_panel_scroll_vertical")
-        } else {
-            egui::ScrollArea::both()
-                .id_salt("markers_panel_scroll_both")
-                .auto_shrink([false, false])
-        };
-
-        scroll_area.auto_shrink([false, false]).show(ui, |s_ui| {
-            if markers_text_content.is_empty() {
-                s_ui.centered_and_justified(|center_ui| {
-                    center_ui.label(egui::RichText::new("无标记信息").weak().italics());
-                });
-            } else {
-                let mut label_widget = egui::Label::new(
-                    egui::RichText::new(markers_text_content.as_str())
-                        .monospace()
-                        .size(13.0),
-                )
-                .selectable(true);
-
-                if wrap_text_arg {
-                    // 使用传入的参数
-                    label_widget = label_widget.wrap();
-                } else {
-                    label_widget = label_widget.extend();
-                }
-                s_ui.add(label_widget);
-            }
-            s_ui.allocate_space(s_ui.available_size_before_wrap());
-        });
-    }
-
     /// 绘制输出结果面板的内容。
     pub fn draw_output_panel_contents(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|title_ui| {
@@ -1735,7 +1645,7 @@ impl UniLyricApp {
                 .iter()
                 .find(|s| &s.session_id == id)
                 .map_or_else(
-                    || format!("自动 (选择 '{id}' 已失效)"),
+                    || format!("自动 (之前选择的 '{id}' 已失效)"),
                     |s_info| s_info.display_name.clone(),
                 ),
             None => "自动 (系统默认)".to_string(),

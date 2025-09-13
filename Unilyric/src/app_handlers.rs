@@ -756,7 +756,6 @@ impl UniLyricApp {
         self.lyrics.parsed_lyric_data = None;
         self.lyrics.loaded_translation_lrc = None;
         self.lyrics.loaded_romanization_lrc = None;
-        self.lyrics.current_markers.clear();
         self.lyrics
             .metadata_manager
             .ui_entries
@@ -794,7 +793,6 @@ impl UniLyricApp {
             UIAction::SetPanelVisibility(panel, is_visible) => {
                 let panel_state_mut: &mut bool = match panel {
                     PanelType::Log => &mut self.ui.show_bottom_log_panel,
-                    PanelType::Markers => &mut self.ui.show_markers_panel,
                     PanelType::Translation => &mut self.ui.show_translation_lrc_panel,
                     PanelType::Romanization => &mut self.ui.show_romanization_lrc_panel,
                     PanelType::Settings => &mut self.ui.show_settings_window,
@@ -818,7 +816,6 @@ impl UniLyricApp {
             UIAction::ShowPanel(panel) => {
                 match panel {
                     PanelType::Log => self.ui.show_bottom_log_panel = true,
-                    PanelType::Markers => self.ui.show_markers_panel = true,
                     PanelType::Translation => self.ui.show_translation_lrc_panel = true,
                     PanelType::Romanization => self.ui.show_romanization_lrc_panel = true,
                     PanelType::Settings => {
@@ -836,7 +833,6 @@ impl UniLyricApp {
                         self.ui.show_bottom_log_panel = false;
                         self.ui.new_trigger_log_exists = false;
                     }
-                    PanelType::Markers => self.ui.show_markers_panel = false,
                     PanelType::Translation => self.ui.show_translation_lrc_panel = false,
                     PanelType::Romanization => self.ui.show_romanization_lrc_panel = false,
                     PanelType::Settings => self.ui.show_settings_window = false,

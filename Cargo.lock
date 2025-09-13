@@ -5467,7 +5467,6 @@ dependencies = [
  "chrono",
  "easer",
  "ferrous-opencc",
- "futures",
  "log",
  "rubato",
  "serde",
