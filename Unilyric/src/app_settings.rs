@@ -107,7 +107,7 @@ impl Default for AppSettings {
             amll_connector_enabled: false,
             amll_connector_websocket_url: "ws://localhost:11444".to_string(),
             auto_search_source_order: AutoSearchSource::default_order(),
-            always_search_all_sources: false,
+            always_search_all_sources: true,
             last_selected_smtc_session_id: None,
             selected_font_family: None,
             enable_online_lyric_stripping: true,

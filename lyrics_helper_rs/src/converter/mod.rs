@@ -3,7 +3,6 @@
 pub mod generators;
 pub mod parsers;
 pub mod processors;
-pub mod types;
 pub mod utils;
 
 use std::{collections::HashMap, hash::BuildHasher};
@@ -119,12 +118,6 @@ pub fn generate_from_parsed<S: BuildHasher>(
     );
 
     let mut metadata_store = MetadataStore::from(&source_data);
-
-    if let Some(agent_definitions) = source_data.raw_metadata.get("agent")
-        && !agent_definitions.is_empty()
-    {
-        metadata_store.set_multiple("internal::agents", agent_definitions.clone());
-    }
 
     if let Some(overrides) = user_metadata_overrides {
         for (key, values) in overrides {
