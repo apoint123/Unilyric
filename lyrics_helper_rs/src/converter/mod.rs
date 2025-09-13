@@ -118,6 +118,7 @@ pub fn generate_from_parsed<S: BuildHasher>(
     );
 
     let mut metadata_store = MetadataStore::from(&source_data);
+    let agent_store = &source_data.agents;
 
     if let Some(overrides) = user_metadata_overrides {
         for (key, values) in overrides {
@@ -142,29 +143,24 @@ pub fn generate_from_parsed<S: BuildHasher>(
             &metadata_store,
             &options.lrc,
         ),
-        LyricFormat::Ass => {
-            let agent_store = MetadataStore::to_agent_store(&metadata_store);
-            generators::ass_generator::generate_ass(
-                &source_data.lines,
-                &metadata_store,
-                &agent_store,
-                source_data.is_line_timed_source,
-                &options.ass,
-            )
-        }
-        LyricFormat::Ttml => {
-            let agent_store = MetadataStore::to_agent_store(&metadata_store);
-            generate_ttml(
-                &source_data.lines,
-                &metadata_store,
-                &agent_store,
-                &options.ttml,
-            )
-        }
+        LyricFormat::Ass => generators::ass_generator::generate_ass(
+            &source_data.lines,
+            &metadata_store,
+            agent_store,
+            source_data.is_line_timed_source,
+            &options.ass,
+        ),
+        LyricFormat::Ttml => generate_ttml(
+            &source_data.lines,
+            &metadata_store,
+            agent_store,
+            &options.ttml,
+        ),
         LyricFormat::AppleMusicJson => {
             generators::apple_music_json_generator::generate_apple_music_json(
                 &source_data.lines,
                 &metadata_store,
+                agent_store,
                 options,
             )
         }

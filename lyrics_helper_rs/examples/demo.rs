@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         .get_full_lyrics(&selected_result.provider_name, &song_id_for_lyrics)?
         .await?;
 
-    agent_recognizer::recognize_agents(&mut parsed_lyrics_data.parsed.lines);
+    agent_recognizer::recognize_agents(&mut parsed_lyrics_data.parsed);
     info!("歌词获取并解析成功！");
 
     // 从解析的歌词文件内部创建基础元数据存储。
@@ -86,7 +86,7 @@ async fn main() -> Result<()> {
 
     info!("正在将歌词转换为 TTML 格式...");
 
-    let agent_store = MetadataStore::to_agent_store(&metadata_store);
+    let agent_store = parsed_lyrics_data.parsed.agents;
 
     let ttml_options = TtmlGenerationOptions::default();
     let ttml_output = generate_ttml(

@@ -68,6 +68,11 @@ static SONG_PART_DIRECTIVE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static AGENT_V_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^v(\d+)$").expect("编译 AGENT_V_TAG_REGEX 失败"));
 
+static AGENT_DEF_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^v(\d+):([^,]+)(?:,(person|group|grp|other|oth))?$")
+        .expect("编译 AGENT_DEF_REGEX 失败")
+});
+
 /// 存储从 Actor 字段解析出的临时信息。
 #[derive(Debug, Default)]
 struct ParsedActorInfo {
@@ -548,7 +553,29 @@ pub fn parse_ass(content: &str) -> Result<ParsedSourceData, ConvertError> {
             }
 
             if style == "meta" && line_type == "Comment" {
-                if let Some((key, value)) = text_content.split_once(':') {
+                if let Some(agent_caps) = AGENT_DEF_REGEX.captures(text_content) {
+                    let agent_id = format!("v{}", &agent_caps[1]);
+                    let agent_name = agent_caps[2].trim().to_string();
+                    let agent_type = match agent_caps.get(3).map(|m| m.as_str()) {
+                        Some("group" | "grp") => AgentType::Group,
+                        Some("other" | "oth") => AgentType::Other,
+                        _ => AgentType::Person,
+                    };
+
+                    state
+                        .agents
+                        .agents_by_id
+                        .entry(agent_id.clone())
+                        .and_modify(|agent| {
+                            agent.name = Some(agent_name.clone());
+                            agent.agent_type = agent_type.clone();
+                        })
+                        .or_insert_with(|| Agent {
+                            id: agent_id,
+                            name: Some(agent_name),
+                            agent_type,
+                        });
+                } else if let Some((key, value)) = text_content.split_once(':') {
                     state
                         .raw_metadata
                         .entry(key.trim().to_string())

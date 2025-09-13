@@ -5,10 +5,7 @@ use std::{
     fmt::Write as FmtWrite,
 };
 
-use crate::{
-    Agent, AgentStore, AgentType, CanonicalMetadataKey, ParseCanonicalMetadataKeyError,
-    ParsedSourceData,
-};
+use crate::{CanonicalMetadataKey, ParseCanonicalMetadataKeyError, ParsedSourceData};
 
 /// 一个用于存储、管理和规范化歌词元数据的中央容器。
 #[derive(Debug, Clone, Default)]
@@ -225,40 +222,6 @@ impl MetadataStore {
             }
         }
         output
-    }
-
-    /// 从元数据中构建一个 `AgentStore`。
-    #[must_use]
-    pub fn to_agent_store(&self) -> AgentStore {
-        let mut store = AgentStore::default();
-
-        if let Some(agent_definitions) = self.get_multiple_values_by_key("agent") {
-            for def_string in agent_definitions {
-                let (id, parsed_name) = match def_string.split_once('=') {
-                    Some((id, name)) => (id.to_string(), Some(name.to_string())),
-                    None => (def_string.clone(), None),
-                };
-
-                let is_chorus = id == "v1000"
-                    || parsed_name.as_deref() == Some("合")
-                    || parsed_name.as_deref() == Some("合唱");
-
-                let final_name = if is_chorus { None } else { parsed_name };
-                let agent_type = if is_chorus {
-                    AgentType::Group
-                } else {
-                    AgentType::Person
-                };
-
-                let agent = Agent {
-                    id: id.clone(),
-                    name: final_name,
-                    agent_type,
-                };
-                store.agents_by_id.insert(id, agent);
-            }
-        }
-        store
     }
 
     /// 从一个原始的、未规范化的元数据 `HashMap` 中加载数据。

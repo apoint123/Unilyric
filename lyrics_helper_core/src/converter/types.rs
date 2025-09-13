@@ -289,6 +289,51 @@ impl LyricTrack {
             .trim() // 我们的数据结构应该确保了不会出现首尾空格
             .to_string()
     }
+
+    /// 返回轨道中所有音节的不可变迭代器
+    pub fn syllables(&self) -> impl Iterator<Item = &LyricSyllable> {
+        self.words.iter().flat_map(|w| &w.syllables)
+    }
+
+    /// 返回轨道中所有音节的可变迭代器
+    pub fn syllables_mut(&mut self) -> impl Iterator<Item = &mut LyricSyllable> {
+        self.words.iter_mut().flat_map(|w| &mut w.syllables)
+    }
+
+    /// 检查该轨道是否是逐字的
+    pub fn is_timed(&self) -> bool {
+        let mut syllable_count = 0;
+        let mut has_timed_syllable = false;
+
+        for s in self.syllables() {
+            syllable_count += 1;
+            if !has_timed_syllable && s.end_ms > s.start_ms {
+                has_timed_syllable = true;
+            }
+
+            if syllable_count > 1 && has_timed_syllable {
+                return true;
+            }
+        }
+        syllable_count > 1 && has_timed_syllable
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.words.iter().all(|w| w.syllables.is_empty())
+    }
+
+    pub fn time_range(&self) -> Option<(u64, u64)> {
+        let mut syllables = self.syllables();
+        if let Some(first) = syllables.next() {
+            let initial = (first.start_ms, first.end_ms);
+            let (min_start, max_end) = syllables.fold(initial, |(min_s, max_e), syl| {
+                (min_s.min(syl.start_ms), max_e.max(syl.end_ms))
+            });
+            Some((min_start, max_end))
+        } else {
+            None
+        }
+    }
 }
 
 impl LyricLine {
@@ -500,6 +545,11 @@ pub struct LyricSyllable {
     pub ends_with_space: bool,
 }
 
+impl LyricSyllable {
+    pub fn duration(&self) -> u64 {
+        self.end_ms.saturating_sub(self.start_ms)
+    }
+}
 //=============================================================================
 // 4. 元数据结构体
 //=============================================================================

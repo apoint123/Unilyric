@@ -8,10 +8,10 @@ use lyrics_helper_core::{
 };
 use quick_xml::{Writer, events::BytesText, events::Event};
 
-use crate::utils::normalize_text_whitespace;
+use crate::{generator::track::write_auxiliary_tracks, utils::normalize_text_whitespace};
 
 use super::{
-    track::{write_background_tracks, write_inline_auxiliary_track, write_track_as_spans},
+    track::{write_background_tracks, write_track_as_spans},
     utils::format_ttml_time,
 };
 
@@ -139,16 +139,7 @@ fn write_p_content<W: std::io::Write>(
     }
 
     // 2. 处理内联辅助轨道 (用于主内容轨道)
-    if !options.use_apple_format_rules {
-        for at in &main_content_tracks {
-            for track in &at.translations {
-                write_inline_auxiliary_track(writer, track, "x-translation", options)?;
-            }
-            for track in &at.romanizations {
-                write_inline_auxiliary_track(writer, track, "x-roman", options)?;
-            }
-        }
-    }
+    write_auxiliary_tracks(writer, &main_content_tracks, options)?;
 
     // 3. 处理背景内容
     if options.timing_mode == TtmlTimingMode::Word && !background_annotated_tracks.is_empty() {

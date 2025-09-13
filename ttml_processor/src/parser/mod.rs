@@ -66,6 +66,7 @@ pub fn parse_ttml(
     loop {
         if state.format_detection == FormatDetection::Undetermined {
             state.total_nodes_processed += 1;
+            // 经验值
             if state.whitespace_nodes_with_newline > 5 {
                 state.format_detection = FormatDetection::IsFormatted;
             } else if state.total_nodes_processed > 5000 {

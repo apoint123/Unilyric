@@ -59,7 +59,7 @@ fn test_generate_line_timed_snapshot() {
         .build()
         .unwrap();
 
-    let agent_store = MetadataStore::to_agent_store(&metadata);
+    let agent_store = AgentStore::new();
     let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
 
     insta::assert_snapshot!(ttml_output);
@@ -137,8 +137,26 @@ fn test_generate_word_timed_with_agents_snapshot() {
         .add(&CanonicalMetadataKey::Songwriter.to_string(), "作曲家1号")
         .unwrap();
 
-    metadata.add("agent", "v1=演唱者1号").unwrap();
-    metadata.add("agent", "v1000=合唱").unwrap();
+    let agent_store = AgentStore {
+        agents_by_id: HashMap::from([
+            (
+                "v1".to_string(),
+                Agent {
+                    id: "v1".to_string(),
+                    name: Some("演唱者1号".to_string()),
+                    agent_type: AgentType::Person,
+                },
+            ),
+            (
+                "v1000".to_string(),
+                Agent {
+                    id: "v1000".to_string(),
+                    name: None,
+                    agent_type: AgentType::Group,
+                },
+            ),
+        ]),
+    };
 
     let options = TtmlGenerationOptionsBuilder::default()
         .timing_mode(TtmlTimingMode::Word)
@@ -147,7 +165,6 @@ fn test_generate_word_timed_with_agents_snapshot() {
         .build()
         .unwrap();
 
-    let agent_store = MetadataStore::to_agent_store(&metadata);
     let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
 
     insta::assert_snapshot!(ttml_output);
@@ -190,7 +207,7 @@ fn test_auto_word_splitting_snapshot() {
         .unwrap();
 
     let metadata = MetadataStore::default();
-    let agent_store = MetadataStore::to_agent_store(&metadata);
+    let agent_store = AgentStore::new();
     let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
 
     insta::assert_snapshot!(ttml_output);
@@ -257,7 +274,7 @@ fn test_generate_timed_romanization_snapshot() {
         .unwrap();
 
     let metadata = MetadataStore::default();
-    let agent_store = MetadataStore::to_agent_store(&metadata);
+    let agent_store = AgentStore::new();
     let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
 
     insta::assert_snapshot!(ttml_output);
@@ -324,7 +341,7 @@ fn test_generate_timed_translation_snapshot() {
         .unwrap();
 
     let metadata = MetadataStore::default();
-    let agent_store = MetadataStore::to_agent_store(&metadata);
+    let agent_store = AgentStore::new();
     let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
 
     insta::assert_snapshot!(ttml_output);

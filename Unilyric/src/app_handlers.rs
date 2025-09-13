@@ -602,7 +602,7 @@ impl UniLyricApp {
                     }
                     ProcessorType::AgentRecognizer => {
                         lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
-                            &mut parsed_data.lines,
+                            parsed_data,
                         );
                     }
                 }

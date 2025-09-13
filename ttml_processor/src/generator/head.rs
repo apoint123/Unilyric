@@ -58,9 +58,7 @@ pub(super) fn write_ttml_head<W: std::io::Write>(
                 .write_inner_content(|writer| {
                     write_agents(writer, agent_store, lines)?;
 
-                    if options.use_apple_format_rules {
-                        write_itunes_metadata(writer, metadata_store, lines)?;
-                    }
+                    write_itunes_metadata(writer, metadata_store, lines, options)?;
 
                     write_amll_metadata(writer, metadata_store)?;
 
@@ -122,36 +120,37 @@ fn write_itunes_metadata<W: std::io::Write>(
     writer: &mut Writer<W>,
     metadata_store: &MetadataStore,
     lines: &[LyricLine],
+    options: &TtmlGenerationOptions,
 ) -> Result<(), ConvertError> {
     let valid_songwriters: Vec<&String> = metadata_store
         .get_multiple_values(&CanonicalMetadataKey::Songwriter)
         .map(|vec| vec.iter().filter(|s| !s.trim().is_empty()).collect())
         .unwrap_or_default();
 
-    let line_timed_translations = collect_line_timed_translations(lines);
-
     let has_timed_translations = lines.iter().any(|l| {
-        l.tracks.iter().any(|at| {
-            at.translations
-                .iter()
-                .any(|t| t.words.iter().flat_map(|w| &w.syllables).count() > 1)
-        })
+        l.tracks
+            .iter()
+            .any(|at| at.translations.iter().any(LyricTrack::is_timed))
     });
-    let has_timed_romanizations = lines
-        .iter()
-        .any(|l| l.tracks.iter().any(|at| !at.romanizations.is_empty()));
 
-    if !valid_songwriters.is_empty()
-        || !line_timed_translations.is_empty()
-        || has_timed_translations
-        || has_timed_romanizations
-    {
+    let has_timed_romanizations = lines.iter().any(|l| {
+        l.tracks
+            .iter()
+            .any(|at| at.romanizations.iter().any(LyricTrack::is_timed))
+    });
+
+    if !valid_songwriters.is_empty() || has_timed_translations || has_timed_romanizations {
         writer
             .create_element("iTunesMetadata")
             .with_attribute(("xmlns", "http://music.apple.com/lyric-ttml-internal"))
             .write_inner_content(|writer| {
                 write_songwriters(writer, &valid_songwriters)?;
-                write_line_timed_translations(writer, &line_timed_translations)?;
+
+                if options.use_apple_format_rules {
+                    let line_timed_translations = collect_line_timed_translations(lines);
+                    write_line_timed_translations(writer, &line_timed_translations)?;
+                }
+
                 write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Translation)?;
                 write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Romanization)?;
                 Ok(())
@@ -191,16 +190,9 @@ fn collect_line_timed_translations(
         let p_key = format!("L{}", i + 1);
         for at in &line.tracks {
             for track in &at.translations {
-                let all_syllables: Vec<_> = track.words.iter().flat_map(|w| &w.syllables).collect();
-                let is_timed = all_syllables.iter().any(|s| s.end_ms > s.start_ms);
-
-                if !is_timed || all_syllables.len() <= 1 {
+                if !track.is_timed() || track.syllables().count() <= 1 {
                     let lang = track.metadata.get(&TrackMetadataKey::Language).cloned();
-                    let full_text = all_syllables
-                        .iter()
-                        .map(|s| s.text.clone())
-                        .collect::<Vec<_>>()
-                        .join(" ");
+                    let full_text = track.text();
 
                     if !full_text.trim().is_empty() {
                         translations_by_lang
@@ -330,11 +322,7 @@ fn write_timed_tracks_to_head<W: std::io::Write>(
             let tracks_to_check = track_kind.tracks_from(annotated_track);
 
             for track in tracks_to_check {
-                if track
-                    .words
-                    .iter()
-                    .any(|w| w.syllables.iter().any(|s| s.end_ms > s.start_ms))
-                {
+                if track.is_timed() {
                     let lang = track.metadata.get(&TrackMetadataKey::Language).cloned();
                     let line_key = line_idx.try_into().unwrap_or(i32::MAX - p_key_counter_base)
                         + p_key_counter_base;

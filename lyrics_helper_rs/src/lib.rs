@@ -59,7 +59,8 @@
 //!     translations: vec![translation],
 //!     romanizations: vec![],
 //!     target_format: LyricFormat::Ttml,
-//!     user_metadata_overrides: None
+//!     user_metadata_overrides: None,
+//!     additional_metadata: None,
 //! };
 //!
 //! let options = ConversionOptions::default();
@@ -1212,7 +1213,7 @@ mod integration_tests {
         println!("\n[INFO] 步骤 3: 将解析出的歌词数据转换为 TTML 格式...");
         let metadata_store = MetadataStore::from(&parsed_data);
 
-        let agent_store = MetadataStore::to_agent_store(&metadata_store);
+        let agent_store = parsed_data.agents;
 
         let ttml_options = TtmlGenerationOptionsBuilder::default()
             .format(false)

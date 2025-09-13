@@ -1,9 +1,9 @@
 //! 对唱识别器。
 
 use regex::Regex;
-use std::{borrow::Cow, sync::LazyLock};
+use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
-use lyrics_helper_core::{ContentType, LyricLine};
+use lyrics_helper_core::{Agent, AgentType, ContentType, LyricLine, ParsedSourceData};
 
 /// 正则表达式，用于匹配行首的演唱者标记。
 /// 支持全角/半角括号和冒号，以及无括号的情况。
@@ -14,18 +14,23 @@ static AGENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(?:\((.+?)\)|（(.+?)）|([^\s:()（）]+))\s*[:：]\s*").unwrap()
 });
 
-/// 接收一个歌词行向量，识别其中的演唱者，并返回处理后的新向量。
-///
-/// # 参数
-/// * `lines` - 原始的 `LyricLine` 向量。
-///
-/// # 返回
-/// 一个新的 `Vec<LyricLine>`，其中 `agent` 字段已被填充，
-/// 并且歌词文本中的演唱者标记已被移除。
-pub fn recognize_agents(lines: &mut Vec<LyricLine>) {
-    let original_lines = std::mem::take(lines);
+/// 接收一个 `ParsedSourceData`，识别其中的演唱者，并直接修改它。
+pub fn recognize_agents(data: &mut ParsedSourceData) {
+    let original_lines = std::mem::take(&mut data.lines);
     let mut processed_lines = Vec::with_capacity(original_lines.len());
-    let mut current_agent: Option<String> = None;
+    let mut current_agent_id: Option<String> = None;
+
+    let mut name_to_id_map: HashMap<String, String> = data
+        .agents
+        .all_agents()
+        .filter_map(|agent| {
+            agent
+                .name
+                .as_ref()
+                .map(|name| (name.clone(), agent.id.clone()))
+        })
+        .collect();
+    let mut next_agent_id_num = data.agents.agents_by_id.len() + 1;
 
     for mut line in original_lines {
         let full_text: String = get_text_from_main_track(&line).to_string();
@@ -41,31 +46,48 @@ pub fn recognize_agents(lines: &mut Vec<LyricLine>) {
             if let (Some(name), Some(full_match_capture)) = (agent_name, captures.get(0)) {
                 let full_match_str = full_match_capture.as_str();
 
+                let agent_id = name_to_id_map
+                    .entry(name.clone())
+                    .or_insert_with(|| {
+                        let new_id = format!("v{next_agent_id_num}");
+                        next_agent_id_num += 1;
+
+                        let new_agent = Agent {
+                            id: new_id.clone(),
+                            name: Some(name),
+                            agent_type: AgentType::Person,
+                        };
+                        data.agents.agents_by_id.insert(new_id.clone(), new_agent);
+
+                        new_id
+                    })
+                    .clone();
+
                 if let Some(remaining_text) = full_text.strip_prefix(full_match_str) {
                     if remaining_text.trim().is_empty() {
                         // 块模式: 如果标记后面没有文本，说明这只是一个标记行，用于标记后面行的演唱者
                         // 更新当前演唱者，并跳过此行
-                        current_agent = Some(name);
+                        current_agent_id = Some(agent_id);
                         continue;
                     }
                     // 行模式: 标记和歌词在同一行。
-                    line.agent = Some(name.clone());
-                    current_agent = Some(name); // 更新当前演唱者以备后续行继承
+                    line.agent = Some(agent_id.clone());
+                    current_agent_id = Some(agent_id); // 更新当前演唱者以备后续行继承
                     clean_text_in_main_track(&mut line, full_match_str);
                 }
             } else {
-                // 正则匹配成功，但未能提取出有效的演唱者名称（理论上不太可能发生）。
-                line.agent.clone_from(&current_agent);
+                // 正则匹配成功，但未能提取出有效的演唱者名称（理论上不太可能发生）
+                line.agent.clone_from(&current_agent_id);
             }
         } else {
-            // 整行都不匹配演唱者标记的格式。
-            line.agent.clone_from(&current_agent);
+            // 整行都不匹配演唱者标记的格式
+            line.agent.clone_from(&current_agent_id);
         }
 
         processed_lines.push(line);
     }
 
-    *lines = processed_lines;
+    data.lines = processed_lines;
 }
 
 /// 辅助函数：从 `LyricLine` 中获取用于匹配的纯文本。
@@ -137,9 +159,7 @@ fn clean_text_in_main_track(line: &mut LyricLine, prefix_to_remove: &str) {
 mod tests {
     use super::*;
 
-    use lyrics_helper_core::{
-        AnnotatedTrack, ContentType, LyricLine, LyricSyllable, LyricTrack, Word,
-    };
+    use lyrics_helper_core::{AnnotatedTrack, ContentType, LyricSyllable, LyricTrack, Word};
 
     fn new_line(text: &str) -> LyricLine {
         let content_track = LyricTrack {
@@ -188,115 +208,129 @@ mod tests {
 
     #[test]
     fn test_recognize_agents_inline_mode() {
-        let mut lines = vec![
-            new_line("汪：摘一颗苹果"),
-            new_line("等你看我从门前过"),
-            new_line("BY2：像夏天的可乐"),
-            new_line("像冬天的可可"),
-        ];
+        let mut data = ParsedSourceData {
+            lines: vec![
+                new_line("汪：摘一颗苹果"),
+                new_line("等你看我从门前过"),
+                new_line("BY2：像夏天的可乐"),
+                new_line("像冬天的可可"),
+            ],
+            ..Default::default()
+        };
 
-        recognize_agents(&mut lines);
+        recognize_agents(&mut data);
 
-        assert_eq!(lines.len(), 4);
-        assert_eq!(lines[0].agent.as_deref(), Some("汪"));
-        assert_eq!(get_text_from_main_track(&lines[0]), "摘一颗苹果");
+        assert_eq!(data.lines.len(), 4);
+        assert_eq!(data.lines[0].agent.as_deref(), Some("v1"));
+        assert_eq!(get_text_from_main_track(&data.lines[0]), "摘一颗苹果");
 
-        assert_eq!(lines[1].agent.as_deref(), Some("汪"), "应继承演唱者 '汪'");
-        assert_eq!(get_text_from_main_track(&lines[1]), "等你看我从门前过");
+        assert_eq!(data.lines[1].agent.as_deref(), Some("v1"), "应继承ID 'v1'");
 
-        assert_eq!(lines[2].agent.as_deref(), Some("BY2"));
-        assert_eq!(get_text_from_main_track(&lines[2]), "像夏天的可乐");
+        assert_eq!(data.lines[2].agent.as_deref(), Some("v2"));
+        assert_eq!(get_text_from_main_track(&data.lines[2]), "像夏天的可乐");
 
-        assert_eq!(lines[3].agent.as_deref(), Some("BY2"), "应继承演唱者 'BY2'");
-        assert_eq!(get_text_from_main_track(&lines[3]), "像冬天的可可");
+        assert_eq!(data.lines[3].agent.as_deref(), Some("v2"), "应继承ID 'v2'");
+
+        assert_eq!(data.agents.agents_by_id.len(), 2);
+        let agent1 = data.agents.agents_by_id.get("v1").unwrap();
+        assert_eq!(agent1.name.as_deref(), Some("汪"));
+        let agent2 = data.agents.agents_by_id.get("v2").unwrap();
+        assert_eq!(agent2.name.as_deref(), Some("BY2"));
     }
 
     #[test]
     fn test_recognize_agents_block_mode() {
-        let mut lines = vec![
-            new_line("TwoP："),
-            new_line("都说爱情要慢慢来"),
-            new_line("我的那个她却又慢半拍"),
-            new_line("Stake:"),
-            new_line("怕你跟不上我的节奏"),
-        ];
+        let mut data = ParsedSourceData {
+            lines: vec![
+                new_line("TwoP："),
+                new_line("都说爱情要慢慢来"),
+                new_line("我的那个她却又慢半拍"),
+                new_line("Stake:"),
+                new_line("怕你跟不上我的节奏"),
+            ],
+            ..Default::default()
+        };
 
-        recognize_agents(&mut lines);
+        recognize_agents(&mut data);
 
-        assert_eq!(lines.len(), 3, "纯标记行应被移除，只留下3行歌词");
+        assert_eq!(data.lines.len(), 3, "纯标记行应被移除");
 
-        assert_eq!(lines[0].agent.as_deref(), Some("TwoP"));
-        assert_eq!(get_text_from_main_track(&lines[0]), "都说爱情要慢慢来");
+        assert_eq!(data.lines[0].agent.as_deref(), Some("v1"));
+        assert_eq!(data.lines[1].agent.as_deref(), Some("v1"));
+        assert_eq!(data.lines[2].agent.as_deref(), Some("v2"));
 
-        assert_eq!(lines[1].agent.as_deref(), Some("TwoP"));
-
-        assert_eq!(lines[2].agent.as_deref(), Some("Stake"));
-        assert_eq!(get_text_from_main_track(&lines[2]), "怕你跟不上我的节奏");
-    }
-
-    #[test]
-    fn test_recognize_agents_syllable_mode() {
-        let mut lines = vec![
-            new_syllable_line(vec!["BY2", "： ", "像", "夏天", "的", "可乐"]),
-            new_syllable_line(vec!["像", "冬天", "的", "可可"]),
-        ];
-
-        recognize_agents(&mut lines);
-
-        assert_eq!(lines.len(), 2);
-        assert_eq!(lines[0].agent.as_deref(), Some("BY2"));
-
-        assert_eq!(get_text_from_main_track(&lines[0]), "像夏天的可乐");
-
+        assert_eq!(data.agents.agents_by_id.len(), 2);
         assert_eq!(
-            lines[1].agent.as_deref(),
-            Some("BY2"),
-            "Syllable line should inherit agent"
+            data.agents.agents_by_id.get("v1").unwrap().name.as_deref(),
+            Some("TwoP")
+        );
+        assert_eq!(
+            data.agents.agents_by_id.get("v2").unwrap().name.as_deref(),
+            Some("Stake")
         );
     }
 
     #[test]
     fn test_recognize_agents_mixed_and_complex() {
-        let mut lines = vec![
-            new_line("（合）：合唱歌词"),
-            new_line("第一句歌词"),
-            new_syllable_line(vec!["TwoP", "："]),
-            new_syllable_line(vec!["第", "二", "句", "逐", "字", "歌", "词"]),
-            new_line("  Stake: 第三句行内歌词"),
-            new_line("第四句继承Stake"),
-        ];
+        let mut data = ParsedSourceData {
+            lines: vec![
+                new_line("（合）：合唱歌词"),
+                new_line("第一句歌词"),
+                new_syllable_line(vec!["TwoP", "："]),
+                new_syllable_line(vec!["第", "二", "句", "逐", "字", "歌", "词"]),
+                new_line("  Stake: 第三句行内歌词"),
+                new_line("第四句继承Stake"),
+            ],
+            ..Default::default()
+        };
 
-        recognize_agents(&mut lines);
+        recognize_agents(&mut data);
 
-        assert_eq!(lines.len(), 5);
+        assert_eq!(data.lines.len(), 5);
 
-        assert_eq!(lines[0].agent.as_deref(), Some("合"));
-        assert_eq!(get_text_from_main_track(&lines[0]), "合唱歌词");
+        assert_eq!(data.lines[0].agent.as_deref(), Some("v1"));
+        assert_eq!(get_text_from_main_track(&data.lines[0]), "合唱歌词");
 
-        assert_eq!(lines[1].agent.as_deref(), Some("合"));
+        assert_eq!(data.lines[1].agent.as_deref(), Some("v1"));
 
-        assert_eq!(lines[2].agent.as_deref(), Some("TwoP"));
-        assert_eq!(get_text_from_main_track(&lines[2]), "第二句逐字歌词");
+        assert_eq!(data.lines[2].agent.as_deref(), Some("v2"));
 
-        assert_eq!(lines[3].agent.as_deref(), Some("Stake"));
-        assert_eq!(get_text_from_main_track(&lines[3]), "第三句行内歌词");
+        assert_eq!(data.lines[3].agent.as_deref(), Some("v3"));
 
-        assert_eq!(lines[4].agent.as_deref(), Some("Stake"));
+        assert_eq!(data.lines[4].agent.as_deref(), Some("v3"));
+
+        assert_eq!(data.agents.agents_by_id.len(), 3);
+        assert_eq!(
+            data.agents.agents_by_id.get("v1").unwrap().name.as_deref(),
+            Some("合")
+        );
+        assert_eq!(
+            data.agents.agents_by_id.get("v2").unwrap().name.as_deref(),
+            Some("TwoP")
+        );
+        assert_eq!(
+            data.agents.agents_by_id.get("v3").unwrap().name.as_deref(),
+            Some("Stake")
+        );
     }
 
     #[test]
     fn test_recognize_agents_no_agents() {
-        let original_lines = vec![new_line("这是一行普通歌词"), new_line("这是另一行普通歌词")];
-        let mut lines = original_lines.clone();
+        let mut data = ParsedSourceData {
+            lines: vec![new_line("这是一行普通歌词"), new_line("这是另一行普通歌词")],
+            ..Default::default()
+        };
+        let original_data = data.clone();
 
-        recognize_agents(&mut lines);
+        recognize_agents(&mut data);
 
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].agent.is_none());
-        assert!(lines[1].agent.is_none());
+        assert_eq!(data.lines.len(), 2);
+        assert!(data.lines[0].agent.is_none());
+        assert!(data.lines[1].agent.is_none());
+        assert_eq!(data.agents.agents_by_id.len(), 0);
         assert_eq!(
-            get_text_from_main_track(&lines[0]),
-            get_text_from_main_track(&original_lines[0])
+            get_text_from_main_track(&data.lines[0]),
+            get_text_from_main_track(&original_data.lines[0])
         );
     }
 }

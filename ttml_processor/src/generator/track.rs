@@ -15,6 +15,29 @@ use quick_xml::{
 
 use super::{splitting::write_syllable_with_optional_splitting, utils::format_ttml_time};
 
+pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    annotated_tracks: &[&AnnotatedTrack],
+    options: &TtmlGenerationOptions,
+) -> Result<(), ConvertError> {
+    for at in annotated_tracks {
+        for track in &at.translations {
+            if !options.use_apple_format_rules {
+                write_inline_auxiliary_track(writer, track, "x-translation", options)?;
+            }
+        }
+
+        for track in &at.romanizations {
+            let is_timed = track.is_timed();
+
+            if !is_timed || !options.use_apple_format_rules {
+                write_inline_auxiliary_track(writer, track, "x-roman", options)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 写入单个音节span
 pub(super) fn write_single_syllable_span<W: std::io::Write>(
     writer: &mut Writer<W>,
@@ -44,7 +67,7 @@ pub(super) fn write_track_as_spans<W: std::io::Write>(
     track: &LyricTrack,
     options: &TtmlGenerationOptions,
 ) -> Result<(), ConvertError> {
-    let mut syllables_iter = track.words.iter().flat_map(|w| &w.syllables).peekable();
+    let mut syllables_iter = track.syllables().peekable();
 
     while let Some(syl) = syllables_iter.next() {
         write_syllable_with_optional_splitting(writer, syl, options)?;
@@ -63,6 +86,10 @@ pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
     role: &str,
     options: &TtmlGenerationOptions,
 ) -> Result<(), ConvertError> {
+    if track.is_empty() {
+        return Ok(());
+    }
+
     let mut element_builder = writer
         .create_element("span")
         .with_attribute(("ttm:role", role));
@@ -73,32 +100,23 @@ pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
         element_builder = element_builder.with_attribute(("xml:lang", lang.as_str()));
     }
 
-    let all_syllables: Vec<_> = track.words.iter().flat_map(|w| &w.syllables).collect();
-    if all_syllables.is_empty() {
-        return Ok(());
-    }
+    let is_timed = track.is_timed();
+    let has_multiple_syllables = track.syllables().count() > 1;
 
-    let is_timed = all_syllables.iter().any(|s| s.end_ms > s.start_ms);
-    let has_multiple_syllables = all_syllables.len() > 1;
-
-    let write_as_nested_timed_spans =
-        is_timed && options.timing_mode == TtmlTimingMode::Word && has_multiple_syllables;
+    let write_as_nested_timed_spans = is_timed
+        && options.timing_mode == TtmlTimingMode::Word
+        && has_multiple_syllables
+        && options.use_apple_format_rules;
 
     if write_as_nested_timed_spans {
-        let start_ms = all_syllables.iter().map(|s| s.start_ms).min().unwrap_or(0);
-        let end_ms = all_syllables.iter().map(|s| s.end_ms).max().unwrap_or(0);
-
-        element_builder
-            .with_attribute(("begin", format_ttml_time(start_ms).as_str()))
-            .with_attribute(("end", format_ttml_time(end_ms).as_str()))
-            .write_inner_content(|writer| Ok(write_track_as_spans(writer, track, options)?))?;
+        if let Some((start_ms, end_ms)) = track.time_range() {
+            element_builder
+                .with_attribute(("begin", format_ttml_time(start_ms).as_str()))
+                .with_attribute(("end", format_ttml_time(end_ms).as_str()))
+                .write_inner_content(|writer| Ok(write_track_as_spans(writer, track, options)?))?;
+        }
     } else {
-        let full_text = all_syllables
-            .iter()
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join(if options.format { " " } else { "" });
-
+        let full_text = track.text();
         let normalized_text = normalize_text_whitespace(&full_text);
         if !normalized_text.is_empty() {
             element_builder.write_text_content(BytesText::new(&normalized_text))?;
@@ -116,7 +134,7 @@ pub(super) fn write_background_tracks<W: std::io::Write>(
 ) -> Result<(), ConvertError> {
     let mut syllables_iter = bg_annotated_tracks
         .iter()
-        .flat_map(|at| at.content.words.iter().flat_map(|w| &w.syllables))
+        .flat_map(|at| at.content.syllables())
         .peekable();
 
     if syllables_iter.peek().is_none() {
@@ -165,14 +183,7 @@ pub(super) fn write_background_tracks<W: std::io::Write>(
                 }
             }
 
-            for at in bg_annotated_tracks {
-                for track in &at.translations {
-                    write_inline_auxiliary_track(writer, track, "x-translation", options)?;
-                }
-                for track in &at.romanizations {
-                    write_inline_auxiliary_track(writer, track, "x-roman", options)?;
-                }
-            }
+            write_auxiliary_tracks(writer, bg_annotated_tracks, options)?;
 
             Ok(())
         })?;

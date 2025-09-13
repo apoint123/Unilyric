@@ -3,7 +3,7 @@
 //! 这个 JSON 内嵌有 Apple Music 样式的 TTML 文件。
 
 use lyrics_helper_core::{
-    CanonicalMetadataKey, ConversionOptions, ConvertError, LyricLine, MetadataStore,
+    AgentStore, CanonicalMetadataKey, ConversionOptions, ConvertError, LyricLine, MetadataStore,
     TtmlGenerationOptions, TtmlTimingMode,
 };
 use serde::Serialize;
@@ -45,6 +45,7 @@ struct PlayParams {
 pub fn generate_apple_music_json(
     lines: &[LyricLine],
     metadata_store: &MetadataStore,
+    agent_store: &AgentStore,
     options: &ConversionOptions,
 ) -> Result<String, ConvertError> {
     let apple_ttml_options = TtmlGenerationOptions {
@@ -53,8 +54,7 @@ pub fn generate_apple_music_json(
         ..options.ttml.clone()
     };
 
-    let agent_store = MetadataStore::to_agent_store(metadata_store);
-    let ttml_content = generate_ttml(lines, metadata_store, &agent_store, &apple_ttml_options)?;
+    let ttml_content = generate_ttml(lines, metadata_store, agent_store, &apple_ttml_options)?;
 
     let apple_music_id = metadata_store
         .get_single_value(&CanonicalMetadataKey::AppleMusicId)
@@ -67,7 +67,6 @@ pub fn generate_apple_music_json(
     let display_type = match options.ttml.timing_mode {
         TtmlTimingMode::Word => 3,
         TtmlTimingMode::Line => 2,
-        // 纯文本、没有时间同步是 1
     };
 
     let json_output = Root {

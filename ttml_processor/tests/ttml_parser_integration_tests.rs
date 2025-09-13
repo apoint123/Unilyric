@@ -192,7 +192,7 @@ fn test_round_trip() {
         .build()
         .unwrap();
 
-    let agent_store = MetadataStore::to_agent_store(&metadata_store);
+    let agent_store = parsed_data.agents;
     let generated_ttml_output =
         generate_ttml(&parsed_data.lines, &metadata_store, &agent_store, &options).unwrap();
 

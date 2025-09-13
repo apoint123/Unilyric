@@ -108,7 +108,7 @@ async fn execute_search_and_process(
             }
             if context.app_settings.auto_apply_agent_recognizer {
                 lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
-                    &mut lyrics_and_metadata.lyrics.parsed.lines,
+                    &mut lyrics_and_metadata.lyrics.parsed,
                 );
             }
 
