@@ -37,10 +37,8 @@ pub fn recognize_agents(data: &mut ParsedSourceData) {
 
         if let Some(captures) = AGENT_REGEX.captures(&full_text) {
             // 从多个捕获组中提取演唱者名称
-            let agent_name = captures
-                .get(1)
-                .or_else(|| captures.get(2))
-                .or_else(|| captures.get(3))
+            let agent_name = (1..=3)
+                .find_map(|i| captures.get(i))
                 .map(|m| m.as_str().trim().to_string());
 
             if let (Some(name), Some(full_match_capture)) = (agent_name, captures.get(0)) {
