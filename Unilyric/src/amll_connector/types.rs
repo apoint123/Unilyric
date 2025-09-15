@@ -2,8 +2,6 @@ use lyrics_helper_core::converter::types::ParsedSourceData;
 use serde::{Deserialize, Serialize};
 use smtc_suite::MediaUpdate;
 
-use crate::amll_connector::protocol::ClientMessage;
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AMLLConnectorConfig {
     pub enabled: bool,
@@ -39,7 +37,6 @@ pub enum ConnectorCommand {
     UpdateActorSettings(ActorSettings),
     SetProgress(u64),
     SendLyric(ParsedSourceData),
-    SendClientMessage(ClientMessage),
     SendCover(Vec<u8>),
     FlickerPlayPause,
     Shutdown,

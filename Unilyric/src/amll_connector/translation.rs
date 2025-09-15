@@ -86,7 +86,7 @@ fn extract_line_components(
                 start_time: syllable.start_ms,
                 end_time,
                 word: NullString(word_text),
-                // roman_word: NullString(roman_word_text),
+                roman_word: NullString(roman_word_text),
             }
         })
         .collect();

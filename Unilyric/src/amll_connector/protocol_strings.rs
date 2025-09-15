@@ -2,9 +2,10 @@ use binrw::{
     BinRead, BinResult, BinWrite, Endian,
     io::{Read, Seek, Write},
 };
+use serde::{Deserialize, Serialize};
 
 /// 一个自定义的、以 null 字节结尾的 UTF-8 字符串类型。
-#[derive(Clone, Eq, PartialEq, Default, Debug)]
+#[derive(Clone, Eq, PartialEq, Default, Debug, Serialize, Deserialize)]
 pub struct NullString(pub String);
 
 impl AsRef<str> for NullString {

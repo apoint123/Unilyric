@@ -19,17 +19,20 @@ use tokio::{
     time::Sleep,
 };
 
-use crate::amll_connector::types::{ActorSettings, UiUpdate};
+use crate::amll_connector::{
+    protocol::BinClientMessage,
+    types::{ActorSettings, UiUpdate},
+};
 
 use super::{
-    protocol::{Artist, ClientMessage},
+    protocol::{Artist, ClientMessage, OutgoingMessage},
     translation::convert_to_protocol_lyrics,
     types::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
     websocket_client,
 };
 
 type ClientTaskComponents = (
-    TokioSender<ClientMessage>,
+    TokioSender<OutgoingMessage>,
     oneshot::Sender<()>,
     JoinHandle<anyhow::Result<()>>,
 );
@@ -50,7 +53,7 @@ enum ConnectionState {
     Disconnected,
     WaitingToRetry(Pin<Box<Sleep>>),
     Running {
-        tx: TokioSender<ClientMessage>,
+        tx: TokioSender<OutgoingMessage>,
         shutdown_tx: oneshot::Sender<()>,
         handle: JoinHandle<anyhow::Result<()>>,
     },
@@ -96,54 +99,53 @@ async fn handle_smtc_send_error<T>(
     }
 }
 
-fn send_music_info_to_ws(tx: &TokioSender<ClientMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_music_info_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
     let artists_vec = info.artist.as_ref().map_or_else(Vec::new, |name| {
         vec![Artist {
             id: Default::default(),
             name: name.as_str().into(),
         }]
     });
-    let msg = ClientMessage::SetMusicInfo {
+    let json_body = ClientMessage::SetMusicInfo {
         music_id: Default::default(),
-        music_name: info
-            .title
-            .clone()
-            .map_or(Default::default(), |s| s.as_str().into()),
+        music_name: info.title.clone().map_or(Default::default(), |s| s),
         album_id: Default::default(),
-        album_name: info
-            .album_title
-            .clone()
-            .map_or(Default::default(), |s| s.as_str().into()),
+        album_name: info.album_title.clone().map_or(Default::default(), |s| s),
         artists: artists_vec,
         duration: info.duration_ms.unwrap_or(0),
     };
+    let msg = OutgoingMessage::Json(json_body);
     handle_websocket_send_error(tx.try_send(msg), "SetMusicInfo");
 }
 
-fn send_cover_to_ws(tx: &TokioSender<ClientMessage>, cover_data: &[u8]) {
+fn send_cover_to_ws(tx: &TokioSender<OutgoingMessage>, cover_data: &[u8]) {
     if !cover_data.is_empty() {
-        let msg = ClientMessage::SetMusicAlbumCoverImageData {
+        let bin_body = BinClientMessage::SetMusicAlbumCoverImageData {
             data: cover_data.to_vec(),
         };
+        let msg = OutgoingMessage::LegacyBinary(bin_body);
+
         handle_websocket_send_error(tx.try_send(msg), "SetMusicAlbumCoverImageData");
     }
 }
 
-fn send_play_state_to_ws(tx: &TokioSender<ClientMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_play_state_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
     if let Some(status) = info.playback_status {
-        let msg = match status {
+        let json_body = match status {
             smtc_suite::PlaybackStatus::Playing => ClientMessage::OnResumed,
             smtc_suite::PlaybackStatus::Paused | smtc_suite::PlaybackStatus::Stopped => {
                 ClientMessage::OnPaused
             }
         };
+        let msg = OutgoingMessage::Json(json_body);
         handle_websocket_send_error(tx.try_send(msg), "播放状态");
     }
 }
 
-fn send_progress_to_ws(tx: &TokioSender<ClientMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_progress_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
     if let Some(progress) = info.position_ms {
-        let msg = ClientMessage::OnPlayProgress { progress };
+        let json_body = ClientMessage::OnPlayProgress { progress };
+        let msg = OutgoingMessage::Json(json_body);
         handle_websocket_send_error(tx.try_send(msg), "OnPlayProgress");
     }
 }
@@ -235,9 +237,10 @@ fn handle_smtc_update(
 
         if let ConnectionState::Running { tx, .. } = &state.connection {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
-            let msg = ClientMessage::OnAudioData {
+            let bin_body = BinClientMessage::OnAudioData {
                 data: i16_byte_data,
             };
+            let msg = OutgoingMessage::LegacyBinary(bin_body);
             handle_websocket_send_error(tx.try_send(msg), "OnAudioData");
             state.last_audio_sent_time = Some(Instant::now());
         }
@@ -357,7 +360,8 @@ async fn handle_app_command(
         }
         ConnectorCommand::SetProgress(progress) => {
             if let ConnectionState::Running { tx, .. } = &state.connection {
-                let msg = ClientMessage::OnPlayProgress { progress };
+                let json_body = ClientMessage::OnPlayProgress { progress };
+                let msg = OutgoingMessage::Json(json_body);
                 handle_websocket_send_error(tx.try_send(msg), "SetProgress");
             }
         }
@@ -381,15 +385,11 @@ async fn handle_app_command(
         ConnectorCommand::SendLyric(parsed_data) => {
             if let ConnectionState::Running { tx, .. } = &state.connection {
                 let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
-                let body = ClientMessage::SetLyric {
+                let json_body = ClientMessage::SetLyric {
                     data: protocol_lyrics,
                 };
-                handle_websocket_send_error(tx.try_send(body), "SetLyric");
-            }
-        }
-        ConnectorCommand::SendClientMessage(message) => {
-            if let ConnectionState::Running { tx, .. } = &state.connection {
-                handle_websocket_send_error(tx.try_send(message), "ClientMessage");
+                let msg = OutgoingMessage::Json(json_body);
+                handle_websocket_send_error(tx.try_send(msg), "SetLyric");
             }
         }
         ConnectorCommand::SendCover(cover_data) => {
@@ -526,18 +526,27 @@ pub async fn amll_connector_actor(
             Some(status) = ws_status_rx.recv() => {
                 debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
 
-                if matches!(status, WebsocketStatus::Connected) {
+                if let (WebsocketStatus::Connected, ConnectionState::Running { tx, .. }) =
+                    (&status, &state.connection)
+                {
                     let command = MediaCommand::SetHighFrequencyProgressUpdates(true);
                     handle_smtc_send_error(smtc_command_tx.send(command).await, "启用高频更新").await;
-                }
+                    let init_msg = OutgoingMessage::Json(ClientMessage::InitializeV2);
+                    handle_websocket_send_error(tx.try_send(init_msg), "InitializeV2");
 
-                if let (WebsocketStatus::Connected, ConnectionState::Running { tx, .. }, Some(track_info)) =
-                    (&status, &state.connection, &state.last_track_info)
-                {
-                    send_music_info_to_ws(tx, track_info);
-                    if let Some(ref cover_data) = track_info.cover_data {
-                        send_cover_to_ws(tx, cover_data);
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+                    if let Some(track_info) = &state.last_track_info {
+                        send_music_info_to_ws(tx, track_info);
+                        if let Some(ref cover_data) = track_info.cover_data {
+                            send_cover_to_ws(tx, cover_data);
+                        }
+                        send_play_state_to_ws(tx, track_info);
+                        send_progress_to_ws(tx, track_info);
                     }
+                } else if matches!(status, WebsocketStatus::Disconnected | WebsocketStatus::Error(_)) {
+                    let command = MediaCommand::SetHighFrequencyProgressUpdates(false);
+                    handle_smtc_send_error(smtc_command_tx.send(command).await, "禁用高频更新").await;
                 }
 
                 let _ = update_tx.send(UiUpdate {

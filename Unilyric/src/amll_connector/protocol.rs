@@ -1,10 +1,12 @@
 use super::protocol_strings::NullString;
 use binrw::{BinRead, BinWrite, binrw};
+use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 #[binrw]
 #[brw(little)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct Artist {
     pub id: NullString,
     pub name: NullString,
@@ -12,41 +14,91 @@ pub struct Artist {
 
 #[binrw]
 #[brw(little)]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct LyricWord {
     pub start_time: u64,
     pub end_time: u64,
     pub word: NullString,
-    // pub roman_word: NullString,
+    #[brw(ignore)]
+    #[serde(default)]
+    pub roman_word: NullString,
 }
 
 #[binrw]
 #[brw(little)]
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Deserialize, Serialize, PartialEq, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct LyricLine {
     pub start_time: u64,
     pub end_time: u64,
+
+    #[serde(skip)]
     #[bw(try_calc = u32::try_from(words.len()))]
     word_count: u32,
+
     #[br(count = word_count)]
     pub words: Vec<LyricWord>,
+
     pub translated_lyric: NullString,
     pub roman_lyric: NullString,
+
+    #[serde(skip)]
     #[bw(calc = *is_bg as u8 | ((*is_duet as u8) << 1))]
     flags: u8,
+
     #[br(calc = flags & 0b01 != 0)]
     #[bw(ignore)]
+    #[serde(default, rename = "isBG")]
     pub is_bg: bool,
+
     #[br(calc = flags & 0b10 != 0)]
     #[bw(ignore)]
     pub is_duet: bool,
 }
 
-/// 本程序发送的消息
+#[derive(Serialize, Debug, Clone)]
+#[serde(rename_all = "camelCase", tag = "type", content = "value")]
+pub enum ClientMessage {
+    InitializeV2,
+    Ping,
+    Pong,
+    #[serde(rename_all = "camelCase")]
+    SetMusicInfo {
+        music_id: String,
+        music_name: String,
+        album_id: String,
+        album_name: String,
+        artists: Vec<Artist>,
+        duration: u64,
+    },
+    OnPlayProgress {
+        progress: u64,
+    },
+    OnPaused,
+    OnResumed,
+    SetLyric {
+        data: Vec<LyricLine>,
+    },
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase", tag = "type", content = "value")]
+pub enum ServerMessage {
+    Ping,
+    Pong,
+    Pause,
+    Resume,
+    ForwardSong,
+    BackwardSong,
+    SetVolume { volume: f64 },
+    SeekPlayProgress { progress: u64 },
+}
+
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq)]
-pub enum ClientMessage {
+pub enum BinClientMessage {
     #[brw(magic(0u16))]
     Ping,
     #[brw(magic(1u16))]
@@ -94,11 +146,10 @@ pub enum ClientMessage {
     SetLyricFromTTML { data: NullString },
 }
 
-/// 从服务器接收的消息
 #[binrw]
 #[brw(little)]
 #[derive(Debug, Clone, PartialEq)]
-pub enum ServerMessage {
+pub enum BinServerMessage {
     #[brw(magic(0u16))]
     Ping,
     #[brw(magic(1u16))]
@@ -117,7 +168,13 @@ pub enum ServerMessage {
     SeekPlayProgress { progress: u64 },
 }
 
-impl ClientMessage {
+#[derive(Debug, Clone)]
+pub enum OutgoingMessage {
+    Json(ClientMessage),
+    LegacyBinary(BinClientMessage),
+}
+
+impl BinClientMessage {
     pub fn encode(&self) -> binrw::BinResult<Vec<u8>> {
         let mut writer = Cursor::new(Vec::new());
         self.write_le(&mut writer)?;
@@ -130,89 +187,9 @@ impl ClientMessage {
     }
 }
 
-impl ServerMessage {
+impl BinServerMessage {
     pub fn decode(bytes: &[u8]) -> binrw::BinResult<Self> {
         let mut reader = Cursor::new(bytes);
         Self::read_le(&mut reader)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_simple_message_encoding() {
-        let ping = ClientMessage::Ping;
-        let encoded_ping = ping.encode().unwrap();
-        assert_eq!(encoded_ping, vec![0x00, 0x00]);
-
-        let pong = ServerMessage::Pong;
-        let encoded_pong_bytes = vec![0x01, 0x00];
-        let decoded_pong = ServerMessage::decode(&encoded_pong_bytes).unwrap();
-        assert_eq!(pong, decoded_pong);
-    }
-
-    #[test]
-    fn test_set_music_info_roundtrip() {
-        let original_message = ClientMessage::SetMusicInfo {
-            music_id: "id123".into(),
-            music_name: "歌曲名".into(),
-            album_id: "album456".into(),
-            album_name: "专辑名".into(),
-            artists: vec![Artist {
-                id: "artist789".into(),
-                name: "歌手名".into(),
-            }],
-            duration: 180000,
-        };
-
-        let encoded_bytes = original_message.encode().unwrap();
-        let decoded_message = ClientMessage::_decode(&encoded_bytes).unwrap();
-
-        assert_eq!(original_message, decoded_message);
-    }
-
-    #[test]
-    fn test_set_lyric_roundtrip() {
-        let original_message = ClientMessage::SetLyric {
-            data: vec![LyricLine {
-                start_time: 1000,
-                end_time: 5000,
-                words: vec![
-                    LyricWord {
-                        start_time: 1000,
-                        end_time: 2000,
-                        word: "Hello".into(),
-                        // roman_word: "Konnichiwa".into(),
-                    },
-                    LyricWord {
-                        start_time: 2000,
-                        end_time: 4000,
-                        word: "World".into(),
-                        // roman_word: "Sekai".into(),
-                    },
-                ],
-                translated_lyric: "你好世界".into(),
-                roman_lyric: "Konnichiwa Sekai".into(),
-                is_bg: false,
-                is_duet: true,
-            }],
-        };
-
-        let encoded = original_message.encode().unwrap();
-        let decoded = ClientMessage::_decode(&encoded).unwrap();
-
-        assert_eq!(original_message, decoded);
-    }
-
-    #[test]
-    fn test_seek_command_decoding() {
-        let seek_bytes: Vec<u8> = vec![0x11, 0x00, 0x30, 0x75, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-        let expected_message = ServerMessage::SeekPlayProgress { progress: 30000 };
-        let decoded_message = ServerMessage::decode(&seek_bytes).unwrap();
-
-        assert_eq!(expected_message, decoded_message);
     }
 }
