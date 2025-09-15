@@ -67,6 +67,7 @@ struct ActorState {
     config: AMLLConnectorConfig,
     actor_settings: ActorSettings,
     connection: ConnectionState,
+    session_ready: bool,
     retry_attempts: u32,
     last_track_info: Option<smtc_suite::NowPlayingInfo>,
     last_audio_sent_time: Option<Instant>,
@@ -235,12 +236,13 @@ fn handle_smtc_update(
             return;
         }
 
-        if let ConnectionState::Running { tx, .. } = &state.connection {
+        if let (ConnectionState::Running { tx, .. }, true) =
+            (&state.connection, state.session_ready)
+        {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
-            let bin_body = BinClientMessage::OnAudioData {
+            let msg = OutgoingMessage::LegacyBinary(BinClientMessage::OnAudioData {
                 data: i16_byte_data,
-            };
-            let msg = OutgoingMessage::LegacyBinary(bin_body);
+            });
             handle_websocket_send_error(tx.try_send(msg), "OnAudioData");
             state.last_audio_sent_time = Some(Instant::now());
         }
@@ -256,7 +258,9 @@ fn handle_smtc_update(
                     || cached.duration_ms != new_info.duration_ms
             });
 
-            if let ConnectionState::Running { tx, .. } = &state.connection {
+            if let (ConnectionState::Running { tx, .. }, true) =
+                (&state.connection, state.session_ready)
+            {
                 if is_new_song {
                     debug!("[AMLL Actor] 检测到新歌曲，发送元数据。");
                     send_music_info_to_ws(tx, &new_info);
@@ -427,6 +431,7 @@ pub async fn amll_connector_actor(
         config: initial_config,
         actor_settings: ActorSettings {},
         connection: ConnectionState::Disconnected,
+        session_ready: false,
         retry_attempts: 0,
         last_track_info: None,
         last_audio_sent_time: None,
@@ -456,6 +461,7 @@ pub async fn amll_connector_actor(
             } => {
                 match state_result {
                     StateFutureResult::TaskFinished(result) => {
+                        state.session_ready = false;
                         let command = MediaCommand::SetHighFrequencyProgressUpdates(false);
                         handle_smtc_send_error(smtc_command_tx.send(command).await, "禁用高频更新").await;
 
@@ -535,6 +541,7 @@ pub async fn amll_connector_actor(
                     handle_websocket_send_error(tx.try_send(init_msg), "InitializeV2");
 
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    state.session_ready = true;
 
                     if let Some(track_info) = &state.last_track_info {
                         send_music_info_to_ws(tx, track_info);
@@ -545,6 +552,7 @@ pub async fn amll_connector_actor(
                         send_progress_to_ws(tx, track_info);
                     }
                 } else if matches!(status, WebsocketStatus::Disconnected | WebsocketStatus::Error(_)) {
+                    state.session_ready = false;
                     let command = MediaCommand::SetHighFrequencyProgressUpdates(false);
                     handle_smtc_send_error(smtc_command_tx.send(command).await, "禁用高频更新").await;
                 }
