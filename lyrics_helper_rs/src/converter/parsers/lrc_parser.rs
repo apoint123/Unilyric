@@ -9,8 +9,8 @@ use crate::converter::utils::{normalize_text_whitespace, parse_and_store_metadat
 
 use lyrics_helper_core::{
     AnnotatedTrack, ContentType, ConvertError, LrcLineRole, LrcParsingOptions,
-    LrcSameTimestampStrategy, LyricFormat, LyricLine, LyricLineBuilder, LyricSyllableBuilder,
-    LyricTrack, ParsedSourceData, Word,
+    LrcSameTimestampStrategy, LyricFormat, LyricLine, LyricLineBuilder, LyricSyllable, LyricTrack,
+    ParsedSourceData, Word,
 };
 
 /// 用于匹配一个完整的 LRC 歌词行，捕获时间戳部分和文本部分
@@ -23,6 +23,18 @@ static LRC_TIMESTAMP_EXTRACT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[(\d{2,}):(\d{2})[.:](\d{2,3})]").expect("未能编译 LRC_TIMESTAMP_EXTRACT_REGEX")
 });
 
+struct TempLrcEntry {
+    timestamp_ms: u64,
+    text: String,
+}
+
+#[derive(Default)]
+struct InitialParseResult {
+    entries: Vec<TempLrcEntry>,
+    metadata: HashMap<String, Vec<String>>,
+    warnings: Vec<String>,
+}
+
 const DEFAULT_LAST_LINE_DURATION_MS: u64 = 10000;
 
 /// 解析 LRC 格式内容到 `ParsedSourceData` 结构。
@@ -30,20 +42,32 @@ pub fn parse_lrc(
     content: &str,
     options: &LrcParsingOptions,
 ) -> Result<ParsedSourceData, ConvertError> {
-    struct TempLrcEntry {
-        timestamp_ms: u64,
-        text: String,
-    }
+    let mut initial_result = parse_lines_to_temp_entries(content)?;
 
-    let mut raw_metadata: HashMap<String, Vec<String>> = HashMap::new();
-    let mut warnings: Vec<String> = Vec::new();
+    initial_result.entries.sort_by_key(|e| e.timestamp_ms);
 
-    let mut temp_entries: Vec<TempLrcEntry> = Vec::new();
+    let (final_lyric_lines, processing_warnings) =
+        process_timestamp_groups(&initial_result.entries, options);
+
+    initial_result.warnings.extend(processing_warnings);
+
+    Ok(ParsedSourceData {
+        lines: final_lyric_lines,
+        raw_metadata: initial_result.metadata,
+        source_format: LyricFormat::Lrc,
+        is_line_timed_source: true,
+        warnings: initial_result.warnings,
+        ..Default::default()
+    })
+}
+
+fn parse_lines_to_temp_entries(content: &str) -> Result<InitialParseResult, ConvertError> {
+    let mut result = InitialParseResult::default();
 
     for (line_num, line_str) in content.lines().enumerate() {
         let line_str_trimmed = line_str.trim();
         if line_str_trimmed.is_empty()
-            || parse_and_store_metadata(line_str_trimmed, &mut raw_metadata)
+            || parse_and_store_metadata(line_str_trimmed, &mut result.metadata)
         {
             continue;
         }
@@ -66,23 +90,32 @@ pub fn parse_lrc(
                 };
                 if let Ok(ms) = milliseconds {
                     if seconds < 60 {
-                        temp_entries.push(TempLrcEntry {
+                        result.entries.push(TempLrcEntry {
                             timestamp_ms: (minutes * 60 + seconds) * 1000 + ms,
                             text: text_part.clone(),
                         });
                     } else {
-                        warnings.push(format!("LRC秒数无效 (行 {}): '{}'", line_num + 1, seconds));
+                        result.warnings.push(format!(
+                            "LRC秒数无效 (行 {}): '{}'",
+                            line_num + 1,
+                            seconds
+                        ));
                     }
                 }
             }
         }
     }
+    Ok(result)
+}
 
-    temp_entries.sort_by_key(|e| e.timestamp_ms);
-
+fn process_timestamp_groups(
+    temp_entries: &[TempLrcEntry],
+    options: &LrcParsingOptions,
+) -> (Vec<LyricLine>, Vec<String>) {
+    let mut final_lyric_lines: Vec<LyricLine> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
     let primary_language_cache: OnceCell<heuristic_analyzer::PrimaryLanguage> = OnceCell::new();
 
-    let mut final_lyric_lines: Vec<LyricLine> = Vec::new();
     let mut i = 0;
     while i < temp_entries.len() {
         let start_ms = temp_entries[i].timestamp_ms;
@@ -111,126 +144,14 @@ pub fn parse_lrc(
             });
 
         // 根据所选策略处理分组
-        let tracks: Vec<AnnotatedTrack> = match &options.same_timestamp_strategy {
-            LrcSameTimestampStrategy::Heuristic => {
-                let lang = *primary_language_cache.get_or_init(|| {
-                    let all_text: Vec<&str> =
-                        temp_entries.iter().map(|e| e.text.as_str()).collect();
-                    heuristic_analyzer::determine_primary_language(&all_text)
-                });
-
-                let line_texts: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
-
-                let assignments = heuristic_analyzer::assign_roles(&line_texts, lang);
-                heuristic_analyzer::build_annotated_track(&assignments, start_ms, end_ms)
-                    .map_or_else(Vec::new, |track| vec![track])
-            }
-            LrcSameTimestampStrategy::FirstIsMain => {
-                let meaningful_lines: Vec<_> = group_lines
-                    .into_iter()
-                    .filter(|e| !e.text.is_empty())
-                    .collect();
-                if meaningful_lines.is_empty() {
-                    vec![]
-                } else {
-                    let main_entry = meaningful_lines[0];
-                    let translations_entries = &meaningful_lines[1..];
-
-                    let main_track =
-                        new_line_timed_track(main_entry.text.clone(), start_ms, end_ms);
-
-                    let translations = translations_entries
-                        .iter()
-                        .map(|entry| new_line_timed_track(entry.text.clone(), start_ms, end_ms))
-                        .collect();
-
-                    vec![AnnotatedTrack {
-                        content_type: ContentType::Main,
-                        content: main_track,
-                        translations,
-                        ..Default::default()
-                    }]
-                }
-            }
-            LrcSameTimestampStrategy::AllAreMain => group_lines
-                .iter()
-                .filter(|e| !e.text.is_empty())
-                .map(|entry| {
-                    let main_track = new_line_timed_track(entry.text.clone(), start_ms, end_ms);
-                    AnnotatedTrack {
-                        content_type: ContentType::Main,
-                        content: main_track,
-                        ..Default::default()
-                    }
-                })
-                .collect(),
-            LrcSameTimestampStrategy::UseRoleOrder(roles) => {
-                if group_lines.len() != roles.len() {
-                    warnings.push(format!(
-                        "{}ms: 歌词行数（{}）与提供的角色数（{}）不匹配。",
-                        start_ms,
-                        group_lines.len(),
-                        roles.len()
-                    ));
-                }
-
-                let mut main_content: Option<LyricTrack> = None;
-                let mut translations: Vec<LyricTrack> = vec![];
-                let mut romanizations: Vec<LyricTrack> = vec![];
-
-                let mut main_role_assigned = false;
-
-                for (entry, role) in group_lines.iter().zip(roles.iter()) {
-                    if entry.text.is_empty() {
-                        continue; // 空行作为占位符, 直接跳过
-                    }
-
-                    let track = new_line_timed_track(entry.text.clone(), start_ms, end_ms);
-
-                    match role {
-                        LrcLineRole::Main => {
-                            if main_role_assigned {
-                                warnings.push(format!(
-                                    "{start_ms}ms：指定了多个主歌词行。随后的主歌词行将被视为翻译行。"
-                                ));
-                                translations.push(track);
-                            } else {
-                                main_content = Some(track);
-                                main_role_assigned = true;
-                            }
-                        }
-                        LrcLineRole::Translation => {
-                            translations.push(track);
-                        }
-                        LrcLineRole::Romanization => {
-                            romanizations.push(track);
-                        }
-                    }
-                }
-
-                if main_content.is_none() && !group_lines.iter().all(|e| e.text.is_empty()) {
-                    warnings.push(format!(
-                        "{start_ms}ms: 未设置主歌词行。默认将第一行作为主歌词行。"
-                    ));
-                    if let Some(first_non_empty) = group_lines.iter().find(|e| !e.text.is_empty()) {
-                        main_content = Some(new_line_timed_track(
-                            first_non_empty.text.clone(),
-                            start_ms,
-                            end_ms,
-                        ));
-                    }
-                }
-
-                main_content.map_or_else(Vec::new, |main_track| {
-                    vec![AnnotatedTrack {
-                        content_type: ContentType::Main,
-                        content: main_track,
-                        translations,
-                        romanizations,
-                    }]
-                })
-            }
-        };
+        let (tracks, mut new_warnings) = handle_strategy_for_group(
+            &group_lines,
+            start_ms,
+            end_ms,
+            options,
+            &primary_language_cache,
+        );
+        warnings.append(&mut new_warnings);
 
         if !tracks.is_empty() {
             let line = LyricLineBuilder::default()
@@ -245,28 +166,185 @@ pub fn parse_lrc(
         i = next_event_index;
     }
 
-    Ok(ParsedSourceData {
-        lines: final_lyric_lines,
-        raw_metadata,
-        source_format: LyricFormat::Lrc,
-        is_line_timed_source: true,
-        warnings,
+    (final_lyric_lines, warnings)
+}
+
+fn handle_heuristic_strategy(
+    group_lines: &[&TempLrcEntry],
+    start_ms: u64,
+    end_ms: u64,
+    primary_language_cache: &OnceCell<heuristic_analyzer::PrimaryLanguage>,
+) -> (Vec<AnnotatedTrack>, Vec<String>) {
+    let warnings = vec![];
+
+    let lang = *primary_language_cache.get_or_init(|| {
+        let all_text: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
+        heuristic_analyzer::determine_primary_language(&all_text)
+    });
+
+    let line_texts: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
+    let assignments = heuristic_analyzer::assign_roles(&line_texts, lang);
+    let tracks = heuristic_analyzer::build_annotated_track(&assignments, start_ms, end_ms)
+        .map_or_else(Vec::new, |track| vec![track]);
+
+    (tracks, warnings)
+}
+
+fn handle_first_is_main_strategy(
+    group_lines: &[&TempLrcEntry],
+    start_ms: u64,
+    end_ms: u64,
+) -> Vec<AnnotatedTrack> {
+    let meaningful_lines: Vec<_> = group_lines
+        .iter()
+        .filter(|e| !e.text.is_empty())
+        .copied()
+        .collect();
+
+    if meaningful_lines.is_empty() {
+        return vec![];
+    }
+
+    let main_entry = meaningful_lines[0];
+    let translations_entries = &meaningful_lines[1..];
+
+    let main_track = new_line_timed_track(main_entry.text.clone(), start_ms, end_ms);
+    let translations = translations_entries
+        .iter()
+        .map(|entry| new_line_timed_track(entry.text.clone(), start_ms, end_ms))
+        .collect();
+
+    vec![AnnotatedTrack {
+        content_type: ContentType::Main,
+        content: main_track,
+        translations,
         ..Default::default()
-    })
+    }]
+}
+
+fn handle_all_are_main_strategy(
+    group_lines: &[&TempLrcEntry],
+    start_ms: u64,
+    end_ms: u64,
+) -> Vec<AnnotatedTrack> {
+    group_lines
+        .iter()
+        .filter(|e| !e.text.is_empty())
+        .map(|entry| {
+            let main_track = new_line_timed_track(entry.text.clone(), start_ms, end_ms);
+            AnnotatedTrack {
+                content_type: ContentType::Main,
+                content: main_track,
+                ..Default::default()
+            }
+        })
+        .collect()
+}
+
+fn handle_use_role_order_strategy(
+    group_lines: &[&TempLrcEntry],
+    roles: &[LrcLineRole],
+    start_ms: u64,
+    end_ms: u64,
+) -> (Vec<AnnotatedTrack>, Vec<String>) {
+    let mut warnings = vec![];
+
+    if group_lines.len() != roles.len() {
+        warnings.push(format!(
+            "{}ms: 歌词行数（{}）与提供的角色数（{}）不匹配。",
+            start_ms,
+            group_lines.len(),
+            roles.len()
+        ));
+    }
+
+    let mut main_content: Option<LyricTrack> = None;
+    let mut translations: Vec<LyricTrack> = vec![];
+    let mut romanizations: Vec<LyricTrack> = vec![];
+    let mut main_role_assigned = false;
+
+    for (entry, role) in group_lines.iter().zip(roles.iter()) {
+        if entry.text.is_empty() {
+            continue; // 空行作为占位符, 直接跳过
+        }
+
+        let track = new_line_timed_track(entry.text.clone(), start_ms, end_ms);
+        match role {
+            LrcLineRole::Main => {
+                if main_role_assigned {
+                    warnings.push(format!(
+                        "{start_ms}ms：指定了多个主歌词行。随后的主歌词行将被视为翻译行。"
+                    ));
+                    translations.push(track);
+                } else {
+                    main_content = Some(track);
+                    main_role_assigned = true;
+                }
+            }
+            LrcLineRole::Translation => translations.push(track),
+            LrcLineRole::Romanization => romanizations.push(track),
+        }
+    }
+
+    if main_content.is_none() && !group_lines.iter().all(|e| e.text.is_empty()) {
+        warnings.push(format!(
+            "{start_ms}ms: 未设置主歌词行。默认将第一行作为主歌词行。"
+        ));
+        if let Some(first_non_empty) = group_lines.iter().find(|e| !e.text.is_empty()) {
+            main_content = Some(new_line_timed_track(
+                first_non_empty.text.clone(),
+                start_ms,
+                end_ms,
+            ));
+        }
+    }
+
+    let tracks = main_content.map_or_else(Vec::new, |main_track| {
+        vec![AnnotatedTrack {
+            content_type: ContentType::Main,
+            content: main_track,
+            translations,
+            romanizations,
+        }]
+    });
+
+    (tracks, warnings)
+}
+
+fn handle_strategy_for_group(
+    group_lines: &[&TempLrcEntry],
+    start_ms: u64,
+    end_ms: u64,
+    options: &LrcParsingOptions,
+    primary_language_cache: &OnceCell<heuristic_analyzer::PrimaryLanguage>,
+) -> (Vec<AnnotatedTrack>, Vec<String>) {
+    match &options.same_timestamp_strategy {
+        LrcSameTimestampStrategy::Heuristic => {
+            handle_heuristic_strategy(group_lines, start_ms, end_ms, primary_language_cache)
+        }
+        LrcSameTimestampStrategy::FirstIsMain => (
+            handle_first_is_main_strategy(group_lines, start_ms, end_ms),
+            vec![],
+        ),
+        LrcSameTimestampStrategy::AllAreMain => (
+            handle_all_are_main_strategy(group_lines, start_ms, end_ms),
+            vec![],
+        ),
+        LrcSameTimestampStrategy::UseRoleOrder(roles) => {
+            handle_use_role_order_strategy(group_lines, roles, start_ms, end_ms)
+        }
+    }
 }
 
 fn new_line_timed_track(text: String, start_ms: u64, end_ms: u64) -> LyricTrack {
     LyricTrack {
         words: vec![Word {
-            syllables: vec![
-                LyricSyllableBuilder::default()
-                    .text(text)
-                    .start_ms(start_ms)
-                    .end_ms(end_ms)
-                    .build()
-                    .unwrap(),
-            ],
-
+            syllables: vec![LyricSyllable {
+                text,
+                start_ms,
+                end_ms,
+                ..Default::default()
+            }],
             ..Default::default()
         }],
         ..Default::default()
@@ -557,21 +635,11 @@ mod tests {
     use super::*;
 
     fn get_track_text(track: &LyricTrack) -> String {
-        track
-            .words
-            .iter()
-            .flat_map(|w| &w.syllables)
-            .map(|s| s.text.as_str())
-            .collect::<Vec<_>>()
-            .join("")
+        track.text()
     }
 
     fn get_optional_track_text(tracks: &[LyricTrack]) -> Option<String> {
-        if tracks.is_empty() {
-            None
-        } else {
-            Some(get_track_text(&tracks[0]))
-        }
+        tracks.first().map(LyricTrack::text)
     }
 
     #[test]
