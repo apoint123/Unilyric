@@ -384,6 +384,7 @@ impl UniLyricApp {
         self.lyrics.metadata_source_is_download = true;
         self.lyrics.input_text = result.raw.content;
         self.lyrics.source_format = result.parsed.source_format;
+        self.lyrics.current_warnings = result.parsed.warnings.clone();
         self.lyrics
             .metadata_manager
             .load_from_parsed_data(&result.parsed);
@@ -421,6 +422,7 @@ impl UniLyricApp {
                     Ok(full_result) => {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
+                        self.lyrics.current_warnings = full_result.source_data.warnings.clone();
 
                         self.lyrics
                             .metadata_manager
@@ -570,6 +572,8 @@ impl UniLyricApp {
             }
             LyricsAction::LoadFetchedResult(result) => self.handle_load_full_lyrics_result(result),
             LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata_box) => {
+                self.lyrics.current_warnings =
+                    lyrics_and_metadata_box.lyrics.parsed.warnings.clone();
                 self.handle_load_full_lyrics_result(lyrics_and_metadata_box.lyrics)
             }
             LyricsAction::ApplyProcessor(processor) => {
@@ -761,6 +765,7 @@ impl UniLyricApp {
             .ui_entries
             .retain(|entry| entry.is_pinned);
         self.lyrics.metadata_manager.store.clear();
+        self.lyrics.current_warnings.clear();
     }
 
     fn handle_file_action(&mut self, action: FileAction) -> ActionResult {
@@ -798,6 +803,7 @@ impl UniLyricApp {
                     PanelType::Settings => &mut self.ui.show_settings_window,
                     PanelType::Metadata => &mut self.ui.show_metadata_panel,
                     PanelType::AmllConnector => &mut self.ui.show_amll_connector_sidebar,
+                    PanelType::Warnings => &mut self.ui.show_warnings_panel,
                 };
 
                 // 用事件携带的值来更新核心状态
@@ -824,6 +830,7 @@ impl UniLyricApp {
                     }
                     PanelType::Metadata => self.ui.show_metadata_panel = true,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = true,
+                    PanelType::Warnings => self.ui.show_warnings_panel = true,
                 }
                 ActionResult::Success
             }
@@ -838,6 +845,7 @@ impl UniLyricApp {
                     PanelType::Settings => self.ui.show_settings_window = false,
                     PanelType::Metadata => self.ui.show_metadata_panel = false,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = false,
+                    PanelType::Warnings => self.ui.show_warnings_panel = false,
                 }
                 ActionResult::Success
             }

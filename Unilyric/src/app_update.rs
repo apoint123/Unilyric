@@ -395,22 +395,6 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             AutoFetchResult::NotFound => {
                 info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
-                if !app.fetcher.current_ui_populated
-                    && app.amll_connector.config.lock().unwrap().enabled
-                    && let Some(tx) = &app.amll_connector.command_tx
-                {
-                    let empty_ttml_message = ClientMessage::SetLyricFromTTML {
-                        data: NullString("".to_string()),
-                    };
-                    if tx
-                        .try_send(crate::amll_connector::ConnectorCommand::SendClientMessage(
-                            empty_ttml_message,
-                        ))
-                        .is_err()
-                    {
-                        error!("[UniLyricApp] (未找到歌词) 发送空TTML失败。");
-                    }
-                }
             }
             AutoFetchResult::FetchError(err) => {
                 let is_cancelled = if let AppError::LyricsHelper(inner_err) = &err {
@@ -439,6 +423,10 @@ pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
 
     match app.ui.current_view {
         AppView::Editor => {
+            app.draw_warnings_panel(ctx);
+
+            app.draw_status_bar(ctx);
+
             draw_editor_view(app, ctx);
         }
         AppView::Downloader => {

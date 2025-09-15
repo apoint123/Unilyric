@@ -83,6 +83,7 @@ pub(super) struct UiState {
     pub(super) show_settings_window: bool,
     pub(super) show_amll_connector_sidebar: bool,
     pub(super) show_metadata_panel: bool,
+    pub(super) show_warnings_panel: bool,
     pub(super) log_display_buffer: Vec<LogEntry>,
     pub(super) temp_edit_settings: AppSettings,
     pub(super) toasts: Toasts,
@@ -108,6 +109,7 @@ impl UiState {
             wrap_text: true,
             show_settings_window: false,
             show_metadata_panel: false,
+            show_warnings_panel: false,
             log_display_buffer: Vec::with_capacity(200),
             available_system_fonts: Vec::new(),
             current_settings_category: SettingsCategory::default(),
@@ -133,6 +135,7 @@ pub(super) struct LyricState {
     pub(super) last_saved_file_path: Option<std::path::PathBuf>,
     pub(super) conversion_in_progress: bool,
     pub(super) conversion_result_rx: Option<ConversionResultRx>,
+    pub(super) current_warnings: Vec<String>,
 }
 
 pub(super) struct LyricsHelperState {
@@ -196,6 +199,7 @@ impl LyricState {
             last_saved_file_path: None,
             conversion_in_progress: false,
             conversion_result_rx: None,
+            current_warnings: Vec::new(),
         }
     }
 }

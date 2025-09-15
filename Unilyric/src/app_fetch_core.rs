@@ -16,16 +16,6 @@ use tracing::{error, info, warn};
 
 const COVER_SIMILARITY_THRESHOLD: u32 = 10;
 
-struct SearchContext {
-    helper: Arc<tokio::sync::Mutex<lyrics_helper_rs::LyricsHelper>>,
-    result_tx: std::sync::mpsc::Sender<AutoFetchResult>,
-    app_settings: crate::app_settings::AppSettings,
-    target_format: LyricFormat,
-    original_track_info: NowPlayingInfo,
-    cover_cache_dir: Option<PathBuf>,
-    cancellation_token: CancellationToken,
-}
-
 fn is_track_match(
     now_playing: &NowPlayingInfo,
     cache_entry: &crate::types::LocalLyricCacheEntry,
@@ -66,130 +56,6 @@ fn is_track_match(
     }
 
     false
-}
-
-async fn execute_search_and_process(
-    track_to_search: Track<'_>,
-    search_mode: &SearchMode,
-    context: &SearchContext,
-    log_prefix: &str,
-) -> Result<Option<LyricsAndMetadata>, lyrics_helper_rs::LyricsHelperError> {
-    let search_result = {
-        let future_res = {
-            let helper_guard = context.helper.lock().await;
-            helper_guard.search_lyrics_comprehensive(
-                &track_to_search,
-                search_mode,
-                Some(context.cancellation_token.clone()),
-            )
-        };
-        match future_res {
-            Ok(future) => future.await,
-            Err(e) => Err(e),
-        }
-    };
-
-    match search_result {
-        Ok(Some(comprehensive_result)) => {
-            info!("[{}] 成功找到歌词，正在进行转换...", log_prefix);
-
-            let mut lyrics_and_metadata = comprehensive_result.primary_lyric_result;
-            let source: AutoSearchSource = lyrics_and_metadata
-                .source_track
-                .provider_name
-                .clone()
-                .into();
-
-            if context.app_settings.auto_apply_metadata_stripper {
-                lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
-                    &mut lyrics_and_metadata.lyrics.parsed.lines,
-                    &context.app_settings.metadata_stripper,
-                );
-            }
-            if context.app_settings.auto_apply_agent_recognizer {
-                lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
-                    &mut lyrics_and_metadata.lyrics.parsed,
-                );
-            }
-
-            let output_text = match lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
-                std::hash::RandomState,
-            >(
-                lyrics_and_metadata.lyrics.parsed.clone(),
-                context.target_format,
-                Default::default(),
-                None,
-            )
-            .await
-            {
-                Ok(res) => res.output_lyrics,
-                Err(e) => {
-                    error!("[{}] 搜索结果转换失败: {}", log_prefix, e);
-                    String::new()
-                }
-            };
-
-            if context.app_settings.auto_cache
-                && lyrics_and_metadata.source_track.match_type == MatchType::Perfect
-            {
-                info!("[AutoCache] 歌词匹配度为 Perfect，请求缓存到本地。");
-                if context
-                    .result_tx
-                    .send(AutoFetchResult::RequestCache)
-                    .is_err()
-                {
-                    error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
-                }
-            }
-
-            let smtc_artists_joined = context
-                .original_track_info
-                .artist
-                .clone()
-                .unwrap_or_default();
-            let smtc_title = context
-                .original_track_info
-                .title
-                .clone()
-                .unwrap_or_default();
-
-            let lyrics_ready_result = AutoFetchResult::LyricsReady {
-                source,
-                lyrics_and_metadata: Box::new(lyrics_and_metadata.clone()),
-                output_text,
-                title: smtc_title.clone(),
-                artist: smtc_artists_joined.clone(),
-            };
-            if context.result_tx.send(lyrics_ready_result).is_err() {
-                error!("[{}] 发送 LyricsReady 结果到主线程失败。", log_prefix);
-                return Ok(Some(lyrics_and_metadata));
-            }
-
-            let smtc_cover_hash = context.original_track_info.cover_data_hash.unwrap_or(0);
-            let final_cover_data = fetch_and_validate_cover(
-                context.helper.clone(),
-                &comprehensive_result.all_search_candidates,
-                context.original_track_info.cover_data.clone(),
-                smtc_cover_hash,
-                context.cover_cache_dir.clone(),
-                log_prefix,
-            )
-            .await;
-
-            let cover_result = AutoFetchResult::CoverUpdate {
-                title: smtc_title,
-                artist: smtc_artists_joined,
-                cover_data: final_cover_data,
-            };
-            if context.result_tx.send(cover_result).is_err() {
-                error!("[{}] 发送封面更新结果到主线程失败。", log_prefix);
-            }
-
-            Ok(Some(lyrics_and_metadata))
-        }
-        Ok(None) => Ok(None),
-        Err(e) => Err(e),
-    }
 }
 
 pub(super) fn initial_auto_fetch_and_send_lyrics(
@@ -302,8 +168,16 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
         })
         .unwrap_or_default();
 
+    let smtc_album = track_info.album_title.clone();
+    let smtc_duration = track_info.duration_ms;
+    let smtc_cover_data = track_info.cover_data.clone();
+
     let runtime = app.tokio_runtime.clone();
+    let helper = Arc::clone(&app.lyrics_helper_state.helper);
+    let app_settings = app.app_settings.lock().unwrap().clone();
     let result_tx = app.fetcher.result_tx.clone();
+    let target_format = app.lyrics.target_format;
+    let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
 
     let cancellation_token = CancellationToken::new();
     app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
@@ -314,16 +188,6 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     *app.fetcher.netease_status.lock().unwrap() = AutoSearchStatus::Searching;
     *app.fetcher.amll_db_status.lock().unwrap() = AutoSearchStatus::Searching;
 
-    let context = SearchContext {
-        helper: Arc::clone(&app.lyrics_helper_state.helper),
-        result_tx: app.fetcher.result_tx.clone(),
-        app_settings: app.app_settings.lock().unwrap().clone(),
-        target_format: app.lyrics.target_format,
-        original_track_info: track_info,
-        cover_cache_dir: app.local_cache.cover_cache_dir.clone(),
-        cancellation_token,
-    };
-
     runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
         let track_to_search = Track {
@@ -333,20 +197,48 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             } else {
                 Some(&artists_slices)
             },
-            album: context.original_track_info.album_title.as_deref(),
-            duration: context.original_track_info.duration_ms,
+            album: smtc_album.as_deref(),
+            duration: smtc_duration,
         };
 
-        let search_mode = {
+        let mut final_lyrics: Option<LyricsAndMetadata> = None;
+        let mut final_candidates: Vec<SearchResult> = Vec::new();
+
+        if app_settings.prioritize_amll_db {
+            let amll_mode = SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
+            let amll_search_result = {
+                let future_res = {
+                    let helper_guard = helper.lock().await;
+                    helper_guard.search_lyrics_comprehensive(
+                        &track_to_search,
+                        &amll_mode,
+                        Some(cancellation_token.clone()),
+                    )
+                };
+                match future_res {
+                    Ok(future) => future.await,
+                    Err(e) => Err(e),
+                }
+            };
+
+            if let Ok(Some(comprehensive_result)) = amll_search_result
+                && comprehensive_result
+                    .primary_lyric_result
+                    .source_track
+                    .match_type
+                    >= MatchType::PrettyHigh
+                {
+                    final_lyrics = Some(comprehensive_result.primary_lyric_result);
+                    final_candidates = comprehensive_result.all_search_candidates;
+                }
+        }
+
+        let regular_search_mode = {
             let mut providers = lyrics_helper_rs::ProviderName::all();
+            providers.retain(|p| *p != lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
 
-            if context.app_settings.prioritize_amll_db {
-                providers.retain(|p| *p != lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
-            }
-
-            if context.app_settings.use_provider_subset {
-                let user_subset: Vec<_> = context
-                    .app_settings
+            if app_settings.use_provider_subset {
+                let user_subset: Vec<_> = app_settings
                     .auto_search_provider_subset
                     .iter()
                     .filter_map(|s| s.parse().ok())
@@ -354,37 +246,136 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 providers.retain(|p| user_subset.contains(p));
             }
 
-            if context.app_settings.always_search_all_sources {
+            if app_settings.always_search_all_sources {
                 SearchMode::Subset(providers)
             } else {
                 SearchMode::Ordered
             }
         };
 
-        let result =
-            execute_search_and_process(track_to_search, &search_mode, &context, "AutoFetch").await;
+        let regular_search_result = {
+            let future_res = {
+                let helper_guard = helper.lock().await;
+                helper_guard.search_lyrics_comprehensive(
+                    &track_to_search,
+                    &regular_search_mode,
+                    Some(cancellation_token.clone()),
+                )
+            };
+            match future_res {
+                Ok(future) => future.await,
+                Err(e) => Err(e),
+            }
+        };
 
-        match result {
-            Ok(None) => {
-                info!("[AutoFetch] 所有源均未找到歌词。");
-                if result_tx.send(AutoFetchResult::NotFound).is_err() {
-                    error!("[AutoFetch Task] 发送 NotFound 结果到主线程失败。");
+        match regular_search_result {
+            Ok(Some(comprehensive_result)) => {
+                final_candidates = comprehensive_result.all_search_candidates;
+                if final_lyrics.is_none() {
+                    final_lyrics = Some(comprehensive_result.primary_lyric_result);
                 }
             }
+            Ok(None) => {}
             Err(e) => {
-                if let lyrics_helper_rs::LyricsHelperError::Cancelled = e {
-                    info!("[AutoFetch] 自动搜索任务被取消。");
+                let lyrics_helper_rs::LyricsHelperError::Cancelled = e else {
+                    return;
+                };
+
+                error!("[AutoFetch] 常规搜索时发生错误: {}", e);
+                if final_lyrics.is_none() {
+                    if result_tx.send(AutoFetchResult::FetchError(e.into())).is_err() {
+                        error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
+                    }
                     return;
                 }
-                error!("[AutoFetch] 搜索时发生错误: {}", e);
-                if result_tx
-                    .send(AutoFetchResult::FetchError(e.into()))
-                    .is_err()
-                {
-                    error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
+            }
+        }
+
+        if let Some(mut lyrics_and_metadata) = final_lyrics {
+            let source: AutoSearchSource =
+                lyrics_and_metadata.source_track.provider_name.clone().into();
+
+
+            if app_settings.auto_apply_metadata_stripper {
+                lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                    &mut lyrics_and_metadata.lyrics.parsed.lines,
+                    &app_settings.metadata_stripper,
+                );
+            }
+            if app_settings.auto_apply_agent_recognizer {
+                lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                    &mut lyrics_and_metadata.lyrics.parsed,
+                );
+            }
+
+            let output_text_result =
+                lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
+                    std::hash::RandomState,
+                >(
+                    lyrics_and_metadata.lyrics.parsed.clone(),
+                    target_format,
+                    Default::default(),
+                    None,
+                )
+                .await;
+
+            let output_text = match output_text_result {
+                Ok(res) => res.output_lyrics,
+                Err(e) => {
+                    error!("[AutoFetch] 搜索结果转换失败: {}", e);
+                    String::new()
+                }
+            };
+
+            if app_settings.auto_cache
+                && lyrics_and_metadata.source_track.match_type
+                    == lyrics_helper_core::MatchType::Perfect
+            {
+                info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
+                if result_tx.send(AutoFetchResult::RequestCache).is_err() {
+                    error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
                 }
             }
-            Ok(Some(_)) => {}
+
+            let lyrics_result = AutoFetchResult::LyricsReady {
+                source,
+                lyrics_and_metadata: Box::new(lyrics_and_metadata),
+                output_text,
+                title: smtc_title.clone(),
+                artist: smtc_artists.join("/"),
+            };
+
+            if result_tx.send(lyrics_result).is_err() {
+                error!("[AutoFetch Task] 发送 LyricsReady 结果到主线程失败。");
+                return;
+            }
+
+            let smtc_cover_hash = track_info.cover_data_hash.unwrap_or(0);
+
+            let final_cover_data = fetch_and_validate_cover(
+                helper.clone(),
+                &final_candidates,
+                smtc_cover_data,
+                smtc_cover_hash,
+                cover_cache_dir,
+                "混合搜索",
+            )
+            .await;
+
+            let cover_result = AutoFetchResult::CoverUpdate {
+                title: smtc_title.clone(),
+                artist: smtc_artists.join("/"),
+                cover_data: final_cover_data,
+            };
+
+            if result_tx.send(cover_result).is_err() {
+                error!("[AutoFetch Task] 发送封面更新结果到主线程失败。");
+            }
+        } else {
+            info!("[AutoFetch] 所有在线源均未找到歌词。");
+            if result_tx.send(AutoFetchResult::NotFound).is_err() {
+                error!("[AutoFetch Task] 发送 NotFound 结果到主线程失败。");
+            }
         }
     });
 }
@@ -402,12 +393,23 @@ pub(super) fn trigger_manual_refetch_for_source(
         }
     };
 
-    let smtc_title = track_info.title.as_deref().unwrap_or_default().to_string();
+    let helper = Arc::clone(&app.lyrics_helper_state.helper);
+
+    let smtc_title = if let Some(t) = track_info.title {
+        t
+    } else {
+        return;
+    };
     let smtc_artists: Vec<String> = track_info
         .artist
-        .as_deref()
         .map(|s| s.split('/').map(|n| n.trim().to_string()).collect())
         .unwrap_or_default();
+
+    let target_format = app.lyrics.target_format;
+    let app_settings = app.app_settings.lock().unwrap().clone();
+    let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
+
+    let runtime = app.tokio_runtime.clone();
 
     let status_arc_to_update = match source_to_refetch {
         AutoSearchSource::QqMusic => Arc::clone(&app.fetcher.qqmusic_status),
@@ -418,20 +420,9 @@ pub(super) fn trigger_manual_refetch_for_source(
     };
     *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Searching;
 
+    let result_tx = app.fetcher.result_tx.clone();
     let cancellation_token = CancellationToken::new();
     app.fetcher.current_fetch_cancellation_token = Some(cancellation_token.clone());
-
-    let context = SearchContext {
-        helper: Arc::clone(&app.lyrics_helper_state.helper),
-        result_tx: app.fetcher.result_tx.clone(),
-        app_settings: app.app_settings.lock().unwrap().clone(),
-        target_format: app.lyrics.target_format,
-        original_track_info: track_info,
-        cover_cache_dir: app.local_cache.cover_cache_dir.clone(),
-        cancellation_token,
-    };
-
-    let runtime = app.tokio_runtime.clone();
 
     runtime.spawn(async move {
         let artists_slices: Vec<&str> = smtc_artists.iter().map(|s| s.as_str()).collect();
@@ -442,8 +433,8 @@ pub(super) fn trigger_manual_refetch_for_source(
             } else {
                 Some(&artists_slices)
             },
-            album: context.original_track_info.album_title.as_deref(),
-            duration: context.original_track_info.duration_ms,
+            album: track_info.album_title.as_deref(),
+            duration: track_info.duration_ms,
         };
 
         let provider_enum = match source_to_refetch {
@@ -457,16 +448,108 @@ pub(super) fn trigger_manual_refetch_for_source(
                 return;
             }
         };
+        let smtc_cover_data = track_info.cover_data.clone();
+
         let search_mode = SearchMode::Specific(provider_enum);
 
-        let result =
-            execute_search_and_process(track_to_search, &search_mode, &context, "ManualRefetch")
+        let search_result = {
+            let search_future_result = {
+                let helper_guard = helper.lock().await;
+                helper_guard.search_lyrics_comprehensive(
+                    &track_to_search,
+                    &search_mode,
+                    Some(cancellation_token),
+                )
+            };
+            match search_future_result {
+                Ok(future) => future.await,
+                Err(e) => Err(e),
+            }
+        };
+
+        match search_result {
+            Ok(Some(comprehensive_result)) => {
+                info!(
+                    "[ManualRefetch] 在 {:?} 中成功找到歌词，正在进行转换...",
+                    source_to_refetch
+                );
+
+                let mut lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
+
+                if app_settings.auto_apply_metadata_stripper {
+                    lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                        &mut lyrics_and_metadata.lyrics.parsed.lines,
+                        &app_settings.metadata_stripper,
+                    );
+                }
+                if app_settings.auto_apply_agent_recognizer {
+                    lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                        &mut lyrics_and_metadata.lyrics.parsed,
+                    );
+                }
+
+                let output_text_result =
+                    lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
+                        std::hash::RandomState,
+                    >(
+                        lyrics_and_metadata.lyrics.parsed.clone(),
+                        target_format,
+                        Default::default(),
+                        None,
+                    )
+                    .await;
+
+                let output_text = match output_text_result {
+                    Ok(conversion_result) => conversion_result.output_lyrics,
+                    Err(e) => {
+                        error!("[ManualRefetch] 转换失败: {}", e);
+                        String::new()
+                    }
+                };
+
+                if app_settings.auto_cache
+                    && comprehensive_result.primary_lyric_result.source_track.match_type == lyrics_helper_core::MatchType::Perfect
+                {
+                    info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
+                    if result_tx.send(AutoFetchResult::RequestCache).is_err() {
+                        error!("[AutoCache] 发送 RequestCache 请求到主线程失败。");
+                    }
+                }
+
+                let lyrics_ready_result = AutoFetchResult::LyricsReady {
+                    source: source_to_refetch,
+                    lyrics_and_metadata: Box::new(lyrics_and_metadata),
+                    output_text,
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
+                };
+
+                if result_tx.send(lyrics_ready_result).is_err() {
+                    error!("[ManualRefetch Task] 发送 LyricsReady 结果到主线程失败。");
+                    return;
+                }
+
+                let smtc_cover_hash = track_info.cover_data_hash.unwrap_or(0);
+
+                let final_cover_data = fetch_and_validate_cover(
+                    helper.clone(),
+                    &comprehensive_result.all_search_candidates,
+                    smtc_cover_data,
+                    smtc_cover_hash,
+                    cover_cache_dir,
+                    "手动重搜",
+                )
                 .await;
 
-        match result {
-            Ok(Some(lyrics_and_metadata)) => {
-                let source_format = lyrics_and_metadata.lyrics.parsed.source_format;
-                *status_arc_to_update.lock().unwrap() = AutoSearchStatus::Success(source_format);
+                let cover_result = AutoFetchResult::CoverUpdate {
+                    title: smtc_title.clone(),
+                    artist: smtc_artists.join("/"),
+                    cover_data: final_cover_data,
+                };
+
+                if result_tx.send(cover_result).is_err() {
+                    error!("[ManualRefetch Task] 发送封面更新结果到主线程失败。");
+                }
             }
             Ok(None) => {
                 *status_arc_to_update.lock().unwrap() = AutoSearchStatus::NotFound;

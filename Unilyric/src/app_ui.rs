@@ -9,7 +9,7 @@ use crate::app_settings::AppAmllMirror;
 use crate::types::{AutoSearchSource, AutoSearchStatus};
 
 use crate::app_actions::{
-    AmllConnectorAction, DownloaderAction, LyricsAction, PlayerAction, ProcessorType,
+    AmllConnectorAction, DownloaderAction, LyricsAction, PanelType, PlayerAction, ProcessorType,
     SettingsAction, UIAction, UserAction,
 };
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
@@ -2256,5 +2256,67 @@ impl UniLyricApp {
                 });
             });
         });
+    }
+
+    pub fn draw_status_bar(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("app_status_bar").show(ctx, |ui| {
+            ui.horizontal_centered(|h_ui| {
+                h_ui.with_layout(
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |right_ui| {
+                        let warnings_count = self.lyrics.current_warnings.len();
+                        if warnings_count > 0 {
+                            let button_text = format!("⚠️ {}", warnings_count);
+                            let button = right_ui.button(button_text);
+                            if button.clicked() {
+                                self.send_action(UserAction::UI(UIAction::ShowPanel(
+                                    PanelType::Warnings,
+                                )));
+                            }
+                        }
+                    },
+                );
+            });
+        });
+    }
+
+    pub fn draw_warnings_panel(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("warnings_panel_id")
+            .resizable(true)
+            .default_height(150.0)
+            .min_height(60.0)
+            .show_animated(ctx, self.ui.show_warnings_panel, |ui| {
+                ui.vertical_centered_justified(|ui_header| {
+                    ui_header.horizontal(|h_ui| {
+                        h_ui.label(egui::RichText::new("解析警告").strong());
+                        h_ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |btn_ui| {
+                                if btn_ui.button("关闭").clicked() {
+                                    self.send_action(UserAction::UI(UIAction::HidePanel(
+                                        PanelType::Warnings,
+                                    )));
+                                }
+                            },
+                        );
+                    });
+                });
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |scroll_ui| {
+                        if self.lyrics.current_warnings.is_empty() {
+                            scroll_ui.label(egui::RichText::new("暂无警告。").weak().italics());
+                        } else {
+                            for warning in &self.lyrics.current_warnings {
+                                scroll_ui.horizontal_wrapped(|line_ui| {
+                                    line_ui.label("⚠️");
+                                    line_ui.label(warning);
+                                });
+                            }
+                        }
+                    });
+            });
     }
 }

@@ -91,6 +91,7 @@ pub enum PanelType {
     Translation,
     Romanization,
     AmllConnector,
+    Warnings,
 }
 
 #[derive(Clone)]
