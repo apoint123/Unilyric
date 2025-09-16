@@ -26,6 +26,75 @@ pub fn generate_lqe(
         writer.push('\n');
     }
 
+    write_main_lyric_block(&mut writer, lines, metadata_store, options)?;
+
+    write_auxiliary_block(
+        &mut writer,
+        lines,
+        metadata_store,
+        options,
+        &AuxiliaryTrackType::Translation,
+    )?;
+
+    write_auxiliary_block(
+        &mut writer,
+        lines,
+        metadata_store,
+        options,
+        &AuxiliaryTrackType::Romanization,
+    )?;
+
+    Ok(writer.trim().to_string())
+}
+
+enum AuxiliaryTrackType {
+    Translation,
+    Romanization,
+}
+
+fn extract_and_promote_lines(
+    lines: &[LyricLine],
+    track_type: &AuxiliaryTrackType,
+) -> Vec<LyricLine> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let auxiliary_tracks: Vec<_> = line
+                .tracks
+                .iter()
+                .flat_map(|at| match track_type {
+                    AuxiliaryTrackType::Translation => at.translations.iter().cloned(),
+                    AuxiliaryTrackType::Romanization => at.romanizations.iter().cloned(),
+                })
+                .collect();
+
+            if auxiliary_tracks.is_empty() {
+                None
+            } else {
+                let annotated_tracks = auxiliary_tracks
+                    .into_iter()
+                    .map(|track| AnnotatedTrack {
+                        content_type: ContentType::Main,
+                        content: track,
+                        ..Default::default()
+                    })
+                    .collect();
+
+                Some(LyricLine {
+                    tracks: annotated_tracks,
+                    ..line.clone()
+                })
+            }
+        })
+        .collect()
+}
+
+fn write_main_lyric_block(
+    writer: &mut String,
+    lines: &[LyricLine],
+    metadata_store: &MetadataStore,
+    options: &LqeGenerationOptions,
+) -> Result<(), ConvertError> {
     let main_lang =
         metadata_store.get_single_value(&lyrics_helper_core::CanonicalMetadataKey::Language);
     let lang_attr = main_lang.map_or("und", |s| s.as_str());
@@ -41,115 +110,52 @@ pub fn generate_lqe(
     writer.push_str(&main_content);
     writer.push_str("\n\n");
 
-    // 翻译区块
-    let translation_lines: Vec<LyricLine> = lines
-        .iter()
-        .filter_map(|line| {
-            let trans_tracks: Vec<_> = line
-                .tracks
-                .iter()
-                .flat_map(|at| at.translations.iter().cloned())
-                .collect();
+    Ok(())
+}
 
-            if trans_tracks.is_empty() {
-                None
-            } else {
-                let annotated_tracks = trans_tracks
-                    .into_iter()
-                    .map(|track| AnnotatedTrack {
-                        content_type: ContentType::Main,
-                        content: track,
-                        translations: vec![],
-                        romanizations: vec![],
-                    })
-                    .collect();
-                Some(LyricLine {
-                    tracks: annotated_tracks,
-                    ..line.clone()
-                })
-            }
-        })
-        .collect();
-
-    if !translation_lines.is_empty() {
-        let trans_lang = translation_lines
-            .iter()
-            .find_map(|l| {
-                l.tracks
-                    .first()
-                    .and_then(|t| t.content.metadata.get(&TrackMetadataKey::Language))
-            })
-            .map_or("und", |s| s.as_str());
-
-        writeln!(
-            writer,
-            "[translation: format@{}, language@{}]",
-            options.auxiliary_format.to_extension_str(),
-            trans_lang
-        )?;
-
-        let translation_content =
-            generate_sub_format(&translation_lines, metadata_store, options.auxiliary_format)?;
-        writer.push_str(&translation_content);
-        writer.push_str("\n\n");
+fn write_auxiliary_block(
+    writer: &mut String,
+    lines: &[LyricLine],
+    metadata_store: &MetadataStore,
+    options: &LqeGenerationOptions,
+    track_type: &AuxiliaryTrackType,
+) -> Result<(), ConvertError> {
+    let auxiliary_lines = extract_and_promote_lines(lines, track_type);
+    if auxiliary_lines.is_empty() {
+        return Ok(());
     }
 
-    // 罗马音区块
-    let romanization_lines: Vec<LyricLine> = lines
+    let lang = auxiliary_lines
         .iter()
-        .filter_map(|line| {
-            let roma_tracks: Vec<_> = line
-                .tracks
-                .iter()
-                .flat_map(|at| at.romanizations.iter().cloned())
-                .collect();
-
-            if roma_tracks.is_empty() {
-                None
-            } else {
-                let annotated_tracks = roma_tracks
-                    .into_iter()
-                    .map(|track| AnnotatedTrack {
-                        content_type: ContentType::Main,
-                        content: track,
-                        translations: vec![],
-                        romanizations: vec![],
-                    })
-                    .collect();
-                Some(LyricLine {
-                    tracks: annotated_tracks,
-                    ..line.clone()
-                })
-            }
+        .find_map(|l| {
+            l.tracks
+                .first()?
+                .content
+                .metadata
+                .get(&TrackMetadataKey::Language)
         })
-        .collect();
+        .map(String::as_str);
 
-    if !romanization_lines.is_empty() {
-        let roma_lang = romanization_lines
-            .iter()
-            .find_map(|l| {
-                l.tracks
-                    .first()
-                    .and_then(|t| t.content.metadata.get(&TrackMetadataKey::Language))
-            })
-            .map_or("romaji", |s| s.as_str());
+    let (block_name, default_lang) = match track_type {
+        AuxiliaryTrackType::Translation => ("translation", "und"),
+        AuxiliaryTrackType::Romanization => ("pronunciation", "romaji"),
+    };
 
-        writeln!(
-            writer,
-            "[pronunciation: format@{}, language@{}]",
-            options.auxiliary_format.to_extension_str(),
-            roma_lang
-        )?;
+    let final_lang = lang.unwrap_or(default_lang);
 
-        let romanization_content = generate_sub_format(
-            &romanization_lines,
-            metadata_store,
-            options.auxiliary_format,
-        )?;
-        writer.push_str(&romanization_content);
-    }
+    writeln!(
+        writer,
+        "[{}: format@{}, language@{}]",
+        block_name,
+        options.auxiliary_format.to_extension_str(),
+        final_lang
+    )?;
 
-    Ok(writer.trim().to_string())
+    let content = generate_sub_format(&auxiliary_lines, metadata_store, options.auxiliary_format)?;
+    writer.push_str(&content);
+    writer.push_str("\n\n");
+
+    Ok(())
 }
 
 fn generate_sub_format(
