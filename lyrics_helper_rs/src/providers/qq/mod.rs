@@ -4,14 +4,19 @@
 
 use std::{
     collections::HashMap,
+    pin::Pin,
     sync::{Arc, LazyLock, RwLock},
+    task::{Context, Poll},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
 use chrono::{Datelike, Local};
+use futures::Sink;
 use regex::Regex;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use lyrics_helper_core::{
     Artist, ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, Language,
@@ -21,16 +26,17 @@ use quick_xml::{Reader, events::Event};
 use rand::random;
 use serde::Deserialize;
 use serde_json::json;
-use tracing::{error, info, instrument, trace, warn};
+use tracing::{debug, error, info, instrument, trace, warn};
 use url::Url;
 use uuid::Uuid;
 
 use crate::{
-    LoginCredentials, LoginResult, ProviderAuthState, UserProfile,
+    LoginResult, ProviderAuthState, UserProfile,
     config::{load_cached_config, save_cached_config},
     converter,
     error::{LyricsHelperError, Result},
     http::{HttpClient, HttpMethod},
+    model::auth::{LoginAction, LoginError, LoginEvent, LoginFlow, LoginMethod},
     providers::{
         Provider,
         login::LoginProvider,
@@ -94,6 +100,7 @@ static AMP_RE: LazyLock<fancy_regex::Regex> =
 static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").unwrap());
 
 /// QQ 音乐的提供商实现。
+#[derive(Clone)]
 pub struct QQMusic {
     http_client: Arc<dyn HttpClient>,
     qimei: String,
@@ -523,70 +530,54 @@ impl Provider for QQMusic {
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LoginProvider for QQMusic {
-    #[instrument(skip(self, credentials), fields(provider = "qq"))]
-    async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult> {
-        let LoginCredentials::QQMusicByCookie { cookies } = credentials else {
-            return Err(LyricsHelperError::LoginFailed("无效的凭据类型".to_string()));
-        };
+    #[instrument(skip(self, method), fields(provider = "qq"))]
+    fn initiate_login(&self, method: LoginMethod) -> LoginFlow {
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let (actions_tx, mut actions_rx) = mpsc::channel::<LoginAction>(1);
 
-        let cookie_map = Self::parse_cookies(cookies);
-        let musicid_str = cookie_map
-            .get("uin")
-            .or_else(|| cookie_map.get("musicid"))
-            .ok_or_else(|| {
-                LyricsHelperError::LoginFailed("Cookie中缺少 'uin' 或 'musicid'".into())
-            })?;
-        let musickey = cookie_map
-            .get("qqmusic_key")
-            .or_else(|| cookie_map.get("musickey"))
-            .ok_or_else(|| {
-                LyricsHelperError::LoginFailed("Cookie中缺少 'qqmusic_key' 或 'musickey'".into())
-            })?;
+        let http_client = Arc::clone(&self.http_client);
+        let qimei = self.qimei.clone();
 
-        let musicid = musicid_str
-            .trim_start_matches('o')
-            .parse::<u64>()
-            .map_err(|_| LyricsHelperError::LoginFailed("无法将 'uin' 解析为数字".into()))?;
+        tokio::spawn(async move {
+            let provider_clone = Self {
+                http_client,
+                qimei,
+                auth_state: Arc::new(RwLock::new(None)),
+            };
 
-        let temp_auth_state = ProviderAuthState::QQMusic {
-            musicid,
-            musickey: musickey.clone(),
-            refresh_key: cookie_map.get("refresh_key").cloned(),
-            encrypt_uin: cookie_map.get("encrypt_uin").cloned(),
-        };
-        self.set_auth_state(&temp_auth_state)?;
+            let login_logic = async {
+                match method {
+                    LoginMethod::QQMusicByCookie { cookies } => {
+                        provider_clone.handle_cookie_login(events_tx, cookies).await;
+                    }
+                    LoginMethod::QQMusicByQRCode => {
+                        provider_clone.handle_qr_code_login(events_tx).await;
+                    }
+                    _ => {
+                        let _ = events_tx
+                            .send(LoginEvent::Failure(LoginError::ProviderError(
+                                "不支持的登录方法".to_string(),
+                            )))
+                            .await;
+                    }
+                }
+            };
 
-        #[derive(Deserialize)]
-        struct UserInfoResponse {
-            #[serde(rename = "uin")]
-            user_id: i64,
-            nick: String,
-            headurl: String,
+            tokio::select! {
+                () = login_logic => {},
+                Some(LoginAction::Cancel) = actions_rx.recv() => {
+                    info!("[QQ] 用户取消了登录");
+                }
+            }
+        });
+
+        let stream = ReceiverStream::new(events_rx);
+        let sink = ActionSink { tx: actions_tx };
+
+        LoginFlow {
+            events: Box::pin(stream),
+            actions: Box::pin(sink),
         }
-
-        // 验证凭据
-        let user_info_data = self
-            .execute_api_request(
-                "music.UserInfo.userInfoServer",
-                "GetLoginUserInfo",
-                json!({}),
-                &[0],
-            )
-            .await
-            .map_err(|e| LyricsHelperError::LoginFailed(format!("会话验证失败: {e}")))?;
-
-        let user_info: UserInfoResponse = serde_json::from_value(user_info_data)?;
-
-        let profile = UserProfile {
-            user_id: user_info.user_id,
-            nickname: user_info.nick,
-            avatar_url: user_info.headurl,
-        };
-
-        Ok(LoginResult {
-            profile,
-            auth_state: temp_auth_state,
-        })
     }
 
     fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
@@ -610,7 +601,9 @@ impl LoginProvider for QQMusic {
     #[instrument(skip(self), fields(provider = "qq"))]
     async fn verify_session(&self) -> Result<()> {
         if self.get_auth_state().is_none() {
-            return Err(LyricsHelperError::LoginFailed("未设置登录状态".into()));
+            return Err(LyricsHelperError::LoginFailed(
+                LoginError::InvalidCredentials("未设置登录状态".into()),
+            ));
         }
 
         self.execute_api_request(
@@ -620,9 +613,48 @@ impl LoginProvider for QQMusic {
             &[0],
         )
         .await
-        .map_err(|e| LyricsHelperError::LoginFailed(format!("会话已失效: {e}")))?;
+        .map_err(|e| {
+            LyricsHelperError::LoginFailed(LoginError::InvalidCredentials(format!(
+                "会话已失效: {e}"
+            )))
+        })?;
 
         Ok(())
+    }
+}
+
+struct ActionSink {
+    tx: mpsc::Sender<LoginAction>,
+}
+
+impl Sink<LoginAction> for ActionSink {
+    type Error = LoginError;
+
+    fn poll_ready(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: LoginAction) -> std::result::Result<(), Self::Error> {
+        self.tx
+            .try_send(item)
+            .map_err(|e| LoginError::Internal(e.to_string()))
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -1440,12 +1472,16 @@ impl QQMusic {
                     .find(|s| s.trim().starts_with("qrsig="))
                     .map(|s| s.trim().trim_start_matches("qrsig=").to_string())
             })
-            .ok_or_else(|| LyricsHelperError::LoginFailed("未能从响应中获取qrsig".to_string()))?;
+            .ok_or_else(|| {
+                LyricsHelperError::LoginFailed(LoginError::Network(
+                    "未能从响应中获取qrsig".to_string(),
+                ))
+            })?;
 
         if qrsig.is_empty() {
-            return Err(LyricsHelperError::LoginFailed(
+            return Err(LyricsHelperError::LoginFailed(LoginError::Network(
                 "获取到的qrsig为空".to_string(),
-            ));
+            )));
         }
 
         Ok(QRCodeInfo {
@@ -1503,21 +1539,29 @@ impl QQMusic {
         let captures = PTUICB_REGEX
             .captures(&text)
             .and_then(|caps| caps.get(1))
-            .ok_or_else(|| LyricsHelperError::LoginFailed("无法解析ptuiCB响应".to_string()))?;
+            .ok_or_else(|| {
+                LyricsHelperError::LoginFailed(LoginError::Network(
+                    "无法解析ptuiCB响应".to_string(),
+                ))
+            })?;
 
         let args: Vec<&str> = captures
             .as_str()
             .split(',')
             .map(|s| s.trim_matches('\''))
             .collect();
-        let status_code = args
-            .first()
-            .ok_or_else(|| LyricsHelperError::LoginFailed("ptuiCB响应中缺少状态码".to_string()))?;
+        let status_code = args.first().ok_or_else(|| {
+            LyricsHelperError::LoginFailed(LoginError::Network(
+                "ptuiCB响应中缺少状态码".to_string(),
+            ))
+        })?;
 
         let status = match *status_code {
             "0" => {
                 let url = args.get(2).ok_or_else(|| {
-                    LyricsHelperError::LoginFailed("ptuiCB响应中缺少重定向URL".to_string())
+                    LyricsHelperError::LoginFailed(LoginError::Network(
+                        "ptuiCB响应中缺少重定向URL".to_string(),
+                    ))
                 })?;
                 QRCodeStatus::Confirmed {
                     url: (*url).to_string(),
@@ -1545,8 +1589,8 @@ impl QQMusic {
     }
 
     #[instrument(skip(self, redirect_url), fields(provider = "qq"))]
-    pub async fn finalize_login_with_url(&self, redirect_url: &str) -> Result<ProviderAuthState> {
-        info!(url = %redirect_url, "正在向 check_sig URL 发起GET请求...");
+    async fn fetch_p_skey_from_redirect(&self, redirect_url: &str) -> Result<String> {
+        debug!(url = %redirect_url, "正在向 check_sig URL 发起GET请求以获取 p_skey...");
 
         let headers = [(
             "Referer".to_string(),
@@ -1567,7 +1611,7 @@ impl QQMusic {
                 e
             })?;
 
-        let p_skey = check_sig_response
+        check_sig_response
             .headers
             .iter()
             .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
@@ -1578,10 +1622,15 @@ impl QQMusic {
             })
             .ok_or_else(|| {
                 error!("未能从响应头中找到 p_skey cookie");
-                LyricsHelperError::LoginFailed("未能从响应头中找到p_skey".to_string())
-            })?;
+                LyricsHelperError::LoginFailed(LoginError::Network(
+                    "未能从响应头中找到p_skey".to_string(),
+                ))
+            })
+    }
 
-        let g_tk = Self::g_tk_hash(&p_skey).to_string();
+    #[instrument(skip(self, p_skey), fields(provider = "qq"))]
+    async fn get_authorization_code(&self, p_skey: &str) -> Result<String> {
+        let g_tk = Self::g_tk_hash(p_skey).to_string();
         let auth_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -1614,14 +1663,30 @@ impl QQMusic {
             .post_form_for_redirect(AUTHORIZE_URL, &form_data)
             .await?;
 
-        let parsed_url = Url::parse(&final_redirect_url)
-            .map_err(|_| LyricsHelperError::LoginFailed("无法解析最终的重定向URL".to_string()))?;
+        let parsed_url = Url::parse(&final_redirect_url).map_err(|_| {
+            LyricsHelperError::LoginFailed(LoginError::Network(
+                "无法解析最终的重定向URL".to_string(),
+            ))
+        })?;
 
-        let code = parsed_url
+        parsed_url
             .query_pairs()
-            .find_map(|(key, value)| if key == "code" { Some(value) } else { None })
-            .ok_or_else(|| LyricsHelperError::LoginFailed("最终URL中缺少'code'参数".to_string()))?;
+            .find_map(|(key, value)| {
+                if key == "code" {
+                    Some(value.into_owned())
+                } else {
+                    None
+                }
+            })
+            .ok_or_else(|| {
+                LyricsHelperError::LoginFailed(LoginError::Network(
+                    "最终URL中缺少'code'参数".to_string(),
+                ))
+            })
+    }
 
+    #[instrument(skip(self, code), fields(provider = "qq"))]
+    async fn exchange_code_for_auth_state(&self, code: &str) -> Result<ProviderAuthState> {
         let login_data = self
             .execute_api_request(
                 "QQConnectLogin.LoginServer",
@@ -1654,6 +1719,190 @@ impl QQMusic {
             refresh_key: credentials.refresh_key,
             encrypt_uin: credentials.encrypt_uin,
         })
+    }
+
+    #[instrument(skip(self, redirect_url), fields(provider = "qq"))]
+    async fn finalize_login_with_url(&self, redirect_url: &str) -> Result<ProviderAuthState> {
+        let p_skey = self.fetch_p_skey_from_redirect(redirect_url).await?;
+        let code = self.get_authorization_code(&p_skey).await?;
+        self.exchange_code_for_auth_state(&code).await
+    }
+
+    async fn login_with_cookie(&self, cookies: &str) -> Result<LoginResult> {
+        let cookie_map = Self::parse_cookies(cookies);
+        let musicid_str = cookie_map
+            .get("uin")
+            .or_else(|| cookie_map.get("musicid"))
+            .ok_or_else(|| {
+                LoginError::InvalidCredentials("Cookie中缺少 'uin' 或 'musicid'".into())
+            })?;
+        let musickey = cookie_map
+            .get("qqmusic_key")
+            .or_else(|| cookie_map.get("musickey"))
+            .ok_or_else(|| {
+                LoginError::InvalidCredentials("Cookie中缺少 'qqmusic_key' 或 'musickey'".into())
+            })?;
+
+        let musicid = musicid_str
+            .trim_start_matches('o')
+            .parse::<u64>()
+            .map_err(|_| LoginError::InvalidCredentials("无法将 'uin' 解析为数字".into()))?;
+
+        let auth_state = ProviderAuthState::QQMusic {
+            musicid,
+            musickey: musickey.clone(),
+            refresh_key: cookie_map.get("refresh_key").cloned(),
+            encrypt_uin: cookie_map.get("encrypt_uin").cloned(),
+        };
+
+        self.login_with_auth_state(&auth_state).await
+    }
+
+    async fn login_with_auth_state(&self, auth_state: &ProviderAuthState) -> Result<LoginResult> {
+        self.set_auth_state(auth_state)?;
+
+        #[derive(Deserialize)]
+        struct UserInfoResponse {
+            #[serde(rename = "uin")]
+            user_id: i64,
+            nick: String,
+            headurl: String,
+        }
+
+        let user_info_data = self
+            .execute_api_request(
+                "music.UserInfo.userInfoServer",
+                "GetLoginUserInfo",
+                json!({}),
+                &[0],
+            )
+            .await?;
+
+        let user_info: UserInfoResponse = serde_json::from_value(user_info_data)
+            .map_err(|e| LoginError::ProviderError(format!("解析用户信息失败: {e}")))?;
+
+        let profile = UserProfile {
+            user_id: user_info.user_id,
+            nickname: user_info.nick,
+            avatar_url: user_info.headurl,
+        };
+
+        Ok(LoginResult {
+            profile,
+            auth_state: auth_state.clone(),
+        })
+    }
+
+    async fn handle_cookie_login(&self, events_tx: mpsc::Sender<LoginEvent>, cookies: String) {
+        let _ = events_tx.send(LoginEvent::Initiating).await;
+        match self.login_with_cookie(&cookies).await {
+            Ok(result) => {
+                let _ = events_tx.send(LoginEvent::Success(result)).await;
+            }
+            Err(e) => {
+                let login_error = match e {
+                    LyricsHelperError::LoginFailed(login_err) => login_err,
+                    other_err => LoginError::ProviderError(other_err.to_string()),
+                };
+                let _ = events_tx.send(LoginEvent::Failure(login_error)).await;
+            }
+        }
+    }
+
+    async fn handle_qr_code_login(&self, events_tx: mpsc::Sender<LoginEvent>) {
+        if events_tx.send(LoginEvent::Initiating).await.is_err() {
+            return;
+        }
+
+        let qr_info = match self.get_qrcode().await {
+            Ok(info) => info,
+            Err(e) => {
+                let _ = events_tx
+                    .send(LoginEvent::Failure(LoginError::ProviderError(
+                        e.to_string(),
+                    )))
+                    .await;
+                return;
+            }
+        };
+
+        if events_tx
+            .send(LoginEvent::QRCodeReady {
+                image_data: qr_info.image_data,
+            })
+            .await
+            .is_err()
+        {
+            return;
+        }
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+
+            if events_tx.is_closed() {
+                return;
+            }
+
+            match self.check_qrcode_status(&qr_info.qrsig).await {
+                Ok(status) => match status {
+                    QRCodeStatus::Confirmed { url } => {
+                        let final_event = match self.finalize_login_with_url(&url).await {
+                            Ok(auth_state) => match self.login_with_auth_state(&auth_state).await {
+                                Ok(result) => LoginEvent::Success(result),
+                                Err(e) => {
+                                    let login_error = match e {
+                                        LyricsHelperError::LoginFailed(le) => le,
+                                        _ => LoginError::ProviderError(e.to_string()),
+                                    };
+                                    LoginEvent::Failure(login_error)
+                                }
+                            },
+                            Err(e) => LoginEvent::Failure(LoginError::ProviderError(e.to_string())),
+                        };
+                        let _ = events_tx.send(final_event).await;
+                        return;
+                    }
+                    QRCodeStatus::TimedOut => {
+                        let _ = events_tx
+                            .send(LoginEvent::Failure(LoginError::TimedOut))
+                            .await;
+                        return;
+                    }
+                    QRCodeStatus::Refused => {
+                        let _ = events_tx
+                            .send(LoginEvent::Failure(LoginError::UserCancelled))
+                            .await;
+                        return;
+                    }
+                    QRCodeStatus::Error(msg) => {
+                        let _ = events_tx
+                            .send(LoginEvent::Failure(LoginError::ProviderError(msg)))
+                            .await;
+                        return;
+                    }
+                    QRCodeStatus::WaitingForScan => {
+                        if events_tx.send(LoginEvent::WaitingForScan).await.is_err() {
+                            return;
+                        }
+                    }
+                    QRCodeStatus::Scanned => {
+                        if events_tx
+                            .send(LoginEvent::ScannedWaitingForConfirmation)
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                },
+                Err(e) => {
+                    let _ = events_tx
+                        .send(LoginEvent::Failure(LoginError::Network(e.to_string())))
+                        .await;
+                    return;
+                }
+            }
+        }
     }
 }
 

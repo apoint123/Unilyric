@@ -1,13 +1,18 @@
 //! 此模块实现了与网易云音乐平台进行交互的 `Provider`。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-use std::sync::Arc;
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STD};
 use chrono::Utc;
 use const_format::concatcp;
 use cookie_store::serde::json;
+use futures::Sink;
 use lyrics_helper_core::{
     ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, LyricFormat,
     RawLyrics, SearchResult, Track, model::generic,
@@ -17,6 +22,8 @@ use parking_lot::Mutex;
 use rand::{Rng, SeedableRng, seq::SliceRandom};
 use serde::Serialize;
 use serde_json::json;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::trace;
 use wreq::header::{CONTENT_TYPE, REFERER, USER_AGENT};
 
@@ -24,7 +31,10 @@ use crate::{
     converter,
     error::{LyricsHelperError, Result},
     http::HttpClient,
-    model::auth::{LoginCredentials, LoginResult, ProviderAuthState, UserProfile},
+    model::auth::{
+        LoginAction, LoginError, LoginEvent, LoginFlow, LoginMethod, LoginResult,
+        ProviderAuthState, UserProfile,
+    },
     providers::{LoginProvider, Provider},
 };
 
@@ -138,9 +148,7 @@ impl NeteaseClient {
                 avatar_url: profile.avatar_url,
             })
         } else {
-            Err(LyricsHelperError::LoginFailed(
-                "Cookie 无效或已过期".to_string(),
-            ))
+            Err(LoginError::InvalidCredentials("Cookie 无效或已过期".into()).into())
         }
     }
 
@@ -364,6 +372,50 @@ impl NeteaseClient {
                 song_data.code
             )))
         }
+    }
+
+    async fn login_with_cookie_internal(
+        &self,
+        music_u: &str,
+    ) -> std::result::Result<LoginResult, LoginError> {
+        let mut temp_store = cookie_store::CookieStore::default();
+        let cookie_str = format!("MUSIC_U={music_u}");
+        let url = API_BASE_URL
+            .parse()
+            .map_err(|e| LoginError::Internal(format!("无法解析URL: {e}")))?;
+
+        let raw_cookie = cookie_store::RawCookie::parse(cookie_str)
+            .map_err(|e| LoginError::Internal(format!("Cookie解析失败: {e}")))?;
+        temp_store.store_response_cookies(std::iter::once(raw_cookie), &url);
+
+        let mut writer = Vec::new();
+        json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer)
+            .map_err(|e| LoginError::Internal(format!("Cookie序列化失败: {e}")))?;
+
+        let initial_cookie_json = String::from_utf8(writer)
+            .map_err(|e| LoginError::Internal(format!("Cookie JSON转UTF-8失败: {e}")))?;
+
+        self.http_client
+            .set_cookies(&initial_cookie_json)
+            .map_err(|e| LoginError::Internal(e.to_string()))?;
+
+        let user_profile = self
+            .fetch_user_profile()
+            .await
+            .map_err(|e| LoginError::InvalidCredentials(e.to_string()))?;
+        *self.user_profile.lock() = Some(user_profile.clone());
+
+        let session_cookies_json = self
+            .http_client
+            .get_cookies()
+            .map_err(|e| LoginError::Internal(e.to_string()))?;
+
+        Ok(LoginResult {
+            profile: user_profile,
+            auth_state: ProviderAuthState::Netease {
+                cookies_json: session_cookies_json,
+            },
+        })
     }
 }
 
@@ -816,40 +868,102 @@ const fn get_user_agent(client_type: ClientType) -> &'static str {
     }
 }
 
+struct ActionSink {
+    tx: mpsc::Sender<LoginAction>,
+}
+
+impl Sink<LoginAction> for ActionSink {
+    type Error = LoginError;
+
+    fn poll_ready(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: LoginAction) -> std::result::Result<(), Self::Error> {
+        self.tx
+            .try_send(item)
+            .map_err(|e| LoginError::Internal(e.to_string()))
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 impl LoginProvider for NeteaseClient {
-    async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult> {
-        let LoginCredentials::NeteaseByCookie { music_u } = credentials else {
-            return Err(LyricsHelperError::LoginFailed("无效的凭据类型".to_string()));
-        };
+    fn initiate_login(&self, method: LoginMethod) -> LoginFlow {
+        let (events_tx, events_rx) = mpsc::channel(16);
+        let (actions_tx, mut actions_rx) = mpsc::channel::<LoginAction>(1);
 
-        let mut temp_store = cookie_store::CookieStore::default();
-        let cookie_str = format!("MUSIC_U={music_u}");
-        let url = API_BASE_URL
-            .parse()
-            .map_err(|e| LyricsHelperError::Internal(format!("无法解析API基础URL: {e}")))?;
+        let http_client = Arc::clone(&self.http_client);
+        let weapi_secret_key = self.weapi_secret_key.clone();
+        let weapi_enc_sec_key = self.weapi_enc_sec_key.clone();
+        let config = self.config.clone();
 
-        let raw_cookie = cookie_store::RawCookie::parse(cookie_str)
-            .map_err(|e| LyricsHelperError::Internal(format!("Cookie解析失败: {e}")))?;
-        temp_store.store_response_cookies(std::iter::once(raw_cookie), &url);
+        tokio::spawn(async move {
+            let provider_clone = Self {
+                weapi_secret_key,
+                weapi_enc_sec_key,
+                http_client,
+                config,
+                user_profile: Arc::new(Mutex::new(None)),
+            };
 
-        let mut writer = Vec::new();
-        json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer)
-            .map_err(|e| LyricsHelperError::Internal(format!("Cookie序列化失败: {e}")))?;
+            let events_tx = events_tx;
 
-        let cookie_json = String::from_utf8(writer)
-            .map_err(|e| LyricsHelperError::Internal(format!("Cookie JSON转换UTF-8失败: {e}")))?;
+            let login_logic = async {
+                match method {
+                    LoginMethod::NeteaseByCookie { music_u } => {
+                        let _ = events_tx.send(LoginEvent::Initiating).await;
+                        match provider_clone.login_with_cookie_internal(&music_u).await {
+                            Ok(result) => {
+                                let _ = events_tx.send(LoginEvent::Success(result)).await;
+                            }
+                            Err(e) => {
+                                let _ = events_tx.send(LoginEvent::Failure(e)).await;
+                            }
+                        }
+                    }
+                    _ => {
+                        let _ = events_tx
+                            .send(LoginEvent::Failure(LoginError::ProviderError(
+                                "不支持的登录方法".to_string(),
+                            )))
+                            .await;
+                    }
+                }
+            };
 
-        self.http_client.set_cookies(&cookie_json)?;
+            tokio::select! {
+                () = login_logic => {},
+                Some(LoginAction::Cancel) = actions_rx.recv() => {
+                    tracing::info!("[Netease] 用户取消了登录");
+                }
+            }
+        });
 
-        let user_profile = self.fetch_user_profile().await?;
-        *self.user_profile.lock() = Some(user_profile.clone());
+        let stream = ReceiverStream::new(events_rx);
+        let sink = ActionSink { tx: actions_tx };
 
-        Ok(LoginResult {
-            profile: user_profile,
-            auth_state: ProviderAuthState::Netease,
-        })
+        LoginFlow {
+            events: Box::pin(stream),
+            actions: Box::pin(sink),
+        }
     }
 
     async fn verify_session(&self) -> Result<()> {
@@ -866,19 +980,26 @@ impl LoginProvider for NeteaseClient {
     }
 
     fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
-        if matches!(auth_state, ProviderAuthState::Netease) {
+        if let ProviderAuthState::Netease { cookies_json } = auth_state {
+            self.http_client.set_cookies(cookies_json)?;
             *self.user_profile.lock() = None;
             Ok(())
         } else {
             Err(LyricsHelperError::Internal(
-                "无效的认证状态类型".to_string(),
+                "向 NeteaseClient 提供了无效的认证状态类型".to_string(),
             ))
         }
     }
 
     fn get_auth_state(&self) -> Option<ProviderAuthState> {
         if self.user_profile.lock().is_some() {
-            Some(ProviderAuthState::Netease)
+            match self.http_client.get_cookies() {
+                Ok(cookies_json) => Some(ProviderAuthState::Netease { cookies_json }),
+                Err(e) => {
+                    tracing::error!("[Netease] 获取 cookies 失败: {}", e);
+                    None
+                }
+            }
         } else {
             None
         }
@@ -888,6 +1009,8 @@ impl LoginProvider for NeteaseClient {
 #[cfg(test)]
 mod tests {
     use std::env;
+
+    use tokio_stream::StreamExt;
 
     use super::*;
 
@@ -1208,28 +1331,34 @@ mod tests {
             return;
         }
 
-        let music_u_cookie = music_u_cookie.unwrap();
-
         let provider = NeteaseClient::new().await.expect("创建 NeteaseClient 失败");
 
-        let credentials = LoginCredentials::NeteaseByCookie {
-            music_u: &music_u_cookie,
+        let method = LoginMethod::NeteaseByCookie {
+            music_u: music_u_cookie.unwrap(),
         };
 
-        let login_result = provider.login(&credentials).await;
+        let mut flow = provider.initiate_login(method);
 
-        assert!(
-            login_result.is_ok(),
-            "Cookie 登录不应该失败！错误: {:?}",
-            login_result.err()
-        );
-        let profile = login_result.unwrap();
+        while let Some(event) = flow.events.next().await {
+            match event {
+                LoginEvent::Success(login_result) => {
+                    assert!(
+                        !login_result.profile.nickname.is_empty(),
+                        "登录成功后，返回的用户信息里应该有昵称"
+                    );
 
-        assert!(
-            !profile.profile.nickname.is_empty(),
-            "登录成功后，返回的用户信息里应该有昵称！"
-        );
-
-        println!("✅ 成功以 '{}' 的身份登录！", profile.profile.nickname);
+                    println!("✅ 成功以 '{}' 的身份登录", login_result.profile.nickname);
+                    return;
+                }
+                LoginEvent::Failure(e) => {
+                    panic!("Cookie 登录不应该失败。错误: {e:?}");
+                }
+                LoginEvent::Initiating => {
+                    println!("登录流程已启动...");
+                }
+                _ => {}
+            }
+        }
+        panic!("登录流程结束，但未收到 Success 或 Failure 事件。");
     }
 }

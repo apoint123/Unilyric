@@ -93,7 +93,7 @@ use std::{
 
 use crate::{
     http::{HttpClient, WreqClient},
-    model::auth::ProviderSession,
+    model::auth::{LoginFlow, ProviderSession},
 };
 
 use futures::{Future, StreamExt, future, stream};
@@ -106,7 +106,8 @@ use tokio_util::sync::CancellationToken;
 
 pub use crate::error::{LyricsHelperError, Result};
 pub use crate::model::auth::{
-    LoginCredentials, LoginResult, ProviderAuthState, Session, UserProfile,
+    LoginAction, LoginError, LoginEvent, LoginMethod, LoginResult, ProviderAuthState, Session,
+    UserProfile,
 };
 pub use crate::providers::LoginProvider;
 
@@ -296,19 +297,19 @@ impl LyricsHelper {
         }
     }
 
-    /// 对指定的提供商执行登录操作。
+    /// 为指定的提供商发起一个登录流程。
     ///
     /// # 参数
     /// * `provider_name` - 要登录的提供商。
-    /// * `credentials` - 提供的凭据。
+    /// * `method` - 要使用的登录方式，例如二维码或Cookie。
     ///
     /// # 返回
-    /// 成功时返回包含用户信息的 `serde_json::Value`，可用于展示。
-    pub async fn login(
+    /// 一个 `LoginFlow`，包含了 `events` 流和 `actions` 接收器。
+    pub fn initiate_login(
         &self,
-        provider_name: ProviderName,
-        credentials: &LoginCredentials<'_>,
-    ) -> Result<UserProfile> {
+        provider_name: &ProviderName,
+        method: LoginMethod,
+    ) -> Result<LoginFlow> {
         let provider = self
             .providers
             .iter()
@@ -319,9 +320,7 @@ impl LyricsHelper {
             .as_login_provider()
             .ok_or_else(|| LyricsHelperError::LoginNotSupported(provider_name.to_string()))?;
 
-        let result = login_provider.login(credentials).await?;
-
-        Ok(result.profile)
+        Ok(login_provider.initiate_login(method))
     }
 
     /// 导出包含所有登录状态的会话。

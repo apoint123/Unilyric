@@ -4,6 +4,8 @@ use lyrics_helper_core::ConvertError;
 use std::{io, string::FromUtf8Error};
 use thiserror::Error;
 
+use crate::LoginError;
+
 /// `lyrics-helper` 库的通用错误枚举。
 #[derive(Error, Debug)]
 pub enum LyricsHelperError {
@@ -85,9 +87,9 @@ pub enum LyricsHelperError {
 
     /// 登录失败
     #[error("登录失败: {0}")]
-    LoginFailed(String),
+    LoginFailed(#[from] LoginError),
 
-    /// 登录失败
+    /// 不支持的登录方法
     #[error("{0} 提供商不支持登录")]
     LoginNotSupported(String),
 }

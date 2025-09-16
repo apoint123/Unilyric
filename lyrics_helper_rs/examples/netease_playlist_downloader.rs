@@ -5,12 +5,15 @@ use std::time::Duration;
 
 use anyhow::Result;
 use lyrics_helper_rs::http::WreqClient;
+use lyrics_helper_rs::model::auth::{LoginEvent, LoginMethod};
+use lyrics_helper_rs::providers::LoginProvider;
 use lyrics_helper_rs::providers::Provider;
 use lyrics_helper_rs::providers::netease::NeteaseClient;
+use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cookie = env::var("NETEASE_COOKIE").expect("请设置 NETEASE_COOKIE 环境变量");
+    let music_u = env::var("NETEASE_MUSIC_U").expect("请设置 NETEASE_MUSIC_U 环境变量");
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
         println!("用法: netease_playlist_downloader <playlist_id>");
@@ -20,7 +23,27 @@ async fn main() -> Result<()> {
 
     let http_client = Arc::new(WreqClient::new()?);
     let provider = NeteaseClient::with_http_client(http_client).await?;
-    // .with_cookie(cookie);
+
+    let login_method = LoginMethod::NeteaseByCookie { music_u };
+    let mut flow = provider.initiate_login(login_method);
+
+    loop {
+        match flow.events.next().await {
+            Some(LoginEvent::Success(result)) => {
+                println!("登录成功！用户: {}", result.profile.nickname);
+                break;
+            }
+            Some(LoginEvent::Failure(e)) => {
+                anyhow::bail!("登录失败: {}", e);
+            }
+            Some(event) => {
+                println!("收到事件: {event:?}");
+            }
+            None => {
+                anyhow::bail!("登录流程意外终止");
+            }
+        }
+    }
 
     println!("正在获取歌单信息...");
     let playlist = provider.get_playlist(playlist_id).await?;

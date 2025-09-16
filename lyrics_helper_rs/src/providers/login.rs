@@ -1,5 +1,5 @@
 use crate::error::Result;
-use crate::model::auth::{LoginCredentials, LoginResult, ProviderAuthState};
+use crate::model::auth::{LoginFlow, LoginMethod, ProviderAuthState};
 use crate::providers::Provider;
 use async_trait::async_trait;
 
@@ -7,14 +7,14 @@ use async_trait::async_trait;
 #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 pub trait LoginProvider: Provider {
-    /// 执行登录操作。
+    /// 发起登录流程，返回一个双向事件流
     ///
     /// # 参数
-    /// * `credentials` - 用户输入的原始凭据。
+    /// * `method` - 描述要使用的登录方式，例如二维码或Cookie。
     ///
     /// # 返回
-    /// 成功时返回包含用户信息和可持久化状态的 `LoginResult`。
-    async fn login(&self, credentials: &LoginCredentials<'_>) -> Result<LoginResult>;
+    /// 一个 `LoginFlow`，包含了 `events` 流和 `actions` 接收器。
+    fn initiate_login(&self, method: LoginMethod) -> LoginFlow;
 
     /// 将持久化的认证状态应用到 Provider 实例。
     ///
