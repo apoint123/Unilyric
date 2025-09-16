@@ -19,12 +19,13 @@ use lyrics_helper_core::{
 };
 use md5::{Digest, Md5};
 use parking_lot::Mutex;
-use rand::{Rng, SeedableRng, seq::SliceRandom};
+use rand::Rng;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::trace;
+use uuid::Uuid;
 use wreq::header::{CONTENT_TYPE, REFERER, USER_AGENT};
 
 use crate::{
@@ -66,8 +67,6 @@ const PLAYLIST_DETAIL_V6_URL: &str = concatcp!(API_BASE_URL, "/weapi/v6/playlist
 const SONG_DETAIL_V3_URL: &str = concatcp!(API_BASE_URL, "/weapi/v3/song/detail");
 const SONG_ENHANCE_PLAYER_URL_URL: &str = concatcp!(API_BASE_URL, "/weapi/song/enhance/player/url");
 
-const SELECTED_DEVICE_IDS: &str = include_str!(concat!(env!("OUT_DIR"), "/selected_deviceids.txt"));
-
 // TODO: 允许选择设备类型
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,8 +92,8 @@ impl Default for ClientConfig {
         Self {
             client_type: ClientType::PC,
             device_id: uuid::Uuid::new_v4().to_string(),
-            os_version: Some("10".to_string()),
-            app_version: Some("3.0.18".to_string()),
+            os_version: Some("Microsoft-Windows-10-Professional-build-22631-64bit".to_string()),
+            app_version: Some("3.1.17.204416".to_string()),
             version_code: None,
             mobile_name: None,
             channel: Some("netease".to_string()),
@@ -153,17 +152,11 @@ impl NeteaseClient {
     }
 
     async fn register_anonimous(&self) -> Result<()> {
-        let device_ids: Vec<&str> = SELECTED_DEVICE_IDS.lines().collect();
-        if device_ids.is_empty() {
-            tracing::warn!("[Netease] 未能获取到任何 Device ID，跳过游客登录。");
-            return Ok(());
-        }
+        // 网易云音乐看起来不会验证 deviceId 有多长，如果之后匿名登录失败了，
+        // 应该去上游项目把 generateDeviceId 的逻辑再复刻一遍
+        let device_id = Uuid::new_v4().to_string();
 
-        let mut rng = rand::rngs::StdRng::from_entropy();
-
-        let device_id = device_ids.choose(&mut rng).unwrap_or(&"");
-
-        let signature = cloudmusic_dll_encode_id(device_id);
+        let signature = cloudmusic_dll_encode_id(&device_id);
         let encoded_username = BASE64_STD.encode(format!("{device_id} {signature}"));
 
         let payload = json!({ "username": encoded_username });
@@ -859,7 +852,7 @@ fn cloudmusic_dll_encode_id(device_id: &str) -> String {
 const fn get_user_agent(client_type: ClientType) -> &'static str {
     match client_type {
         ClientType::PC => {
-            "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.0.18.203152"
+            "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36 Chrome/91.0.4472.164 NeteaseMusicDesktop/3.1.17.204416"
         }
         ClientType::Android => {
             "NeteaseMusic/9.1.65.240927161425(9001065);Dalvik/2.1.0 (Linux; U; Android 14; 23013RK75C Build/UKQ1.230804.001)"
