@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::converter::{
     TrackMetadataKey,
-    utils::{normalize_text_whitespace, parse_and_store_metadata, process_syllable_text},
+    utils::{normalize_text_whitespace, parse_and_store_metadata},
 };
 use base64::{Engine, engine::general_purpose};
 use regex::Regex;
@@ -13,7 +13,7 @@ use std::sync::LazyLock;
 
 use lyrics_helper_core::{
     AnnotatedTrack, ContentType, ConvertError, LyricFormat, LyricLine, LyricLineBuilder,
-    LyricSyllable, LyricSyllableBuilder, LyricTrack, ParsedSourceData, Word,
+    LyricSyllable, LyricTrack, ParsedSourceData, Word,
 };
 
 /// 匹配 KRC 行级时间戳 `[start,duration]`
@@ -21,9 +21,9 @@ static KRC_LINE_TIMESTAMP_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\[(?P<start>\d+),(?P<duration>\d+)]").expect("编译 KRC_LINE_TIMESTAMP_REGEX 失败")
 });
 
-/// 匹配 KRC 音节级时间戳和文本 `<offset,duration,pitch>text`
+/// 匹配 KRC 音节级时间戳和文本 `<offset,duration,0>text`
 static KRC_SYLLABLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<(?P<offset>\d+),(?P<duration>\d+),(?P<pitch>0)>(?P<text>[^<]*)")
+    Regex::new(r"<(?P<offset>\d+),(?P<duration>\d+),(?P<zero>0)>(?P<text>[^<]*)")
         .expect("编译 KRC_SYLLABLE_REGEX 失败")
 });
 
@@ -31,6 +31,13 @@ static KRC_SYLLABLE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static KRC_TRANSLATION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[language:(?P<base64>[A-Za-z0-9+/=]+)]").expect("编译 KRC_TRANSLATION_REGEX 失败")
 });
+
+#[derive(Debug)]
+struct RawSyllable {
+    text: String,
+    start_ms: u64,
+    duration_ms: u64,
+}
 
 /// 解析 KRC 格式内容到 `ParsedSourceData` 结构。
 pub fn parse_krc(content: &str) -> Result<ParsedSourceData, ConvertError> {
@@ -42,7 +49,6 @@ pub fn parse_krc(content: &str) -> Result<ParsedSourceData, ConvertError> {
     let mut aux_line_index = 0;
 
     for (i, line_str) in content.lines().enumerate() {
-        let line_num = i + 1;
         let trimmed_line = line_str.trim();
 
         if trimmed_line.is_empty()
@@ -60,147 +66,15 @@ pub fn parse_krc(content: &str) -> Result<ParsedSourceData, ConvertError> {
             continue;
         }
 
-        if let Some(line_caps) = KRC_LINE_TIMESTAMP_REGEX.captures(trimmed_line) {
-            let line_start_ms: u64 = line_caps["start"].parse()?;
-            let line_duration_ms: u64 = line_caps["duration"].parse()?;
-
-            let content_after_line_ts = &trimmed_line[line_caps.get(0).map_or(0, |m| m.end())..];
-            let mut syllables: Vec<LyricSyllable> = Vec::new();
-
-            for syl_caps in KRC_SYLLABLE_REGEX.captures_iter(content_after_line_ts) {
-                if let Some((clean_text, ends_with_space)) =
-                    process_syllable_text(&syl_caps["text"], &mut syllables)
-                {
-                    let offset_ms: u64 = syl_caps["offset"].parse()?;
-                    let duration_ms: u64 = syl_caps["duration"].parse()?;
-                    let absolute_start_ms = line_start_ms + offset_ms;
-
-                    let syllable = LyricSyllableBuilder::default()
-                        .text(clean_text)
-                        .start_ms(absolute_start_ms)
-                        .end_ms(absolute_start_ms + duration_ms)
-                        .duration_ms(duration_ms)
-                        .ends_with_space(ends_with_space)
-                        .build()
-                        .unwrap();
-                    syllables.push(syllable);
-                }
-            }
-
-            if syllables.is_empty() {
-                warnings.push(format!("第 {line_num} 行: 未找到任何有效的音节。"));
-            } else {
-                let main_content_track = LyricTrack {
-                    words: vec![Word {
-                        syllables: syllables.clone(),
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                };
-
-                let mut translation_tracks = Vec::new();
-                if let Some(raw_text) = aux_data.translations.get(aux_line_index) {
-                    let normalized_text = normalize_text_whitespace(raw_text);
-                    if !normalized_text.is_empty() {
-                        let mut metadata = HashMap::new();
-                        metadata.insert(TrackMetadataKey::Language, "zh-Hans".to_string());
-                        translation_tracks.push(LyricTrack {
-                            words: vec![Word {
-                                syllables: vec![
-                                    LyricSyllableBuilder::default()
-                                        .text(normalized_text)
-                                        .build()
-                                        .unwrap(),
-                                ],
-                                ..Default::default()
-                            }],
-                            metadata,
-                        });
-                    }
-                }
-
-                let mut romanization_tracks: Vec<LyricTrack> = Vec::new();
-                if let Some(romanization_syllable_texts) =
-                    aux_data.romanizations.get(aux_line_index)
-                {
-                    if syllables.len() == romanization_syllable_texts.len() {
-                        let romanization_syllables: Vec<LyricSyllable> = syllables
-                            .iter()
-                            .zip(romanization_syllable_texts.iter())
-                            .map(|(main_syl, roma_text)| {
-                                let mut builder = LyricSyllableBuilder::default();
-                                builder
-                                    .text(normalize_text_whitespace(roma_text))
-                                    .start_ms(main_syl.start_ms)
-                                    .end_ms(main_syl.end_ms)
-                                    .ends_with_space(main_syl.ends_with_space);
-
-                                if let Some(d) = main_syl.duration_ms {
-                                    builder.duration_ms(d);
-                                }
-
-                                builder.build().unwrap()
-                            })
-                            .collect();
-
-                        if !romanization_syllables.is_empty() {
-                            let mut metadata = HashMap::new();
-                            metadata.insert(TrackMetadataKey::Language, "ja-Latn".to_string());
-                            romanization_tracks.push(LyricTrack {
-                                words: vec![Word {
-                                    syllables: romanization_syllables,
-                                    ..Default::default()
-                                }],
-                                metadata,
-                            });
-                        }
-                    } else if !romanization_syllable_texts.is_empty() {
-                        warnings.push(format!(
-                            "第 {line_num} 行: 罗马音音节数 ({}) 与主歌词音节数 ({}) 不匹配，回退到逐行音译。",
-                            romanization_syllable_texts.len(),
-                            syllables.len()
-                        ));
-                        let normalized_text =
-                            normalize_text_whitespace(&romanization_syllable_texts.join(""));
-                        if !normalized_text.is_empty() {
-                            let mut metadata = HashMap::new();
-                            metadata.insert(TrackMetadataKey::Language, "ja-Latn".to_string());
-                            romanization_tracks.push(LyricTrack {
-                                words: vec![Word {
-                                    syllables: vec![
-                                        LyricSyllableBuilder::default()
-                                            .text(normalized_text)
-                                            .build()
-                                            .unwrap(),
-                                    ],
-                                    ..Default::default()
-                                }],
-                                metadata,
-                            });
-                        }
-                    }
-                }
-
-                let annotated_track = AnnotatedTrack {
-                    content_type: ContentType::Main,
-                    content: main_content_track,
-                    translations: translation_tracks,
-                    romanizations: romanization_tracks,
-                };
-
-                let line = LyricLineBuilder::default()
-                    .start_ms(line_start_ms)
-                    .end_ms(line_start_ms + line_duration_ms)
-                    .agent(Some("v1".to_string()))
-                    .track(annotated_track)
-                    .build()
-                    .unwrap();
-                lines.push(line);
-
-                aux_line_index += 1;
-            }
-        } else {
-            warnings.push(format!("第 {line_num} 行: 未能识别的行格式。"));
+        if let Some(line) = parse_krc_line(
+            trimmed_line,
+            i + 1,
+            &aux_data,
+            aux_line_index,
+            &mut warnings,
+        )? {
+            lines.push(line);
+            aux_line_index += 1;
         }
     }
 
@@ -211,6 +85,183 @@ pub fn parse_krc(content: &str) -> Result<ParsedSourceData, ConvertError> {
         source_format: LyricFormat::Krc,
         is_line_timed_source: false,
         ..Default::default()
+    })
+}
+
+fn parse_krc_line(
+    trimmed_line: &str,
+    line_num: usize,
+    aux_data: &KrcAuxiliaryData,
+    aux_line_index: usize,
+    warnings: &mut Vec<String>,
+) -> Result<Option<LyricLine>, ConvertError> {
+    if let Some(line_caps) = KRC_LINE_TIMESTAMP_REGEX.captures(trimmed_line) {
+        let line_start_ms: u64 = line_caps["start"].parse()?;
+        let line_duration_ms: u64 = line_caps["duration"].parse()?;
+        let content_after_line_ts = &trimmed_line[line_caps.get(0).unwrap().end()..];
+
+        let mut raw_syllables: Vec<RawSyllable> = Vec::new();
+        for syl_caps in KRC_SYLLABLE_REGEX.captures_iter(content_after_line_ts) {
+            let offset_ms: u64 = syl_caps["offset"].parse()?;
+            let duration_ms: u64 = syl_caps["duration"].parse()?;
+
+            raw_syllables.push(RawSyllable {
+                text: syl_caps["text"].to_string(),
+                start_ms: line_start_ms + offset_ms,
+                duration_ms,
+            });
+        }
+
+        if raw_syllables.is_empty() {
+            warnings.push(format!("第 {line_num} 行: 未找到任何时间戳。"));
+            return Ok(None);
+        }
+
+        let annotated_track = process_raw_syllables_into_annotated_track(
+            &raw_syllables,
+            aux_data,
+            aux_line_index,
+            line_num,
+            warnings,
+        );
+
+        if annotated_track
+            .content
+            .words
+            .iter()
+            .all(|w| w.syllables.is_empty())
+        {
+            warnings.push(format!("第 {line_num} 行: 内容只包含空格，已跳过。"));
+            return Ok(None);
+        }
+
+        let line = LyricLineBuilder::default()
+            .start_ms(line_start_ms)
+            .end_ms(line_start_ms + line_duration_ms)
+            .agent(Some("v1".to_string()))
+            .track(annotated_track)
+            .build()
+            .unwrap();
+
+        Ok(Some(line))
+    } else {
+        warnings.push(format!("第 {line_num} 行: 未能识别的行格式。"));
+        Ok(None)
+    }
+}
+
+fn process_raw_syllables_into_annotated_track(
+    raw_syllables: &[RawSyllable],
+    aux_data: &KrcAuxiliaryData,
+    aux_line_index: usize,
+    line_num: usize,
+    warnings: &mut Vec<String>,
+) -> AnnotatedTrack {
+    let mut final_main_syllables: Vec<LyricSyllable> = Vec::new();
+    let mut final_roma_syllables: Vec<LyricSyllable> = Vec::new();
+
+    let romanization_texts = aux_data.romanizations.get(aux_line_index);
+
+    if let Some(texts) = romanization_texts
+        && texts.len() != raw_syllables.len()
+    {
+        warnings.push(format!(
+            "第 {line_num} 行: 主歌词音节数 ({}) 与罗马音音节数 ({}) 不匹配，对齐可能不准确。",
+            raw_syllables.len(),
+            texts.len()
+        ));
+    }
+
+    for (i, raw_syl) in raw_syllables.iter().enumerate() {
+        let main_text = &raw_syl.text;
+        let clean_main_text = main_text.trim();
+
+        if main_text.starts_with(char::is_whitespace) {
+            if let Some(last) = final_main_syllables.last_mut() {
+                last.ends_with_space = true;
+            }
+            if let Some(last) = final_roma_syllables.last_mut() {
+                last.ends_with_space = true;
+            }
+        }
+
+        if !clean_main_text.is_empty() {
+            final_main_syllables.push(LyricSyllable {
+                text: clean_main_text.to_string(),
+                start_ms: raw_syl.start_ms,
+                end_ms: raw_syl.start_ms + raw_syl.duration_ms,
+                duration_ms: Some(raw_syl.duration_ms),
+                ends_with_space: main_text.ends_with(char::is_whitespace),
+            });
+
+            if let Some(texts) = romanization_texts
+                && let Some(roma_text_raw) = texts.get(i)
+            {
+                let clean_roma_text = roma_text_raw.trim();
+                if !clean_roma_text.is_empty() {
+                    final_roma_syllables.push(LyricSyllable {
+                        text: clean_roma_text.to_string(),
+                        start_ms: raw_syl.start_ms,
+                        end_ms: raw_syl.start_ms + raw_syl.duration_ms,
+                        duration_ms: Some(raw_syl.duration_ms),
+                        ends_with_space: roma_text_raw.ends_with(char::is_whitespace),
+                    });
+                }
+            }
+        }
+    }
+
+    let main_track = LyricTrack {
+        words: vec![Word {
+            syllables: final_main_syllables,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    let romanization_track = if final_roma_syllables.is_empty() {
+        None
+    } else {
+        let mut metadata = HashMap::new();
+        metadata.insert(TrackMetadataKey::Language, "ja-Latn".to_string());
+        Some(LyricTrack {
+            words: vec![Word {
+                syllables: final_roma_syllables,
+                ..Default::default()
+            }],
+            metadata,
+        })
+    };
+
+    let translation_track = build_translation_track(aux_data.translations.get(aux_line_index));
+
+    AnnotatedTrack {
+        content_type: ContentType::Main,
+        content: main_track,
+        translations: translation_track.into_iter().collect(),
+        romanizations: romanization_track.into_iter().collect(),
+    }
+}
+
+fn build_translation_track(raw_text: Option<&String>) -> Option<LyricTrack> {
+    raw_text.and_then(|text| {
+        let normalized_text = normalize_text_whitespace(text);
+        if normalized_text.is_empty() {
+            None
+        } else {
+            let mut metadata = HashMap::new();
+            metadata.insert(TrackMetadataKey::Language, "zh-Hans".to_string());
+            Some(LyricTrack {
+                words: vec![Word {
+                    syllables: vec![LyricSyllable {
+                        text: normalized_text,
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }],
+                metadata,
+            })
+        }
     })
 }
 
