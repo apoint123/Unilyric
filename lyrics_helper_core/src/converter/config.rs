@@ -1,5 +1,3 @@
-use std::sync::OnceLock;
-
 use bitflags::bitflags;
 use derive_builder::Builder;
 use serde::{Deserialize, Serialize};
@@ -214,28 +212,6 @@ impl Default for MetadataStripperFlags {
     }
 }
 
-#[derive(Deserialize)]
-struct DefaultStripperConfig {
-    keywords: Vec<String>,
-    regex_patterns: Vec<String>,
-}
-
-fn default_stripper_config() -> &'static DefaultStripperConfig {
-    static CONFIG: OnceLock<DefaultStripperConfig> = OnceLock::new();
-    CONFIG.get_or_init(|| {
-        let config_str = include_str!("../../assets/default_stripper_config.toml");
-        toml::from_str(config_str).expect("Failed to parse default_stripper_config.toml")
-    })
-}
-
-fn default_keywords() -> Vec<String> {
-    default_stripper_config().keywords.clone()
-}
-
-fn default_regex_patterns() -> Vec<String> {
-    default_stripper_config().regex_patterns.clone()
-}
-
 /// 元数据扫描行数的限制
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanLimitConfig {
@@ -282,13 +258,13 @@ pub struct MetadataStripperOptions {
     pub flags: MetadataStripperFlags,
 
     /// 用于匹配头部/尾部块的关键词列表。
-    #[serde(default = "default_keywords")]
+    #[serde(default)]
     pub keywords: Vec<String>,
 
     /// 正则表达式列表。
     ///
     /// 匹配后，会移除开头或结尾到该行的所有内容。
-    #[serde(default = "default_regex_patterns")]
+    #[serde(default)]
     pub regex_patterns: Vec<String>,
 
     /// 头部扫描的行数限制。
@@ -304,35 +280,56 @@ impl Default for MetadataStripperOptions {
     fn default() -> Self {
         Self {
             flags: Default::default(),
-            keywords: default_keywords(),
-            regex_patterns: default_regex_patterns(),
+            keywords: Vec::new(),
+            regex_patterns: Vec::new(),
             header_scan_limit: default_header_scan_limit(),
             footer_scan_limit: default_footer_scan_limit(),
         }
     }
 }
 
-/// 为 `ferrous_opencc::config::BuiltinConfig` 提供扩展方法
-pub trait BuiltinConfigExt {
-    /// 推断配置对应的目标语言标签
-    fn deduce_lang_tag(self) -> Option<&'static str>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChineseConversionConfig {
+    /// 简体到繁体
+    S2t = 0,
+    /// 繁体到简体
+    T2s = 1,
+    /// 简体到台湾正体
+    S2tw = 2,
+    /// 台湾正体到简体
+    Tw2s = 3,
+    /// 简体到香港繁体
+    S2hk = 4,
+    /// 香港繁体到简体
+    Hk2s = 5,
+    /// 简体到台湾正体（包含词汇转换）
+    S2twp = 6,
+    /// 台湾正体（包含词汇转换）到简体
+    Tw2sp = 7,
+    /// 繁体到台湾正体
+    T2tw = 8,
+    /// 台湾正体到繁体
+    Tw2t = 9,
+    /// 繁体到香港繁体
+    T2hk = 10,
+    /// 香港繁体到繁体
+    Hk2t = 11,
+    /// 日语新字体到繁体
+    Jp2t = 12,
+    /// 繁体到日语新字体
+    T2jp = 13,
 }
 
-impl BuiltinConfigExt for ferrous_opencc::config::BuiltinConfig {
-    fn deduce_lang_tag(self) -> Option<&'static str> {
-        use ferrous_opencc::config::BuiltinConfig;
+impl ChineseConversionConfig {
+    /// 推断配置对应的目标语言标签
+    pub fn deduce_lang_tag(self) -> Option<&'static str> {
+        use ChineseConversionConfig::*;
         match self {
-            BuiltinConfig::S2t
-            | BuiltinConfig::Jp2t
-            | BuiltinConfig::Hk2t
-            | BuiltinConfig::Tw2t => Some("zh-Hant"),
-            BuiltinConfig::S2tw | BuiltinConfig::S2twp | BuiltinConfig::T2tw => Some("zh-Hant-TW"),
-            BuiltinConfig::S2hk | BuiltinConfig::T2hk => Some("zh-Hant-HK"),
-            BuiltinConfig::T2s
-            | BuiltinConfig::Tw2s
-            | BuiltinConfig::Tw2sp
-            | BuiltinConfig::Hk2s => Some("zh-Hans"),
-            BuiltinConfig::T2jp => Some("ja"),
+            S2t | Jp2t | Hk2t | T2tw | Tw2t => Some("zh-Hant"),
+            S2tw | S2twp => Some("zh-Hant-TW"),
+            S2hk | T2hk => Some("zh-Hant-HK"),
+            T2s | Tw2s | Tw2sp | Hk2s => Some("zh-Hans"),
+            T2jp => Some("ja"),
         }
     }
 }
@@ -342,7 +339,7 @@ impl BuiltinConfigExt for ferrous_opencc::config::BuiltinConfig {
 pub struct ChineseConversionOptions {
     /// 指定要使用的 `OpenCC` 配置。
     /// 当值为 `Some(config)` 时，功能启用。
-    pub config: Option<ferrous_opencc::config::BuiltinConfig>,
+    pub config: Option<ChineseConversionConfig>,
 
     /// 为翻译指定 BCP 47 语言标签，例如 "zh-Hant" 或 "zh-Hant-HK"。
     /// 如果未指定，将根据配置自动推断。

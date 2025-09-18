@@ -3,8 +3,7 @@
 use crate::converter::processors::chinese_conversion_processor::convert;
 use crate::model::match_type::MatchScorable;
 use crate::model::match_type::{ArtistMatchType, DurationMatchType, NameMatchType};
-use ferrous_opencc::config::BuiltinConfig;
-use lyrics_helper_core::{MatchType, SearchResult, Track};
+use lyrics_helper_core::{ChineseConversionConfig, MatchType, SearchResult, Track};
 use std::collections::HashSet;
 
 /// 计算两个字符串的归一化 Levenshtein 相似度，并转换为百分比。
@@ -97,8 +96,8 @@ fn compare_name(name1_opt: Option<&str>, name2_opt: Option<&str>) -> Option<Name
     let name1_raw = name1_opt?;
     let name2_raw = name2_opt?;
 
-    let name1_sc_lower = convert(name1_raw, BuiltinConfig::T2s).to_lowercase();
-    let name2_sc_lower = convert(name2_raw, BuiltinConfig::T2s).to_lowercase();
+    let name1_sc_lower = convert(name1_raw, ChineseConversionConfig::T2s).to_lowercase();
+    let name2_sc_lower = convert(name2_raw, ChineseConversionConfig::T2s).to_lowercase();
 
     if name1_sc_lower.trim() == name2_sc_lower.trim() {
         return Some(NameMatchType::Perfect);
@@ -210,12 +209,12 @@ where
 
     let list1: Vec<String> = list1_raw
         .iter()
-        .map(|s| convert(s.as_ref(), BuiltinConfig::T2s).to_lowercase())
+        .map(|s| convert(s.as_ref(), ChineseConversionConfig::T2s).to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
     let list2: Vec<String> = list2_raw
         .iter()
-        .map(|s| convert(s.as_ref(), BuiltinConfig::T2s).to_lowercase())
+        .map(|s| convert(s.as_ref(), ChineseConversionConfig::T2s).to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -320,11 +319,11 @@ mod tests {
         let result = compare_artists(Some(artists1), Some(artists2)).unwrap();
         let set1: HashSet<_> = artists1
             .iter()
-            .map(|s| convert(s, BuiltinConfig::T2s).to_lowercase())
+            .map(|s| convert(s, ChineseConversionConfig::T2s).to_lowercase())
             .collect();
         let set2: HashSet<_> = artists2
             .iter()
-            .map(|s| convert(s, BuiltinConfig::T2s).to_lowercase())
+            .map(|s| convert(s, ChineseConversionConfig::T2s).to_lowercase())
             .collect();
         let intersection_size = set1.intersection(&set2).count();
         let union_size = set1.union(&set2).count();

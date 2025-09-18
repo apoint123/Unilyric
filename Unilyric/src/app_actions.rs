@@ -7,6 +7,7 @@ use crate::types::LrcContentType;
 use egui_toast::Toast;
 use lyrics_helper_core::BatchTaskUpdate;
 use lyrics_helper_core::CanonicalMetadataKey;
+use lyrics_helper_core::ChineseConversionConfig;
 use lyrics_helper_core::FullConversionResult;
 use lyrics_helper_core::LyricFormat;
 use lyrics_helper_core::LyricsAndMetadata;
@@ -39,7 +40,7 @@ pub enum FileAction {
 pub enum LyricsAction {
     Convert,
     ConvertCompleted(AppResult<FullConversionResult>),
-    ConvertChinese(ferrous_opencc::config::BuiltinConfig),
+    ConvertChinese(ChineseConversionConfig),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
     AddMetadata(CanonicalMetadataKey),

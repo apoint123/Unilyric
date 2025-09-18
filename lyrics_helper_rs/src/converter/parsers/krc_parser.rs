@@ -292,7 +292,7 @@ fn extract_auxiliary_data_from_krc(content: &str) -> Result<KrcAuxiliaryData, Co
         let base64_str = &caps["base64"];
         let decoded_bytes = general_purpose::STANDARD
             .decode(base64_str)
-            .map_err(ConvertError::Base64Decode)?;
+            .map_err(ConvertError::new_parse)?;
         let decoded_text = String::from_utf8(decoded_bytes).map_err(ConvertError::FromUtf8)?;
 
         // 将解码后的文本作为 JSON 解析

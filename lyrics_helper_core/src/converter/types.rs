@@ -75,10 +75,7 @@ impl LyricFormat {
             "SPL" => Some(LyricFormat::Spl),
             "LQE" | "LYRICIFYQUICKEXPORT" => Some(LyricFormat::Lqe),
             "KRC" => Some(LyricFormat::Krc),
-            _ => {
-                tracing::warn!("[LyricFormat] 未知的格式字符串: {}", s);
-                None
-            }
+            _ => None,
         }
     }
 }

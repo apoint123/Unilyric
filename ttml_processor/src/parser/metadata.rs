@@ -54,7 +54,10 @@ fn handle_metadata_start_tag(
         TAG_AGENT | TAG_AGENT_TTM => process_agent_start_in_metadata(e, reader, state, warnings)?,
         TAG_NAME | TAG_NAME_TTM => {
             if let MetadataContext::InAgent { id: Some(agent_id) } = &meta_state.context {
-                let name = reader.read_text(e.name())?.into_owned();
+                let name = reader
+                    .read_text(e.name())
+                    .map_err(ConvertError::new_parse)?
+                    .into_owned();
                 if !name.trim().is_empty()
                     && let Some(agent) = state.agent_store.agents_by_id.get_mut(agent_id)
                 {
@@ -133,7 +136,9 @@ fn process_meta_start_in_metadata(
 ) -> Result<(), ConvertError> {
     let key_attr = get_string_attribute(e, reader, &[ATTR_KEY])?;
     let value_attr = get_string_attribute(e, reader, &[ATTR_VALUE])?;
-    let text_content = reader.read_text(e.name())?;
+    let text_content = reader
+        .read_text(e.name())
+        .map_err(ConvertError::new_parse)?;
 
     if let Some(key) = key_attr {
         let value = value_attr.unwrap_or_else(|| text_content.into_owned());
@@ -210,17 +215,23 @@ fn handle_metadata_text(
     let meta_state = &mut state.metadata_state;
     if !meta_state.span_stack.is_empty() {
         // 处理在 span 内部的文本
-        meta_state.text_buffer.push_str(&e.xml_content()?);
+        meta_state
+            .text_buffer
+            .push_str(&e.xml_content().map_err(ConvertError::new_parse)?);
     } else if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. }) {
         // 处理 `<text>` 标签直接子节点中的文本（即主翻译）
         meta_state
             .current_main_plain_text
-            .push_str(&e.xml_content()?);
+            .push_str(&e.xml_content().map_err(ConvertError::new_parse)?);
     } else if matches!(meta_state.context, MetadataContext::InSongwriter) {
         raw_metadata
             .entry("songwriters".to_string())
             .or_default()
-            .push(e.xml_content()?.into_owned());
+            .push(
+                e.xml_content()
+                    .map_err(ConvertError::new_parse)?
+                    .into_owned(),
+            );
     }
     Ok(())
 }

@@ -48,10 +48,12 @@ pub(super) fn handle_global_event(
                 state.body_state.in_div = true;
                 // 获取 song-part
                 state.body_state.current_div_song_part = e
-                    .try_get_attribute(ATTR_ITUNES_SONG_PART)?
+                    .try_get_attribute(ATTR_ITUNES_SONG_PART)
+                    .map_err(ConvertError::new_parse)?
                     .map(|attr| -> Result<String, ConvertError> {
                         Ok(attr
-                            .decode_and_unescape_value(reader.decoder())?
+                            .decode_and_unescape_value(reader.decoder())
+                            .map_err(ConvertError::new_parse)?
                             .into_owned())
                     })
                     .transpose()?;
@@ -110,7 +112,9 @@ fn process_tt_start(
     if let Some(forced_mode) = options.force_timing_mode {
         state.is_line_timing_mode = forced_mode == TtmlTimingMode::Line;
     } else {
-        let timing_attr = e.try_get_attribute(ATTR_ITUNES_TIMING)?;
+        let timing_attr = e
+            .try_get_attribute(ATTR_ITUNES_TIMING)
+            .map_err(ConvertError::new_parse)?;
         if let Some(attr) = timing_attr {
             if attr.value.as_ref() == b"line" {
                 state.is_line_timing_mode = true;
@@ -126,8 +130,13 @@ fn process_tt_start(
     }
 
     // 获取 xml:lang 属性
-    if let Some(attr) = e.try_get_attribute(ATTR_XML_LANG)? {
-        let lang_val = attr.decode_and_unescape_value(reader.decoder())?;
+    if let Some(attr) = e
+        .try_get_attribute(ATTR_XML_LANG)
+        .map_err(ConvertError::new_parse)?
+    {
+        let lang_val = attr
+            .decode_and_unescape_value(reader.decoder())
+            .map_err(ConvertError::new_parse)?;
         if !lang_val.is_empty() {
             let lang_val_owned = lang_val.into_owned();
             raw_metadata

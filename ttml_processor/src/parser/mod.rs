@@ -97,7 +97,7 @@ pub fn parse_ttml(
                     reader.error_position(),
                     e
                 );
-                return Err(ConvertError::Xml(e));
+                return Err(ConvertError::new_parse(e));
             }
         };
 

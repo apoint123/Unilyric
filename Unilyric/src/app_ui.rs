@@ -14,9 +14,8 @@ use crate::app_actions::{
 };
 use eframe::egui::{self, Align, Button, ComboBox, Layout, ScrollArea, Spinner, TextEdit};
 use egui::Color32;
-use ferrous_opencc::config::BuiltinConfig;
 use log::LevelFilter;
-use lyrics_helper_core::{CanonicalMetadataKey, FullLyricsResult};
+use lyrics_helper_core::{CanonicalMetadataKey, ChineseConversionConfig, FullLyricsResult};
 
 const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
 const BUTTON_STRIP_SPACING: f32 = 4.0;
@@ -169,13 +168,13 @@ impl UniLyricApp {
                 tools_menu.label(egui::RichText::new("通用简繁转换").strong());
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    BuiltinConfig::S2t,
+                    ChineseConversionConfig::S2t,
                     "简体 → 繁体 (通用)",
                     conversion_enabled,
                 );
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    BuiltinConfig::T2s,
+                    ChineseConversionConfig::T2s,
                     "繁体 → 简体 (通用)",
                     conversion_enabled,
                 );
@@ -185,13 +184,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("简体 →", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::S2twp,
+                        ChineseConversionConfig::S2twp,
                         "台湾正体",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::S2hk,
+                        ChineseConversionConfig::S2hk,
                         "香港繁体",
                         conversion_enabled,
                     );
@@ -199,13 +198,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("繁体 →", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::Tw2sp,
+                        ChineseConversionConfig::Tw2sp,
                         "大陆简体 (含用语)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::Tw2s,
+                        ChineseConversionConfig::Tw2s,
                         "大陆简体 (仅文字)",
                         conversion_enabled,
                     );
@@ -216,13 +215,13 @@ impl UniLyricApp {
                 tools_menu.menu_button("繁体互转", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::Tw2t,
+                        ChineseConversionConfig::Tw2t,
                         "台湾繁体 → 香港繁体",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::Hk2t,
+                        ChineseConversionConfig::Hk2t,
                         "香港繁体 → 台湾繁体",
                         conversion_enabled,
                     );
@@ -230,25 +229,25 @@ impl UniLyricApp {
                 tools_menu.menu_button("其他转换", |sub_menu| {
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::S2tw,
+                        ChineseConversionConfig::S2tw,
                         "简体 → 台湾繁体 (仅文字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::T2tw,
+                        ChineseConversionConfig::T2tw,
                         "繁体 → 台湾繁体 (异体字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::T2hk,
+                        ChineseConversionConfig::T2hk,
                         "繁体 → 香港繁体 (异体字)",
                         conversion_enabled,
                     );
                     self.draw_chinese_conversion_menu_item(
                         sub_menu,
-                        BuiltinConfig::Hk2s,
+                        ChineseConversionConfig::Hk2s,
                         "香港繁体 → 简体",
                         conversion_enabled,
                     );
@@ -258,13 +257,13 @@ impl UniLyricApp {
                 tools_menu.label(egui::RichText::new("日语汉字转换").strong());
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    BuiltinConfig::Jp2t,
+                    ChineseConversionConfig::Jp2t,
                     "日语新字体 → 繁体旧字体",
                     conversion_enabled,
                 );
                 self.draw_chinese_conversion_menu_item(
                     tools_menu,
-                    BuiltinConfig::T2jp,
+                    ChineseConversionConfig::T2jp,
                     "繁体旧字体 → 日语新字体",
                     conversion_enabled,
                 );

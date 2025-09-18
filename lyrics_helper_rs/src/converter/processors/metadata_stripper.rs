@@ -15,6 +15,36 @@ use lyrics_helper_core::{MetadataStripperFlags, MetadataStripperOptions};
 type RegexCacheKey = (String, bool); // (pattern, case_sensitive)
 type RegexCacheMap = HashMap<RegexCacheKey, Regex>;
 
+mod default_rules {
+    use std::sync::OnceLock;
+
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    struct DefaultStripperConfig {
+        keywords: Vec<String>,
+        regex_patterns: Vec<String>,
+    }
+
+    fn get_config() -> &'static DefaultStripperConfig {
+        static CONFIG: OnceLock<DefaultStripperConfig> = OnceLock::new();
+        CONFIG.get_or_init(|| {
+            let config_str = include_str!("../../../assets/default_stripper_config.toml");
+            toml::from_str(config_str).expect("Failed to parse default_stripper_config.toml")
+        })
+    }
+
+    /// 获取默认的关键词列表
+    pub(super) fn keywords() -> Vec<String> {
+        get_config().keywords.clone()
+    }
+
+    /// 获取默认的正则表达式列表
+    pub(super) fn regex_patterns() -> Vec<String> {
+        get_config().regex_patterns.clone()
+    }
+}
+
 fn get_regex_cache() -> &'static Mutex<RegexCacheMap> {
     static REGEX_CACHE: OnceLock<Mutex<RegexCacheMap>> = OnceLock::new();
     REGEX_CACHE.get_or_init(Default::default)
@@ -203,7 +233,17 @@ pub fn strip_descriptive_metadata_lines(
         return;
     }
 
-    let rules = StrippingRules::new(options);
+    let options_to_use: Cow<MetadataStripperOptions> =
+        if options.keywords.is_empty() && options.regex_patterns.is_empty() {
+            debug!("[MetadataStripper] 未提供自定义规则，加载默认规则。");
+            let mut temp_options = options.clone();
+            temp_options.keywords = default_rules::keywords();
+            temp_options.regex_patterns = default_rules::regex_patterns();
+            Cow::Owned(temp_options)
+        } else {
+            Cow::Borrowed(options)
+        };
+    let rules = StrippingRules::new(&options_to_use);
 
     if lines.is_empty() || !rules.has_rules() {
         return;
@@ -211,8 +251,8 @@ pub fn strip_descriptive_metadata_lines(
 
     let original_count = lines.len();
 
-    let header_limit = options.header_scan_limit.calculate(original_count);
-    let footer_limit = options.footer_scan_limit.calculate(original_count);
+    let header_limit = options_to_use.header_scan_limit.calculate(original_count);
+    let footer_limit = options_to_use.footer_scan_limit.calculate(original_count);
 
     let first_lyric_index = find_first_lyric_line_index(lines, &rules, header_limit);
 

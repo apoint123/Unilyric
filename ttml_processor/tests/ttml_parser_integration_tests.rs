@@ -344,8 +344,8 @@ fn test_fatal_error_on_invalid_xml() {
     assert!(result.is_err(), "解析XML应该报错");
 
     assert!(
-        matches!(result.unwrap_err(), ConvertError::Xml(_)),
-        "错误类型应该为 ConvertError::Xml"
+        matches!(result.unwrap_err(), ConvertError::Parse(_)),
+        "错误类型应该为 ConvertError::Parse"
     );
 }
 

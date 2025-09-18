@@ -15,10 +15,9 @@ use crate::app_handlers::ConnectorCommand::UpdateActorSettings;
 use crate::app_settings::AppAmllMirror;
 use crate::error::{AppError, AppResult};
 use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
-use ferrous_opencc::config::BuiltinConfig;
 use lyrics_helper_core::{
-    ChineseConversionMode, ChineseConversionOptions, ContentType, ConversionInput,
-    ConversionOptions, InputFile, LyricFormat, LyricTrack, Track,
+    ChineseConversionConfig, ChineseConversionMode, ChineseConversionOptions, ContentType,
+    ConversionInput, ConversionOptions, InputFile, LyricFormat, LyricTrack, Track,
 };
 use smtc_suite::{MediaCommand, TextConversionMode};
 use tracing::warn;
@@ -1295,7 +1294,7 @@ impl UniLyricApp {
     pub(super) fn draw_chinese_conversion_menu_item(
         &mut self,
         ui: &mut egui::Ui,
-        variant: BuiltinConfig,
+        variant: ChineseConversionConfig,
         label: &str,
         enabled: bool,
     ) {

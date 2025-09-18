@@ -235,7 +235,7 @@ fn process_span_start(
 /// 处理文本事件。
 /// 这个函数的核心逻辑是区分 "音节间的空格" 和 "音节内的文本"。
 fn process_text_event(e_text: &BytesText, state: &mut TtmlParserState) -> Result<(), ConvertError> {
-    let text_slice = e_text.xml_content()?;
+    let text_slice = e_text.xml_content().map_err(ConvertError::new_parse)?;
 
     if !state.body_state.in_p {
         return Ok(()); // 不在 <p> 标签内，忽略任何文本

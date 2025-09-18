@@ -2,8 +2,6 @@ use eframe::egui;
 use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::ConnectorUpdate;
-use crate::amll_connector::protocol::ClientMessage;
-use crate::amll_connector::protocol_strings::NullString;
 use crate::app_actions::{PlayerAction, UIAction, UserAction};
 use crate::app_definition::{AppView, UniLyricApp};
 use crate::error::AppError;

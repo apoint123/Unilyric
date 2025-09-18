@@ -100,13 +100,10 @@ pub type Result<T> = std::result::Result<T, LyricsHelperError>;
 impl From<ConvertError> for LyricsHelperError {
     fn from(err: ConvertError) -> Self {
         match err {
-            ConvertError::Xml(e) => Self::XmlParse(e),
-            ConvertError::Attribute(e) => Self::XmlParse(e.into()),
+            ConvertError::Parse(e) => Self::Parser(e.to_string()),
             ConvertError::ParseInt(e) => Self::ParseInt(e),
-            ConvertError::Base64Decode(e) => Self::Base64Decode(e),
             ConvertError::FromUtf8(e) => Self::FromUtf8(e),
             ConvertError::Io(e) => Self::Io(e),
-            ConvertError::Encoding(e) => Self::Encoding(format!("编码错误: {e}")),
 
             ConvertError::JsonParse { source, context } => {
                 let error_message = format!("解析 JSON 内容 {context} 失败: {source}");

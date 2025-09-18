@@ -181,7 +181,7 @@ where
 {
     let mut found_attr = None;
     for &name in attr_names {
-        if let Some(attr) = e.try_get_attribute(name)? {
+        if let Some(attr) = e.try_get_attribute(name).map_err(ConvertError::new_parse)? {
             found_attr = Some(attr);
             break;
         }
@@ -189,7 +189,9 @@ where
 
     found_attr
         .map(|attr| {
-            let decoded_value = attr.decode_and_unescape_value(reader.decoder())?;
+            let decoded_value = attr
+                .decode_and_unescape_value(reader.decoder())
+                .map_err(ConvertError::new_parse)?;
             processor(&decoded_value)
         })
         .transpose()
