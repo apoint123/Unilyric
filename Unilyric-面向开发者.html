@@ -240,6 +240,41 @@
                             </div>
                         </div>
 
+                        <!-- 核心架构特性 -->
+                        <div id="arch-features" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-puzzle-piece mr-2"></i>核心架构特性
+                            </h3>
+                            <div class="bg-darker rounded-lg p-5 border border-gray-800">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    <div class="bg-gray-800 rounded-lg p-4">
+                                        <h4 class="font-semibold text-accent mb-2 flex items-center">
+                                            <i class="fa fa-bolt mr-2"></i>异步处理
+                                        </h4>
+                                        <p class="text-gray-400 text-sm">使用 Tokio runtime 处理网络请求，支持高并发搜索</p>
+                                    </div>
+                                    <div class="bg-gray-800 rounded-lg p-4">
+                                        <h4 class="font-semibold text-accent mb-2 flex items-center">
+                                            <i class="fa fa-plug mr-2"></i>模块化提供商
+                                        </h4>
+                                        <p class="text-gray-400 text-sm">每个音乐平台作为独立的 Provider 实现，易于扩展</p>
+                                    </div>
+                                    <div class="bg-gray-800 rounded-lg p-4">
+                                        <h4 class="font-semibold text-accent mb-2 flex items-center">
+                                            <i class="fa fa-exchange mr-2"></i>格式抽象
+                                        </h4>
+                                        <p class="text-gray-400 text-sm">统一的歌词格式转换系统，支持多输入多输出格式</p>
+                                    </div>
+                                    <div class="bg-gray-800 rounded-lg p-4">
+                                        <h4 class="font-semibold text-accent mb-2 flex items-center">
+                                            <i class="fa fa-search-plus mr-2"></i>智能匹配
+                                        </h4>
+                                        <p class="text-gray-400 text-sm">基于歌曲元数据的智能搜索算法，支持多种匹配策略</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- 歌词提供者支持 -->
                         <div id="providers" class="mb-8">
                             <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
@@ -253,12 +288,18 @@
                                     <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">酷狗音乐</span>
                                     <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">AMLL TTML 数据库</span>
                                 </div>
-                                <p class="text-gray-300 mb-2">主要功能：</p>
+                                <p class="text-gray-300 mb-2">完整功能支持：</p>
                                 <ul class="list-disc list-inside text-gray-400 space-y-1 pl-2">
-                                    <li>搜索功能</li>
-                                    <li>歌词获取</li>
-                                    <li>专辑信息查询</li>
+                                    <li><strong>搜索功能</strong> - 歌曲、专辑、艺术家搜索</li>
+                                    <li><strong>歌词获取</strong> - 多语言歌词、翻译、罗马音</li>
+                                    <li><strong>专辑信息</strong> - 元数据、曲目列表、封面</li>
+                                    <li><strong>登录支持</strong> - 二维码、Cookie登录验证</li>
+                                    <li><strong>会话管理</strong> - 状态保存和恢复</li>
                                 </ul>
+                                <p class="text-gray-300 mt-4 mb-2">提供商特性对比：</p>
+                                <div class="bg-gray-800 rounded p-3 text-xs">
+                                    <p class="text-gray-400">QQ音乐、网易云音乐支持完整功能；酷狗音乐支持搜索和歌词；AMLL数据库专门处理TTML格式</p>
+                                </div>
                             </div>
                         </div>
 
@@ -289,6 +330,14 @@
                                         <span class="font-mono font-medium">Lyricify</span>
                                     </div>
                                 </div>
+                                <p class="text-gray-300 mt-4 mb-2">高级转换特性：</p>
+                                <ul class="list-disc list-inside text-gray-400 space-y-1 pl-2">
+                                    <li><strong>多文件合并</strong> - 主歌词、翻译、罗马音文件合并</li>
+                                    <li><strong>时间轴同步</strong> - 智能时间戳对齐和校正</li>
+                                    <li><strong>简繁转换</strong> - 自动中文简繁体转换</li>
+                                    <li><strong>元数据保留</strong> - 保持原始文件的元数据信息</li>
+                                    <li><strong>批量处理</strong> - 支持文件夹批量转换</li>
+                                </ul>
                             </div>
                         </div>
                     </div>
@@ -316,12 +365,18 @@
 # 构建整个工作区
 cargo build --workspace
 
-# 构建特定包
-cargo build -p lyrics_helper_rs
-cargo build -p Unilyric
+# 发布构建（优化性能）
+cargo build --release --workspace
 
-# 发布构建
-cargo build --release --workspace</pre>
+# 构建特定包
+cargo build -p lyrics_helper_rs     # 主库包
+cargo build -p Unilyric             # GUI应用
+cargo build -p lyrics_helper_core   # 核心数据结构
+cargo build -p ttml_processor       # TTML处理器
+
+# 为特定target构建
+cargo build --release --target x86_64-pc-windows-msvc
+cargo build --release --target wasm32-unknown-unknown</pre>
                         </div>
 
                         <!-- 测试命令 -->
@@ -337,14 +392,21 @@ cargo build --release --workspace</pre>
 cargo test --workspace
 
 # 运行特定包的测试
-cargo test -p lyrics_helper_rs
-cargo test -p ttml_processor
+cargo test -p lyrics_helper_rs      # 主库包测试
+cargo test -p ttml_processor        # TTML处理器测试
+cargo test -p lyrics_helper_core    # 核心数据结构测试
 
 # 运行集成测试（需要网络连接）
 cargo test -- --ignored
 
 # 运行特定测试文件
-cargo test --test test_name</pre>
+cargo test --test test_name
+
+# 运行特定测试函数
+cargo test test_function_name
+
+# 并发运行测试
+cargo test --workspace -- --test-threads=4</pre>
                         </div>
 
                         <!-- Lint 检查 -->
@@ -356,11 +418,16 @@ cargo test --test test_name</pre>
 <button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
     <i class="fa fa-copy mr-1"></i>复制
 </button>
-# Clippy 检查
+# Clippy 检查全部代码
 cargo clippy --workspace -- -D warnings
 
-# 单个包的 clippy 检查
-cargo clippy -p lyrics_helper_rs -- -D warnings</pre>
+# 单个包的 Clippy 检查
+cargo clippy -p lyrics_helper_rs -- -D warnings
+cargo clippy -p Unilyric -- -D warnings
+cargo clippy -p ttml_processor -- -D warnings
+
+# 格式化所有代码
+cargo fmt --all --check</pre>
                         </div>
 
                         <!-- 其他命令 -->
@@ -372,11 +439,20 @@ cargo clippy -p lyrics_helper_rs -- -D warnings</pre>
 <button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
     <i class="fa fa-copy mr-1"></i>复制
 </button>
-# 生成依赖树
+# 生成依赖树和查看依赖
 cargo tree --workspace
+cargo tree -p lyrics_helper_rs
+cargo outdated
 
 # 更新依赖
-cargo update</pre>
+cargo update
+
+# 文档生成
+cargo doc --workspace --no-deps
+cargo doc --workspace --open
+
+# 清理构建缓存
+cargo clean</pre>
                         </div>
                     </div>
                 </section>
@@ -475,19 +551,35 @@ cargo update</pre>
                             <ul class="space-y-3 text-gray-300">
                                 <li class="flex items-start">
                                     <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
-                                    <span>主要入口点：<code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">lyrics_helper_rs/src/lib.rs</code> 和 <code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">Unilyric/src/main.rs</code></span>
+                                    <span><strong>主要入口点</strong>：<code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">lyrics_helper_rs/src/lib.rs:276</code> 和 <code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">Unilyric/src/main.rs</code></span>
                                 </li>
                                 <li class="flex items-start">
                                     <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
-                                    <span>遵循 Rust 最佳实践，使用 async/await 处理网络请求</span>
+                                    <span><strong>异步架构</strong>：使用 Tokio runtime 处理网络请求，支持高并发搜索</span>
                                 </li>
                                 <li class="flex items-start">
                                     <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
-                                    <span>代码包含详细的 tracing 日志用于调试</span>
+                                    <span><strong>设计模式</strong>：策略模式、工厂模式、适配器模式、观察者模式</span>
                                 </li>
                                 <li class="flex items-start">
                                     <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
-                                    <span>支持 WASM target，可用于 Web 应用</span>
+                                    <span><strong>错误处理</strong>：统一的错误类型 LyricsHelperError，包含详细错误上下文</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span><strong>日志调试</strong>：集成 tracing 库，设置日志级别：<code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">RUST_LOG=lyrics_helper_rs=debug</code></span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span><strong>WASM 支持</strong>：支持编译为 WebAssembly，可用于 Web 应用</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span><strong>会话管理</strong>：持久化登录状态，支持会话导入导出</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span><strong>取消支持</strong>：使用 CancellationToken 支持操作取消</span>
                                 </li>
                             </ul>
                         </div>

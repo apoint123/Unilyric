@@ -150,12 +150,28 @@ UniLyric/
 └── Unilyric/              # 图形用户界面应用程序
 ```
 
+### 核心架构和设计模式
+
+- **异步处理**: 使用 Tokio runtime 处理网络请求，支持高并发搜索
+- **模块化提供商**: 每个音乐平台作为独立的 Provider 实现，易于扩展（策略模式）
+- **格式抽象**: 统一的歌词格式转换系统，支持多输入多输出格式（适配器模式）
+- **智能匹配**: 基于歌曲元数据的智能搜索算法，支持多种匹配策略
+
 ### 核心组件
 
-- **lyrics_helper_core**: 定义通用的数据结构、错误类型和特征
-- **lyrics_helper_rs**: 实现歌词提供商接口、搜索算法和格式转换
-- **ttml_processor**: 高性能的 TTML 解析和生成库
+- **lyrics_helper_core**: 定义通用的数据结构、错误类型和特征（单例模式）
+- **lyrics_helper_rs**: 实现歌词提供商接口、搜索算法和格式转换（工厂模式）
+- **ttml_processor**: 高性能的 TTML 解析和生成库，专门处理 Apple Music 格式
 - **Unilyric**: 基于 eframe/egui 的跨平台 GUI 应用
+
+### 主要入口点和关键文件
+
+- **主要库入口**: `lyrics_helper_rs/src/lib.rs:276` - LyricsHelper 结构体
+- **GUI 应用入口**: `Unilyric/src/main.rs`
+- **核心数据结构**: `lyrics_helper_core/src/model/`
+- **格式转换器**: `lyrics_helper_rs/src/converter/`
+- **提供商实现**: `lyrics_helper_rs/src/providers/`
+- **网络客户端**: `lyrics_helper_rs/src/http/`
 
 ### API 使用示例
 
@@ -188,21 +204,50 @@ async fn main() {
 ### 开发命令
 
 ```bash
-# 运行测试
-cargo test --workspace
+# 构建命令
+cargo build --workspace  # 构建整个工作区
+cargo build --release --workspace  # 发布构建（优化性能）
 
-# 运行需要网络的集成测试
-cargo test -- --ignored
+# 构建特定包
+cargo build -p lyrics_helper_rs  # 主库包
+cargo build -p Unilyric  # GUI应用
+cargo build -p lyrics_helper_core  # 核心数据结构
+cargo build -p ttml_processor  # TTML处理器
 
-# Clippy 代码检查
-cargo clippy --workspace -- -D warnings
+# 测试命令
+cargo test --workspace  # 运行所有测试
+cargo test -- --ignored  # 运行集成测试（需要网络）
+cargo test -p lyrics_helper_rs  # 特定包测试
 
-# 格式化代码
-cargo fmt --all
+# 代码质量检查
+cargo clippy --workspace -- -D warnings  # Clippy 检查
+cargo fmt --all  # 格式化所有代码
 
-# 生成文档
-cargo doc --workspace --open
+# 文档生成
+cargo doc --workspace --no-deps  # 生成所有文档
+cargo doc --workspace --open  # 打开生成的文档
+
+# 依赖管理
+cargo tree --workspace  # 查看依赖树
+cargo update  # 更新所有依赖
+cargo outdated  # 查看过时的依赖
+
+# 运行应用程序
+cargo run --release -p Unilyric  # 运行图形界面
+cargo run --release -p lyrics_helper_rs -- --help  # 运行命令行工具
 ```
+
+### CLAUDE.md 开发指南
+
+项目包含详细的 `CLAUDE.md` 文件，为 AI 辅助开发提供完整指导，包括：
+
+- 完整的项目架构和设计模式说明
+- 详尽的开发命令和 CI/CD 配置
+- 网络并发处理和会话管理机制
+- WASM 编译支持和使用说明
+- 错误处理和测试策略指南
+
+详细内容请查看根目录下的 `CLAUDE.md` 文件。
 
 ## 📊 支持的格式
 
@@ -230,15 +275,19 @@ cargo doc --workspace --open
 
 ## 🌐 平台支持
 
-| 功能 | QQ音乐 | 网易云音乐 | 酷狗音乐 | AMLL TTML DB |
-|------|--------|------------|----------|--------------|
-| 搜索歌曲 | ✅ | ✅ | ✅ | ✅ |
-| 获取歌词 | ✅ | ✅ | ✅ | ✅ |
-| 歌曲信息 | ✅ | ✅ | ✅ | ❌ |
-| 专辑信息 | ✅ | ✅ | ✅ | ❌ |
-| 专辑封面 | ✅ | ✅ | ✅ | ❌ |
-| 歌手歌曲 | ✅ | ✅ | ✅ | ❌ |
-| 歌单获取 | ✅ | ✅ | ✅ | ❌ |
+| 功能                             | QQ音乐 | 网易云音乐 | 酷狗音乐 | AMLL TTML DB |
+|----------------------------------|--------|------------|----------|--------------|
+| 搜索歌曲                         | ✅      | ✅          | ✅        | ✅            |
+| 获取歌词                         | ✅      | ✅          | ✅        | ✅            |
+| 获取歌曲信息                     | ✅      | ✅          | ✅        | ❌            |
+| 获取专辑信息                     | ✅      | ✅          | ✅        | ❌            |
+| 获取专辑歌曲                     | ✅      | ✅          | ✅        | ❌            |
+| 获取专辑封面                     | ✅      | ✅          | ✅        | ❌            |
+| 获取歌手歌曲                     | ✅      | ✅          | ✅        | ❌            |
+| 获取歌单                         | ✅      | ✅          | ✅        | ❌            |
+| 获取歌曲播放链接[^1]             | ✅      | ✅          | ✅        | ❌            |
+
+[^1]: 无法获取需要 VIP 或者付费的歌曲链接。
 
 ## 🤝 贡献指南
 

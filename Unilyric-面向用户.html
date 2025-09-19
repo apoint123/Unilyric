@@ -328,11 +328,19 @@ cd Unilyric
 # 构建整个工作区
 cargo build --release --workspace
 
+# 构建特定包
+cargo build --release -p lyrics_helper_rs     # 主库包
+cargo build --release -p Unilyric             # GUI应用
+cargo build --release -p lyrics_helper_core   # 核心数据结构
+
 # 运行图形界面应用程序
 cargo run --release -p Unilyric
 
 # 运行命令行工具
-cargo run --release -p lyrics_helper_rs -- --help</pre>
+cargo run --release -p lyrics_helper_rs -- --help
+
+# 为特定平台构建
+cargo build --release --target x86_64-pc-windows-msvc</pre>
                         
                         <h4 class="text-lg font-semibold mb-3 text-accent">安装依赖</h4>
                         <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
@@ -677,21 +685,34 @@ language = "zh-CN"</pre>
                         <p class="text-gray-400 mb-4">想了解更多技术细节或为项目做贡献？查看完整的开发者文档：</p>
                         <ul class="space-y-2 text-gray-300 mb-4">
                             <li class="flex items-start">
-                                <i class="fa fa-code-fork text-accent mt-1 mr-2"></i>
-                                <span>项目架构和模块设计</span>
+                                <i class="fa fa-puzzle-piece text-accent mt-1 mr-2"></i>
+                                <span><strong>核心架构</strong>：异步处理、模块化提供商、格式抽象系统</span>
                             </li>
                             <li class="flex items-start">
                                 <i class="fa fa-cubes text-accent mt-1 mr-2"></i>
-                                <span>核心组件和API说明</span>
+                                <span><strong>设计模式</strong>：策略模式、工厂模式、适配器模式等</span>
                             </li>
                             <li class="flex items-start">
                                 <i class="fa fa-terminal text-accent mt-1 mr-2"></i>
-                                <span>开发和测试命令</span>
+                                <span><strong>完整开发命令</strong>：构建、测试、Lint、文档生成</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-code text-accent mt-1 mr-2"></i>
+                                <span><strong>API文档</strong>：详细的接口说明和使用示例</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-graduation-cap text-accent mt-1 mr-2"></i>
+                                <span><strong>学习资源</strong>：CLAUDE.md AI辅助开发指南</span>
                             </li>
                         </ul>
-                        <a href="d:\编程\Unilyric\Unilyric-面向开发者.html" class="inline-flex items-center text-primary hover:underline">
-                            查看完整开发者文档 <i class="fa fa-arrow-right ml-1"></i>
-                        </a>
+                        <div class="flex flex-col sm:flex-row gap-3 mt-4">
+                            <a href="Unilyric-面向开发者.html" class="inline-flex items-center justify-center bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                                <i class="fa fa-file-text-o mr-2"></i>开发者文档
+                            </a>
+                            <a href="CLAUDE.md" class="inline-flex items-center justify-center bg-accent hover:bg-accent/90 text-white px-4 py-2 rounded-lg font-medium transition-colors">
+                                <i class="fa fa-graduation-cap mr-2"></i>CLAUDE.md 指南
+                            </a>
+                        </div>
                     </div>
                 </div>
             </div>
