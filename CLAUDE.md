@@ -33,9 +33,14 @@ cargo build --workspace
 # 构建特定包
 cargo build -p lyrics_helper_rs
 cargo build -p Unilyric
+cargo build -p lyrics_helper_core
+cargo build -p ttml_processor
 
-# 发布构建
+# 发布构建（优化性能）
 cargo build --release --workspace
+
+# 为特定target构建
+cargo build --release --target x86_64-pc-windows-msvc
 ```
 
 ### 测试命令
@@ -46,30 +51,68 @@ cargo test --workspace
 # 运行特定包的测试
 cargo test -p lyrics_helper_rs
 cargo test -p ttml_processor
+cargo test -p lyrics_helper_core
 
 # 运行集成测试（需要网络连接）
 cargo test -- --ignored
 
 # 运行特定测试文件
 cargo test --test test_name
+
+# 运行特定测试函数
+cargo test test_function_name
+
+# 并发运行测试
+cargo test --workspace -- --test-threads=4
 ```
 
-### Lint 检查
+### 格式化和Lint检查
 ```bash
-# Clippy 检查
+# 格式化所有代码
+cargo fmt --all
+
+# Clippy 检查所有包
 cargo clippy --workspace -- -D warnings
 
 # 单个包的 clippy 检查
 cargo clippy -p lyrics_helper_rs -- -D warnings
+cargo clippy -p Unilyric -- -D warnings
 ```
 
-### 其他命令
+### 文档生成
+```bash
+# 生成所有文档
+cargo doc --workspace --no-deps
+
+# 打开生成的文档
+cargo doc --workspace --open
+
+# 生成特定包的文档
+cargo doc -p lyrics_helper_rs --open
+```
+
+### 依赖管理
 ```bash
 # 生成依赖树
 cargo tree --workspace
 
-# 更新依赖
+# 更新所有依赖
 cargo update
+
+# 查看过时的依赖
+cargo outdated
+```
+
+### 运行应用程序
+```bash
+# 运行图形界面应用
+cargo run --release -p Unilyric
+
+# 运行命令行工具
+cargo run --release -p lyrics_helper_rs -- --help
+
+# 调试模式运行
+cargo run -p Unilyric
 ```
 
 ## CI/CD 配置
@@ -86,9 +129,46 @@ GitHub Actions 配置位于 `Unilyric/.github/workflows/release.yml`：
 3. **性能优化**: 使用 Rust nightly 工具链进行最大优化
 4. **多语言支持**: 主要支持中文歌曲和相关功能
 
+## 核心架构和设计模式
+
+### 核心特性设计
+- **异步处理**: 使用 Tokio runtime 处理网络请求，支持高并发搜索
+- **模块化提供商**: 每个音乐平台作为独立的 Provider 实现，易于扩展
+- **格式抽象**: 统一的歌词格式转换系统，支持多输入多输出格式
+- **智能匹配**: 基于歌曲元数据的智能搜索算法，支持多种匹配策略
+
+### 关键设计模式
+- **策略模式**: 搜索模式（Ordered, Parallel, Specific, Subset）
+- **工厂模式**: 提供商动态加载和初始化
+- **适配器模式**: 不同歌词格式的统一处理接口
+- **观察者模式**: 登录流程的事件处理机制
+
+### 主要入口点和关键文件
+- **主要库入口**: `lyrics_helper_rs/src/lib.rs:276` - `LyricsHelper` 结构体
+- **GUI 应用入口**: `Unilyric/src/main.rs`
+- **核心数据结构**: `lyrics_helper_core/src/model/`
+- **格式转换器**: `lyrics_helper_rs/src/converter/`
+- **提供商实现**: `lyrics_helper_rs/src/providers/`
+- **网络客户端**: `lyrics_helper_rs/src/http/`
+
+### 网络与并发
+- **HTTP 客户端**: 自定义抽象 HTTP 客户端接口，支持 cookie 管理
+- **并发搜索**: 并行搜索多个提供商，自动选择最佳匹配
+- **会话管理**: 持久化登录状态，支持会话导入导出
+- **取消支持**: 使用 `CancellationToken` 支持操作取消
+
+### 提供商支持详情
+- **QQ音乐**: 完整支持搜索、歌词、专辑信息、登录
+- **网易云音乐**: 完整支持搜索、歌词、专辑信息、登录
+- **酷狗音乐**: 支持搜索和歌词获取
+- **AMLL TTML 数据库**: 专门处理 Apple Music 歌词数据库
+
 ## 开发要点
 
-- 主要入口点：`lyrics_helper_rs/src/lib.rs` 和 `Unilyric/src/main.rs`
-- 遵循 Rust 最佳实践，使用 async/await 处理网络请求
-- 代码包含详细的 tracing 日志用于调试
-- 支持 WASM target，可用于 Web 应用
+- **主要入口点**: `lyrics_helper_rs/src/lib.rs:276` 和 `Unilyric/src/main.rs`
+- **异步架构**: 使用 async/await 和 Tokio 处理所有网络请求
+- **日志调试**: 集成 tracing 库，设置日志级别: `RUST_LOG=lyrics_helper_rs=debug`
+- **WASM 支持**: 支持编译为 WebAssembly，可用于 Web 应用
+- **错误处理**: 统一的错误类型 `LyricsHelperError`，包含详细的错误上下文
+- **测试策略**: 单元测试 + 集成测试（带网络请求的需要 `-- --ignored`）
+- **性能优化**: 使用 nightly Rust 工具链进行最大优化，release 构建启用 LTO
