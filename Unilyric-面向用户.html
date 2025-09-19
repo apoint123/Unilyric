@@ -1,0 +1,956 @@
+<html lang="zh-CN"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniLyric - 全能的歌词转换器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        dark: '#1E293B',
+                        darker: '#0F172A',
+                        light: '#F8FAFC',
+                        accent: '#8B5CF6'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .text-gradient {
+                background-clip: text;
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .card-hover {
+                transition: all 0.3s ease;
+            }
+            .card-hover:hover {
+                transform: translateY(-5px);
+                box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.1), 0 10px 10px -5px rgba(59, 130, 246, 0.04);
+            }
+            .badge {
+                @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium;
+            }
+        }
+    </style>
+    <style>
+        /* 基础动画效果 */
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        /* 代码块样式 */
+        pre {
+            position: relative;
+            overflow-x: auto;
+        }
+        
+        /* 复制按钮样式 */
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        pre:hover .copy-btn {
+            opacity: 1;
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1E293B;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748B;
+        }
+
+        /* 截图容器 */
+        .screenshot-container {
+            position: relative;
+            overflow: hidden;
+            border-radius: 0.75rem;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 10px 10px -5px rgba(0, 0, 0, 0.1);
+        }
+        
+        .screenshot-container img {
+            transition: transform 0.5s ease;
+        }
+        
+        .screenshot-container:hover img {
+            transform: scale(1.03);
+        }
+    </style>
+</head>
+<body class="bg-darker text-light font-sans">
+    <!-- 顶部导航 -->
+    <header class="sticky top-0 z-50 bg-darker/80 backdrop-blur-md border-b border-gray-800">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa fa-music text-primary text-2xl"></i>
+                <h1 class="text-xl md:text-2xl font-bold text-gradient bg-gradient-to-r from-primary to-accent">UniLyric</h1>
+            </div>
+            <div class="hidden md:flex space-x-6">
+                <a href="#features" class="hover:text-primary transition-colors">主要特性</a>
+                <a href="#quickstart" class="hover:text-primary transition-colors">快速开始</a>
+                <a href="#guide" class="hover:text-primary transition-colors">使用指南</a>
+                <a href="#formats" class="hover:text-primary transition-colors">支持格式</a>
+                <a href="#contribute" class="hover:text-primary transition-colors">贡献指南</a>
+            </div>
+            <div class="flex items-center space-x-4">
+                <a href="https://github.com/apoint123/Unilyric/releases/latest" class="hidden md:inline-flex items-center bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg transition-colors">
+                    <i class="fa fa-download mr-2"></i>下载
+                </a>
+                <button id="mobile-menu-btn" class="md:hidden text-light">
+                    <i class="fa fa-bars text-xl"></i>
+                </button>
+            </div>
+        </div>
+        <!-- 移动端菜单 -->
+        <div id="mobile-menu" class="hidden md:hidden bg-dark border-b border-gray-800">
+            <div class="container mx-auto px-4 py-2 flex flex-col space-y-3">
+                <a href="#features" class="py-2 hover:text-primary transition-colors">主要特性</a>
+                <a href="#quickstart" class="py-2 hover:text-primary transition-colors">快速开始</a>
+                <a href="#guide" class="py-2 hover:text-primary transition-colors">使用指南</a>
+                <a href="#formats" class="py-2 hover:text-primary transition-colors">支持格式</a>
+                <a href="#contribute" class="py-2 hover:text-primary transition-colors">贡献指南</a>
+                <a href="https://github.com/apoint123/Unilyric/releases/latest" class="py-2 text-primary hover:underline">
+                    <i class="fa fa-download mr-2"></i>下载最新版本
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 英雄区域 -->
+    <section class="py-12 md:py-20 bg-gradient-to-b from-dark to-darker">
+        <div class="container mx-auto px-4">
+            <div class="text-center max-w-4xl mx-auto">
+                <h1 class="text-3xl md:text-5xl font-bold mb-6">UniLyric - 全能的歌词转换器</h1>
+                <p class="text-xl text-gray-300 mb-10">一个强大的跨平台歌词处理工具，支持从多个音乐平台搜索、下载和转换歌词格式</p>
+                
+                <div class="screenshot-container mb-10 mx-auto max-w-3xl">
+                    <img src="https://p3-flow-imagex-sign.byteimg.com/tos-cn-i-a9rns2rl98/rc/pc/code_assistant/4c34ef97dc4e4e6fa7f5559f3e66e434~tplv-a9rns2rl98-image.image?rcl=2025091919165170FC7D1383ACA21352C7&amp;rk3s=8e244e95&amp;rrcfp=e75484ac&amp;x-expires=1758885417&amp;x-signature=ju5Wl5JQTyHCg3vcpVVzGkt%2B1yw%3D" alt="UniLyric 应用程序截图，显示了主界面和歌词转换功能" class="w-full h-auto rounded-lg">
+                </div>
+                
+                <div class="flex flex-wrap justify-center gap-4 mb-10">
+                    <a href="https://github.com/apoint123/Unilyric/releases/latest" class="badge bg-primary text-white">
+                        <i class="fa fa-download mr-1"></i>最新版本
+                    </a>
+                    <a href="LICENSE" class="badge bg-gray-700 text-white">
+                        <i class="fa fa-file-text-o mr-1"></i>MIT 许可证
+                    </a>
+                    <a href="https://github.com/apoint123/Unilyric/actions" class="badge bg-gray-700 text-white">
+                        <i class="fa fa-cogs mr-1"></i>构建状态
+                    </a>
+                    <a href="https://github.com/apoint123/Unilyric" class="badge bg-gray-700 text-white">
+                        <i class="fa fa-star mr-1"></i>星标数量
+                    </a>
+                </div>
+                
+                <div class="flex flex-col sm:flex-row justify-center gap-4">
+                    <a href="https://github.com/apoint123/Unilyric/releases/latest" class="bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center">
+                        <i class="fa fa-download mr-2"></i>立即下载
+                    </a>
+                    <a href="#quickstart" class="bg-dark border border-gray-700 hover:border-primary text-white px-6 py-3 rounded-lg font-medium transition-colors flex items-center justify-center">
+                        <i class="fa fa-book mr-2"></i>开始使用
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 主要内容区 -->
+    <main class="container mx-auto px-4 py-12">
+        <!-- 主要特性 -->
+        <section id="features" class="mb-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold mb-4">🌟 主要特性</h2>
+                <p class="text-gray-400 max-w-3xl mx-auto">UniLyric 提供了丰富的功能，满足您处理歌词的各种需求</p>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-plug text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">多平台支持</h3>
+                    <p class="text-gray-400">从 QQ音乐、网易云音乐、酷狗音乐和 AMLL TTML 数据库获取歌词，一站式满足您的需求。</p>
+                </div>
+                
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-exchange text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">格式转换</h3>
+                    <p class="text-gray-400">支持 LRC、QRC、KRC、YRC、TTML、Lyricify 等多种歌词格式的相互转换。</p>
+                </div>
+                
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-search text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">智能搜索</h3>
+                    <p class="text-gray-400">基于歌曲元数据（标题、艺术家、专辑）的智能匹配算法，快速找到最匹配的歌词。</p>
+                </div>
+                
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-files-o text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">批量处理</h3>
+                    <p class="text-gray-400">支持批量转换和合并多个歌词文件，提高处理效率，节省您的时间。</p>
+                </div>
+                
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-language text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">多语言支持</h3>
+                    <p class="text-gray-400">自动处理中文简繁转换，支持翻译和罗马音歌词，满足多语言需求。</p>
+                </div>
+                
+                <div class="bg-dark rounded-xl p-6 border border-gray-800 card-hover">
+                    <div class="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-4">
+                        <i class="fa fa-desktop text-primary text-xl"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold mb-3">图形界面</h3>
+                    <p class="text-gray-400">基于 egui 的现代化跨平台 GUI 界面，简洁直观，易于操作。</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- 快速开始 -->
+        <section id="quickstart" class="mb-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold mb-4">🚀 快速开始</h2>
+                <p class="text-gray-400 max-w-3xl mx-auto">只需几步，即可开始使用 UniLyric 处理您的歌词文件</p>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- 普通用户 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-secondary/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-user text-secondary"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">对于普通用户</h3>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h4 class="text-lg font-semibold mb-3 text-secondary">下载预编译版本</h4>
+                        <p class="text-gray-400 mb-4">前往 <a href="https://github.com/apoint123/Unilyric/releases" class="text-primary hover:underline">Releases 页面</a> 下载最新的预编译版本：</p>
+                        <ul class="space-y-2 text-gray-300 mb-4">
+                            <li class="flex items-start">
+                                <i class="fa fa-windows text-gray-500 mt-1 mr-2"></i>
+                                <span>Windows: 下载 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">.exe</code> 可执行文件</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-apple text-gray-500 mt-1 mr-2"></i>
+                                <span>macOS: 下载 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">.dmg</code> 安装包或 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">.app</code> 文件</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-linux text-gray-500 mt-1 mr-2"></i>
+                                <span>Linux: 下载 AppImage 或二进制文件</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-lg font-semibold mb-3 text-secondary">基本使用</h4>
+                        <ol class="space-y-2 text-gray-300 pl-6 list-decimal">
+                            <li>启动 UniLyric 应用程序</li>
+                            <li>在搜索栏输入歌曲名称和艺术家</li>
+                            <li>选择喜欢的歌词版本</li>
+                            <li>选择目标格式进行转换</li>
+                            <li>保存或导出歌词文件</li>
+                        </ol>
+                    </div>
+                </div>
+                
+                <!-- 开发者 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-accent/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-code text-accent"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">对于开发者</h3>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h4 class="text-lg font-semibold mb-3 text-accent">环境要求</h4>
+                        <ul class="space-y-2 text-gray-300 mb-4">
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-accent mt-1 mr-2"></i>
+                                <span><strong>Rust</strong>: 1.70+ (推荐使用 nightly 工具链以获得最佳性能)</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-accent mt-1 mr-2"></i>
+                                <span><strong>Cargo</strong>: 最新版本</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-accent mt-1 mr-2"></i>
+                                <span><strong>系统</strong>: Windows, macOS, 或 Linux</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-lg font-semibold mb-3 text-accent">从源码构建</h4>
+                        <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto mb-4"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# 克隆仓库
+git clone https://github.com/apoint123/Unilyric.git
+cd Unilyric
+
+# 构建整个工作区
+cargo build --release --workspace
+
+# 运行图形界面应用程序
+cargo run --release -p Unilyric
+
+# 运行命令行工具
+cargo run --release -p lyrics_helper_rs -- --help</pre>
+                        
+                        <h4 class="text-lg font-semibold mb-3 text-accent">安装依赖</h4>
+                        <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# 更新 Rust 工具链
+rustup update
+
+# 安装 nightly 工具链（可选，用于性能优化）
+rustup toolchain install nightly
+rustup default nightly</pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 详细使用指南 -->
+        <section id="guide" class="mb-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold mb-4">📖 详细使用指南</h2>
+                <p class="text-gray-400 max-w-3xl mx-auto">了解如何充分利用 UniLyric 的各项功能</p>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
+                <!-- 图形界面操作 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-desktop text-primary"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">图形界面操作</h3>
+                    </div>
+                    
+                    <ol class="space-y-4 text-gray-300">
+                        <li class="flex">
+                            <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center mr-4 shrink-0 mt-0.5">
+                                <span class="font-bold text-primary">1</span>
+                            </div>
+                            <div>
+                                <strong class="text-white">搜索歌曲</strong>
+                                <p class="text-gray-400 mt-1">在主界面的搜索框中输入歌曲信息，可以包括歌曲名、艺术家和专辑</p>
+                            </div>
+                        </li>
+                        <li class="flex">
+                            <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center mr-4 shrink-0 mt-0.5">
+                                <span class="font-bold text-primary">2</span>
+                            </div>
+                            <div>
+                                <strong class="text-white">选择提供商</strong>
+                                <p class="text-gray-400 mt-1">从下拉菜单选择音乐平台（QQ、网易云、酷狗等），可以选择多个平台同时搜索</p>
+                            </div>
+                        </li>
+                        <li class="flex">
+                            <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center mr-4 shrink-0 mt-0.5">
+                                <span class="font-bold text-primary">3</span>
+                            </div>
+                            <div>
+                                <strong class="text-white">预览歌词</strong>
+                                <p class="text-gray-400 mt-1">查看搜索结果并选择最匹配的版本，点击可预览完整歌词内容</p>
+                            </div>
+                        </li>
+                        <li class="flex">
+                            <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center mr-4 shrink-0 mt-0.5">
+                                <span class="font-bold text-primary">4</span>
+                            </div>
+                            <div>
+                                <strong class="text-white">格式转换</strong>
+                                <p class="text-gray-400 mt-1">选择目标输出格式，可以设置额外的转换选项如编码、时间偏移等</p>
+                            </div>
+                        </li>
+                        <li class="flex">
+                            <div class="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center mr-4 shrink-0 mt-0.5">
+                                <span class="font-bold text-primary">5</span>
+                            </div>
+                            <div>
+                                <strong class="text-white">导出保存</strong>
+                                <p class="text-gray-400 mt-1">将转换后的歌词保存到本地文件，可以选择保存路径和文件名格式</p>
+                            </div>
+                        </li>
+                    </ol>
+                </div>
+                
+                <!-- 命令行使用 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-terminal text-primary"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">命令行使用</h3>
+                    </div>
+                    
+                    <p class="text-gray-300 mb-4">UniLyric 也提供命令行接口，适合批量处理和自动化：</p>
+                    
+                    <div class="space-y-6">
+                        <div>
+                            <h4 class="text-lg font-semibold mb-2 text-secondary">搜索歌曲</h4>
+                            <pre class="bg-darker rounded-lg p-3 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+lyrics_helper_rs search "歌曲名" --artist "艺术家"</pre>
+                        </div>
+                        
+                        <div>
+                            <h4 class="text-lg font-semibold mb-2 text-secondary">转换歌词格式</h4>
+                            <pre class="bg-darker rounded-lg p-3 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+lyrics_helper_rs convert input.lrc --output output.ttml --format ttml</pre>
+                        </div>
+                        
+                        <div>
+                            <h4 class="text-lg font-semibold mb-2 text-secondary">批量处理文件夹</h4>
+                            <pre class="bg-darker rounded-lg p-3 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+lyrics_helper_rs batch-convert ./input_folder/ --output-dir ./output/ --format krc</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 配置文件 -->
+            <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                <div class="flex items-center mb-6">
+                    <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                        <i class="fa fa-cog text-primary"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold">配置文件</h3>
+                </div>
+                
+                <p class="text-gray-300 mb-4">创建 <code class="bg-darker px-2 py-1 rounded text-sm font-mono">config.toml</code> 文件来自定义设置：</p>
+                
+                <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto mb-4"><button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+[providers]
+qq_music = true
+netease = true
+kugou = true
+amll_ttml_database = true
+
+[conversion]
+default_format = "ttml"
+auto_convert_chinese = true
+
+[ui]
+theme = "dark"
+language = "zh-CN"</pre>
+                
+                <p class="text-gray-400 text-sm">配置文件位置：</p>
+                <ul class="text-gray-400 text-sm mt-2 space-y-1">
+                    <li><strong>Windows</strong>: <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">%APPDATA%\UniLyric\config.toml</code></li>
+                    <li><strong>macOS</strong>: <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">~/Library/Application Support/UniLyric/config.toml</code></li>
+                    <li><strong>Linux</strong>: <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">~/.config/unilyric/config.toml</code></li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 支持的格式和平台 -->
+        <section id="formats" class="mb-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold mb-4">📊 支持的格式与平台</h2>
+                <p class="text-gray-400 max-w-3xl mx-auto">UniLyric 支持多种歌词格式和音乐平台</p>
+            </div>
+            
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <!-- 支持的格式 -->
+                <div>
+                    <h3 class="text-2xl font-bold mb-6 flex items-center">
+                        <i class="fa fa-file-text-o text-primary mr-3"></i>支持的格式
+                    </h3>
+                    
+                    <div class="mb-8">
+                        <h4 class="text-xl font-semibold mb-4 text-secondary">输入格式</h4>
+                        <div class="overflow-x-auto">
+                            <table class="w-full bg-darker rounded-lg border border-gray-800">
+                                <thead>
+                                    <tr class="border-b border-gray-800">
+                                        <th class="px-4 py-3 text-left font-semibold">格式</th>
+                                        <th class="px-4 py-3 text-left font-semibold">解析支持</th>
+                                        <th class="px-4 py-3 text-left font-semibold">说明</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">LRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">标准歌词格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">增强型 LRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">带时间标签的增强格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">QRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">QQ音乐专属格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">KRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">酷狗音乐专属格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">YRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">云端歌词格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">TTML</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">Apple Music 时间文本标记语言</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-mono">Lyricify</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">Lyricify 音节格式</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div>
+                        <h4 class="text-xl font-semibold mb-4 text-secondary">输出格式</h4>
+                        <div class="overflow-x-auto">
+                            <table class="w-full bg-darker rounded-lg border border-gray-800">
+                                <thead>
+                                    <tr class="border-b border-gray-800">
+                                        <th class="px-4 py-3 text-left font-semibold">格式</th>
+                                        <th class="px-4 py-3 text-left font-semibold">生成支持</th>
+                                        <th class="px-4 py-3 text-left font-semibold">说明</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">LRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">标准歌词格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">增强型 LRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">带时间标签的增强格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">QRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">QQ音乐专属格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">KRC</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">酷狗音乐专属格式</td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3 font-mono">TTML</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">Apple Music 时间文本标记语言</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3 font-mono">Lyricify</td>
+                                        <td class="px-4 py-3"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3">多种 Lyricify 导出格式</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 平台支持 -->
+                <div>
+                    <h3 class="text-2xl font-bold mb-6 flex items-center">
+                        <i class="fa fa-plug text-primary mr-3"></i>平台支持
+                    </h3>
+                    
+                    <div class="bg-darker rounded-lg border border-gray-800 mb-8">
+                        <div class="overflow-x-auto">
+                            <table class="w-full">
+                                <thead>
+                                    <tr class="border-b border-gray-800">
+                                        <th class="px-4 py-3 text-left font-semibold">功能</th>
+                                        <th class="px-4 py-3 text-center font-semibold">QQ音乐</th>
+                                        <th class="px-4 py-3 text-center font-semibold">网易云音乐</th>
+                                        <th class="px-4 py-3 text-center font-semibold">酷狗音乐</th>
+                                        <th class="px-4 py-3 text-center font-semibold">AMLL TTML DB</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3">搜索歌曲</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3">获取歌词</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3">歌曲信息</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-gray-500">❌</span></td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3">专辑信息</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-gray-500">❌</span></td>
+                                    </tr>
+                                    <tr class="border-b border-gray-800">
+                                        <td class="px-4 py-3">专辑封面</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-gray-500">❌</span></td>
+                                    </tr>
+                                    <tr>
+                                        <td class="px-4 py-3">歌单获取</td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-secondary">✅</span></td>
+                                        <td class="px-4 py-3 text-center"><span class="text-gray-500">❌</span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <!-- 开发者文档简介 -->
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                        <h4 class="text-xl font-semibold mb-3 text-accent">开发者文档</h4>
+                        <p class="text-gray-400 mb-4">想了解更多技术细节或为项目做贡献？查看完整的开发者文档：</p>
+                        <ul class="space-y-2 text-gray-300 mb-4">
+                            <li class="flex items-start">
+                                <i class="fa fa-code-fork text-accent mt-1 mr-2"></i>
+                                <span>项目架构和模块设计</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-cubes text-accent mt-1 mr-2"></i>
+                                <span>核心组件和API说明</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-terminal text-accent mt-1 mr-2"></i>
+                                <span>开发和测试命令</span>
+                            </li>
+                        </ul>
+                        <a href="#" class="inline-flex items-center text-primary hover:underline">
+                            查看完整开发者文档 <i class="fa fa-arrow-right ml-1"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 贡献指南 -->
+        <section id="contribute" class="mb-20">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl font-bold mb-4">🤝 贡献指南</h2>
+                <p class="text-gray-400 max-w-3xl mx-auto">我们欢迎各种形式的贡献，帮助 UniLyric 变得更好</p>
+            </div>
+            
+            <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div>
+                        <h3 class="text-xl font-semibold mb-4 text-primary">代码规范</h3>
+                        <ul class="space-y-2 text-gray-300">
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-primary mt-1 mr-2"></i>
+                                <span>遵循 Rust 官方编码规范</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-primary mt-1 mr-2"></i>
+                                <span>使用 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">cargo fmt</code> 格式化代码</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-primary mt-1 mr-2"></i>
+                                <span>通过 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">cargo clippy</code> 检查</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-check-circle text-primary mt-1 mr-2"></i>
+                                <span>编写适当的文档注释</span>
+                            </li>
+                        </ul>
+                        
+                        <h3 class="text-xl font-semibold mb-4 mt-6 text-primary">提交信息</h3>
+                        <p class="text-gray-400 mb-2">使用约定式提交格式：</p>
+                        <pre class="bg-darker rounded-lg p-3 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto">feat: 添加新功能
+fix: 修复bug
+docs: 文档更新
+style: 代码格式调整
+refactor: 代码重构
+test: 测试相关</pre>
+                    </div>
+                    
+                    <div>
+                        <h3 class="text-xl font-semibold mb-4 text-primary">开发流程</h3>
+                        <ol class="space-y-3 text-gray-300 pl-6 list-decimal">
+                            <li>Fork 本项目</li>
+                            <li>创建特性分支 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">(git checkout -b feature/AmazingFeature)</code></li>
+                            <li>提交更改 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">(git commit -m 'feat: Add AmazingFeature')</code></li>
+                            <li>推送到分支 <code class="bg-darker px-1.5 py-0.5 rounded text-xs font-mono">(git push origin feature/AmazingFeature)</code></li>
+                            <li>开启 Pull Request</li>
+                        </ol>
+                        
+                        <h3 class="text-xl font-semibold mb-4 mt-6 text-primary">问题与支持</h3>
+                        <p class="text-gray-400 mb-3">如果您遇到问题或有建议：</p>
+                        <ul class="space-y-2 text-gray-300">
+                            <li class="flex items-start">
+                                <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                <span>查看 <a href="#" class="text-primary hover:underline">常见问题解答</a>（即将添加）</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                <span>搜索 <a href="https://github.com/apoint123/Unilyric/issues" class="text-primary hover:underline">Issues</a> 看看是否已有相关讨论</span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                <span>提交新的 <a href="https://github.com/apoint123/Unilyric/issues/new/choose" class="text-primary hover:underline">Issue</a></span>
+                            </li>
+                            <li class="flex items-start">
+                                <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                <span>加入讨论 <a href="https://github.com/apoint123/Unilyric/discussions" class="text-primary hover:underline">Discussions</a></span>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 许可证和致谢 -->
+        <section class="mb-12">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <!-- 许可证 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-file-text-o text-primary"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">📝 许可证</h3>
+                    </div>
+                    <p class="text-gray-300">
+                        本项目主要代码根据 <a href="LICENSE" class="text-primary hover:underline">MIT 许可证</a> 发布。
+                    </p>
+                    <p class="text-gray-400 mt-2">
+                        部分第三方库可能使用不同的许可证，请查看相应的依赖项许可证信息。
+                    </p>
+                </div>
+                
+                <!-- 致谢 -->
+                <div class="bg-dark rounded-xl p-6 border border-gray-800">
+                    <div class="flex items-center mb-6">
+                        <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                            <i class="fa fa-heart text-primary"></i>
+                        </div>
+                        <h3 class="text-2xl font-bold">🙏 致谢</h3>
+                    </div>
+                    <p class="text-gray-300 mb-3">感谢所有贡献者和用户的支持！特别感谢：</p>
+                    <ul class="space-y-2 text-gray-300">
+                        <li class="flex items-start">
+                            <i class="fa fa-github text-gray-500 mt-1 mr-2"></i>
+                            <span><a href="https://github.com/emilk/egui" class="text-primary hover:underline">egui</a> 团队提供优秀的GUI框架</span>
+                        </li>
+                        <li class="flex items-start">
+                            <i class="fa fa-code text-gray-500 mt-1 mr-2"></i>
+                            <span>各音乐平台API的开发者</span>
+                        </li>
+                        <li class="flex items-start">
+                            <i class="fa fa-user text-gray-500 mt-1 mr-2"></i>
+                            <span>所有提交问题和建议的用户</span>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 点赞鼓励 -->
+        <div class="text-center py-10 bg-dark rounded-xl border border-gray-800">
+            <p class="text-xl font-medium mb-4">如果这个项目对您有帮助，请给个 ⭐ 支持一下！</p>
+            <a href="https://github.com/apoint123/Unilyric" class="inline-flex items-center bg-primary hover:bg-primary/90 text-white px-6 py-3 rounded-lg font-medium transition-colors">
+                <i class="fa fa-github mr-2"></i>访问 GitHub 仓库
+            </a>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-dark border-t border-gray-800 py-8">
+        <div class="container mx-auto px-4">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="flex items-center space-x-2 mb-4 md:mb-0">
+                    <i class="fa fa-music text-primary text-2xl"></i>
+                    <h2 class="text-xl font-bold text-gradient bg-gradient-to-r from-primary to-accent">UniLyric</h2>
+                </div>
+                <div class="flex space-x-6 mb-4 md:mb-0">
+                    <a href="#features" class="hover:text-primary transition-colors">主要特性</a>
+                    <a href="#quickstart" class="hover:text-primary transition-colors">快速开始</a>
+                    <a href="#guide" class="hover:text-primary transition-colors">使用指南</a>
+                    <a href="#contribute" class="hover:text-primary transition-colors">贡献指南</a>
+                </div>
+                <div class="flex space-x-4">
+                    <a href="https://github.com/apoint123/Unilyric" class="text-gray-400 hover:text-primary transition-colors">
+                        <i class="fa fa-github text-xl"></i>
+                    </a>
+                    <a href="#" class="text-gray-400 hover:text-primary transition-colors">
+                        <i class="fa fa-twitter text-xl"></i>
+                    </a>
+                    <a href="#" class="text-gray-400 hover:text-primary transition-colors">
+                        <i class="fa fa-envelope text-xl"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="text-center text-gray-500 text-sm mt-6">
+                <p>© 2023 UniLyric. 保留所有权利。</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- 回到顶部按钮 -->
+    <button id="back-to-top" class="fixed bottom-6 right-6 bg-primary/80 hover:bg-primary text-white w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all opacity-0 invisible z-50">
+        <i class="fa fa-arrow-up"></i>
+    </button>
+
+    <!-- JavaScript -->
+    <script>
+        // 移动端菜单切换
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // 关闭移动菜单当点击菜单项
+        const mobileMenuItems = mobileMenu.querySelectorAll('a');
+        mobileMenuItems.forEach(item => {
+            item.addEventListener('click', () => {
+                mobileMenu.classList.add('hidden');
+            });
+        });
+
+        // 复制代码功能
+        function copyCode(button) {
+            const pre = button.parentElement;
+            // 获取代码内容，排除复制按钮的文本
+            const code = pre.textContent.trim().replace(/复制$/, '').trim();
+            
+            navigator.clipboard.writeText(code).then(() => {
+                const originalText = button.innerHTML;
+                button.innerHTML = '<i class="fa fa-check mr-1"></i>已复制';
+                button.classList.remove('bg-gray-700', 'hover:bg-primary');
+                button.classList.add('bg-secondary');
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.classList.remove('bg-secondary');
+                    button.classList.add('bg-gray-700', 'hover:bg-primary');
+                }, 2000);
+            });
+        }
+
+        // 回到顶部按钮
+        const backToTopBtn = document.getElementById('back-to-top');
+        
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 500) {
+                backToTopBtn.classList.remove('opacity-0', 'invisible');
+                backToTopBtn.classList.add('opacity-100', 'visible');
+            } else {
+                backToTopBtn.classList.remove('opacity-100', 'visible');
+                backToTopBtn.classList.add('opacity-0', 'invisible');
+            }
+        });
+        
+        backToTopBtn.addEventListener('click', () => {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        });
+
+        // 导航项激活状态
+        const sections = document.querySelectorAll('section[id]');
+        const navItems = document.querySelectorAll('header a:not([href^="http"])');
+        
+        function setActiveNavItem() {
+            const scrollPosition = window.scrollY + 100;
+            
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.offsetHeight;
+                const sectionId = section.getAttribute('id');
+                
+                if (scrollPosition >= sectionTop && scrollPosition < sectionTop + sectionHeight) {
+                    navItems.forEach(item => {
+                        item.classList.remove('text-primary', 'font-medium');
+                        item.classList.add('text-gray-300');
+                        
+                        if (item.getAttribute('href') === `#${sectionId}`) {
+                            item.classList.remove('text-gray-300');
+                            item.classList.add('text-primary', 'font-medium');
+                        }
+                    });
+                }
+            });
+        }
+        
+        window.addEventListener('scroll', setActiveNavItem);
+        setActiveNavItem(); // 初始化
+    </script>
+
+
+    </body></html>

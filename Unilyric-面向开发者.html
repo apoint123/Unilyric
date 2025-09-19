@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>UniLyric - 项目文档</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        dark: '#1E293B',
+                        darker: '#0F172A',
+                        light: '#F8FAFC',
+                        accent: '#8B5CF6'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .text-gradient {
+                background-clip: text;
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .card-hover {
+                transition: all 0.3s ease;
+            }
+            .card-hover:hover {
+                transform: translateY(-5px);
+            }
+            .nav-item-active {
+                border-left-color: theme('colors.primary');
+                border-left-width: 3px;
+            }
+        }
+    </style>
+    <style>
+        /* 基础动画效果 */
+        html {
+            scroll-behavior: smooth;
+        }
+        
+        /* 代码块样式 */
+        pre {
+            position: relative;
+            overflow-x: auto;
+        }
+        
+        /* 复制按钮样式 */
+        .copy-btn {
+            position: absolute;
+            top: 0.5rem;
+            right: 0.5rem;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        pre:hover .copy-btn {
+            opacity: 1;
+        }
+        
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #1E293B;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 4px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748B;
+        }
+    </style>
+</head>
+<body class="bg-darker text-light font-sans">
+    <!-- 顶部导航 -->
+    <header class="sticky top-0 z-50 bg-darker/80 backdrop-blur-md border-b border-gray-800">
+        <div class="container mx-auto px-4 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+                <i class="fa fa-music text-primary text-2xl"></i>
+                <h1 class="text-xl md:text-2xl font-bold text-gradient bg-gradient-to-r from-primary to-accent">UniLyric</h1>
+            </div>
+            <div class="hidden md:flex space-x-6">
+                <a href="#overview" class="hover:text-primary transition-colors">项目概览</a>
+                <a href="#architecture" class="hover:text-primary transition-colors">代码架构</a>
+                <a href="#commands" class="hover:text-primary transition-colors">开发命令</a>
+                <a href="#cicd" class="hover:text-primary transition-colors">CI/CD</a>
+                <a href="#notes" class="hover:text-primary transition-colors">重要说明</a>
+            </div>
+            <button id="mobile-menu-btn" class="md:hidden text-light">
+                <i class="fa fa-bars text-xl"></i>
+            </button>
+        </div>
+        <!-- 移动端菜单 -->
+        <div id="mobile-menu" class="hidden md:hidden bg-dark border-b border-gray-800">
+            <div class="container mx-auto px-4 py-2 flex flex-col space-y-3">
+                <a href="#overview" class="py-2 hover:text-primary transition-colors">项目概览</a>
+                <a href="#architecture" class="py-2 hover:text-primary transition-colors">代码架构</a>
+                <a href="#commands" class="py-2 hover:text-primary transition-colors">开发命令</a>
+                <a href="#cicd" class="py-2 hover:text-primary transition-colors">CI/CD</a>
+                <a href="#notes" class="py-2 hover:text-primary transition-colors">重要说明</a>
+            </div>
+        </div>
+    </header>
+
+    <!-- 主要内容区 -->
+    <main class="container mx-auto px-4 py-8 md:py-12">
+        <div class="flex flex-col md:flex-row gap-8">
+            <!-- 侧边导航 - 桌面版 -->
+            <aside class="hidden md:block w-64 shrink-0 sticky top-24 self-start">
+                <nav class="bg-dark rounded-lg p-4 border border-gray-800">
+                    <h3 class="text-lg font-semibold mb-4 text-primary">目录</h3>
+                    <ul class="space-y-2">
+                        <li><a href="#overview" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors nav-item-active">项目概览</a></li>
+                        <li><a href="#architecture" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">代码架构</a></li>
+                        <li class="pl-4">
+                            <a href="#core-crates" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">核心 crate</a>
+                        </li>
+                        <li class="pl-4">
+                            <a href="#providers" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">歌词提供者</a>
+                        </li>
+                        <li class="pl-4">
+                            <a href="#formats" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">格式转换</a>
+                        </li>
+                        <li><a href="#commands" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">开发命令</a></li>
+                        <li class="pl-4">
+                            <a href="#build-commands" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">构建命令</a>
+                        </li>
+                        <li class="pl-4">
+                            <a href="#test-commands" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">测试命令</a>
+                        </li>
+                        <li class="pl-4">
+                            <a href="#lint-commands" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">Lint 检查</a>
+                        </li>
+                        <li class="pl-4">
+                            <a href="#other-commands" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">其他命令</a>
+                        </li>
+                        <li><a href="#cicd" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">CI/CD 配置</a></li>
+                        <li><a href="#notes" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">重要说明</a></li>
+                        <li><a href="#dev-points" class="block px-3 py-2 rounded hover:bg-gray-800 transition-colors">开发要点</a></li>
+                    </ul>
+                </nav>
+            </aside>
+
+            <!-- 主要内容 -->
+            <div class="flex-1 max-w-4xl">
+                <!-- 项目概览 -->
+                <section id="overview" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-info text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">项目概览</h2>
+                        </div>
+                        <p class="text-gray-300 leading-relaxed">
+                            UniLyric 是一个专业的歌词转换器，支持从多个音乐平台获取歌词并进行格式转换。项目采用 Rust 语言开发，使用 Cargo 工作区管理多个 crate。
+                        </p>
+                        
+                        <div class="mt-8 bg-darker rounded-lg p-4 border border-gray-800">
+                            <div class="flex items-center mb-4">
+                                <i class="fa fa-cubes text-secondary mr-2"></i>
+                                <h3 class="text-lg font-semibold text-secondary">项目特点</h3>
+                            </div>
+                            <ul class="space-y-2 text-gray-300">
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-secondary mt-1 mr-2"></i>
+                                    <span>多平台歌词获取</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-secondary mt-1 mr-2"></i>
+                                    <span>多种格式转换支持</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-secondary mt-1 mr-2"></i>
+                                    <span>高效的 Rust 实现</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-secondary mt-1 mr-2"></i>
+                                    <span>直观的图形界面</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 代码架构 -->
+                <section id="architecture" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-sitemap text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">代码架构</h2>
+                        </div>
+                        <p class="text-gray-300 leading-relaxed mb-6">
+                            项目采用分层架构，包含以下主要组件：
+                        </p>
+
+                        <!-- 核心 crate -->
+                        <div id="core-crates" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-cube mr-2"></i>核心 crate
+                            </h3>
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div class="bg-darker rounded-lg p-4 border border-gray-800 card-hover">
+                                    <h4 class="font-semibold text-secondary mb-2">lyrics_helper_core</h4>
+                                    <p class="text-gray-400 text-sm">数据结构和基础类型定义，被其他 crate 依赖</p>
+                                </div>
+                                <div class="bg-darker rounded-lg p-4 border border-gray-800 card-hover">
+                                    <h4 class="font-semibold text-secondary mb-2">lyrics_helper_rs</h4>
+                                    <p class="text-gray-400 text-sm">主要业务逻辑，包含歌词提供者、搜索、转换功能</p>
+                                </div>
+                                <div class="bg-darker rounded-lg p-4 border border-gray-800 card-hover">
+                                    <h4 class="font-semibold text-secondary mb-2">ttml_processor</h4>
+                                    <p class="text-gray-400 text-sm">专门处理 Apple Music TTML 格式的库</p>
+                                </div>
+                                <div class="bg-darker rounded-lg p-4 border border-gray-800 card-hover">
+                                    <h4 class="font-semibold text-secondary mb-2">Unilyric</h4>
+                                    <p class="text-gray-400 text-sm">图形界面应用程序，基于 eframe/egui</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 歌词提供者支持 -->
+                        <div id="providers" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-music mr-2"></i>歌词提供者支持
+                            </h3>
+                            <div class="bg-darker rounded-lg p-5 border border-gray-800">
+                                <p class="text-gray-300 mb-3">支持的音乐平台：</p>
+                                <div class="flex flex-wrap gap-3 mb-4">
+                                    <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">QQ音乐</span>
+                                    <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">网易云音乐</span>
+                                    <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">酷狗音乐</span>
+                                    <span class="px-3 py-1 bg-gray-800 rounded-full text-sm">AMLL TTML 数据库</span>
+                                </div>
+                                <p class="text-gray-300 mb-2">主要功能：</p>
+                                <ul class="list-disc list-inside text-gray-400 space-y-1 pl-2">
+                                    <li>搜索功能</li>
+                                    <li>歌词获取</li>
+                                    <li>专辑信息查询</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <!-- 格式转换支持 -->
+                        <div id="formats">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-exchange mr-2"></i>格式转换支持
+                            </h3>
+                            <div class="bg-darker rounded-lg p-5 border border-gray-800">
+                                <p class="text-gray-300 mb-3">支持多种歌词格式的输入和输出：</p>
+                                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">LRC</span>
+                                    </div>
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">QRC</span>
+                                    </div>
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">KRC</span>
+                                    </div>
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">YRC</span>
+                                    </div>
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">TTML</span>
+                                    </div>
+                                    <div class="bg-gray-800 rounded p-3 text-center">
+                                        <span class="font-mono font-medium">Lyricify</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 开发命令 -->
+                <section id="commands" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-terminal text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">开发命令</h2>
+                        </div>
+
+                        <!-- 构建命令 -->
+                        <div id="build-commands" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-cogs mr-2"></i>构建命令
+                            </h3>
+                            <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto">
+<button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# 构建整个工作区
+cargo build --workspace
+
+# 构建特定包
+cargo build -p lyrics_helper_rs
+cargo build -p Unilyric
+
+# 发布构建
+cargo build --release --workspace</pre>
+                        </div>
+
+                        <!-- 测试命令 -->
+                        <div id="test-commands" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-check-square-o mr-2"></i>测试命令
+                            </h3>
+                            <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto">
+<button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# 运行所有测试
+cargo test --workspace
+
+# 运行特定包的测试
+cargo test -p lyrics_helper_rs
+cargo test -p ttml_processor
+
+# 运行集成测试（需要网络连接）
+cargo test -- --ignored
+
+# 运行特定测试文件
+cargo test --test test_name</pre>
+                        </div>
+
+                        <!-- Lint 检查 -->
+                        <div id="lint-commands" class="mb-8">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-search mr-2"></i>Lint 检查
+                            </h3>
+                            <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto">
+<button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# Clippy 检查
+cargo clippy --workspace -- -D warnings
+
+# 单个包的 clippy 检查
+cargo clippy -p lyrics_helper_rs -- -D warnings</pre>
+                        </div>
+
+                        <!-- 其他命令 -->
+                        <div id="other-commands">
+                            <h3 class="text-xl font-semibold mb-4 text-primary flex items-center">
+                                <i class="fa fa-ellipsis-h mr-2"></i>其他命令
+                            </h3>
+                            <pre class="bg-darker rounded-lg p-4 border border-gray-800 text-gray-300 font-mono text-sm overflow-x-auto">
+<button class="copy-btn bg-gray-700 hover:bg-primary text-white px-2 py-1 rounded text-xs" onclick="copyCode(this)">
+    <i class="fa fa-copy mr-1"></i>复制
+</button>
+# 生成依赖树
+cargo tree --workspace
+
+# 更新依赖
+cargo update</pre>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- CI/CD 配置 -->
+                <section id="cicd" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-refresh text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">CI/CD 配置</h2>
+                        </div>
+                        <p class="text-gray-300 mb-4">
+                            GitHub Actions 配置位于 <code class="bg-darker px-2 py-1 rounded text-sm font-mono">Unilyric/.github/workflows/release.yml</code>
+                        </p>
+                        <div class="bg-darker rounded-lg p-5 border border-gray-800">
+                            <ul class="space-y-3 text-gray-300">
+                                <li class="flex items-start">
+                                    <i class="fa fa-circle text-xs text-primary mt-1.5 mr-3"></i>
+                                    <span>在 main 分支推送时自动构建发布版本</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-circle text-xs text-primary mt-1.5 mr-3"></i>
+                                    <span>使用 nightly Rust 工具链</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-circle text-xs text-primary mt-1.5 mr-3"></i>
+                                    <span>生成 Windows 可执行文件并创建发布</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 重要说明 -->
+                <section id="notes" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-exclamation-triangle text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">重要说明</h2>
+                        </div>
+                        <div class="space-y-4">
+                            <div class="bg-darker rounded-lg p-4 border border-gray-800 flex">
+                                <div class="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center mr-4 shrink-0">
+                                    <span class="font-bold text-accent">1</span>
+                                </div>
+                                <div>
+                                    <h4 class="font-semibold text-accent mb-1">网络依赖</h4>
+                                    <p class="text-gray-400 text-sm">测试和功能需要使用网络连接访问音乐 API</p>
+                                </div>
+                            </div>
+                            <div class="bg-darker rounded-lg p-4 border border-gray-800 flex">
+                                <div class="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center mr-4 shrink-0">
+                                    <span class="font-bold text-accent">2</span>
+                                </div>
+                                <div>
+                                    <h4 class="font-semibold text-accent mb-1">提供商限制</h4>
+                                    <p class="text-gray-400 text-sm">某些功能可能需要登录或受提供商限制</p>
+                                </div>
+                            </div>
+                            <div class="bg-darker rounded-lg p-4 border border-gray-800 flex">
+                                <div class="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center mr-4 shrink-0">
+                                    <span class="font-bold text-accent">3</span>
+                                </div>
+                                <div>
+                                    <h4 class="font-semibold text-accent mb-1">性能优化</h4>
+                                    <p class="text-gray-400 text-sm">使用 Rust nightly 工具链进行最大优化</p>
+                                </div>
+                            </div>
+                            <div class="bg-darker rounded-lg p-4 border border-gray-800 flex">
+                                <div class="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center mr-4 shrink-0">
+                                    <span class="font-bold text-accent">4</span>
+                                </div>
+                                <div>
+                                    <h4 class="font-semibold text-accent mb-1">多语言支持</h4>
+                                    <p class="text-gray-400 text-sm">主要支持中文歌曲和相关功能</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- 开发要点 -->
+                <section id="dev-points" class="mb-12">
+                    <div class="bg-dark rounded-xl p-6 border border-gray-800 shadow-lg">
+                        <div class="flex items-center mb-6">
+                            <div class="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center mr-4">
+                                <i class="fa fa-lightbulb-o text-primary"></i>
+                            </div>
+                            <h2 class="text-2xl md:text-3xl font-bold">开发要点</h2>
+                        </div>
+                        <div class="bg-darker rounded-lg p-5 border border-gray-800">
+                            <ul class="space-y-3 text-gray-300">
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span>主要入口点：<code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">lyrics_helper_rs/src/lib.rs</code> 和 <code class="bg-gray-800 px-1.5 py-0.5 rounded text-xs font-mono">Unilyric/src/main.rs</code></span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span>遵循 Rust 最佳实践，使用 async/await 处理网络请求</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span>代码包含详细的 tracing 日志用于调试</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-angle-right text-primary mt-1 mr-2"></i>
+                                    <span>支持 WASM target，可用于 Web 应用</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- 页脚 -->
+    <footer class="bg-dark border-t border-gray-800 py-6">
+        <div class="container mx-auto px-4 text-center text-gray-500 text-sm">
+            <p>UniLyric 项目文档 &copy; 2023</p>
+            <p class="mt-1">使用 Rust 开发的专业歌词转换工具</p>
+        </div>
+    </footer>
+
+    <!-- 回到顶部按钮 -->
+    <button id="back-to-top" class="fixed bottom-6 right-6 bg-primary/80 hover:bg-primary text-white w-12 h-12 rounded-full flex items-center justify-center shadow-lg transition-all opacity-0 invisible">
+        <i class="fa fa-arrow-up"></i>
+    </button>
+
+    <!-- JavaScript -->
+    <script>
+        // 移动端菜单切换
+        const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+        const mobileMenu = document.getElementById('mobile-menu');
+        
+        mobileMenuBtn.addEventListener('click', () => {
+            mobileMenu.classList.toggle('hidden');
+        });
+
+        // 关闭移动菜单当点击菜单项
+        const mobileMenuItems = mobileMenu.querySelectorAll('a');
+        mobileMenuItems.forEach(item => {
+            item.addEventListener('click', () => {
+                mobileMenu.classList.add('hidden');
+            });
+        });
+
+        // 复制代码功能
+        function copyCode(button) {
+            const pre = button.parentElement;
+            const code = pre.textContent.trim().replace(/复制$/, '').trim();
+            
+            navigator.clipboard.writeText(code).then(() => {
+                const originalText = button.innerHTML;
+                button.innerHTML = '<i class="fa fa-check mr-1"></i>已复制';
+                button.classList.remove('bg-gray-700', 'hover:bg-primary');
+                button.classList.add('bg-secondary');
+                
+                setTimeout(() => {
+                    button.innerHTML = originalText;
+                    button.classList.remove('bg-secondary');
+                    button.classList.add('bg-gray-700', 'hover:bg-primary');
+                }, 2000);
+            });
+        }
+
+        // 回到顶部按钮
+        const backToTopBtn = document.getElementById('back-to-top');
+        
+        window.addEventListener('scroll', () => {
+            if (window.scrollY > 300) {
+                backToTopBtn.classList.remove('opacity-0', 'invisible');
+                backToTopBtn.classList.add('opacity-100', 'visible');
+            } else {
+                backToTopBtn.classList.remove('opacity-100', 'visible');
+                backToTopBtn.classList.add('opacity-0', 'invisible');
+            }
+        });
+        
+        backToTopBtn.addEventListener('click', () => {
+            window.scrollTo({
+                top: 0,
+                behavior: 'smooth'
+            });
+        });
+
+        // 导航项激活状态
+        const sections = document.querySelectorAll('section[id]');
+        const navItems = document.querySelectorAll('aside nav a');
+        
+        function setActiveNavItem() {
+            const scrollPosition = window.scrollY + 100;
+            
+            sections.forEach(section => {
+                const sectionTop = section.offsetTop;
+                const sectionHeight = section.offsetHeight;
+                const sectionId = section.getAttribute('id');
+                
+                if (scrollPosition >= sectionTop && scrollPosition < sectionTop + sectionHeight) {
+                    navItems.forEach(item => {
+                        item.classList.remove('nav-item-active');
+                        if (item.getAttribute('href') === `#${sectionId}`) {
+                            item.classList.add('nav-item-active');
+                        }
+                    });
+                }
+            });
+        }
+        
+        window.addEventListener('scroll', setActiveNavItem);
+        setActiveNavItem(); // 初始化
+    </script>
+</body>
+</html>
