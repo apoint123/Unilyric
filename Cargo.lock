@@ -5470,6 +5470,7 @@ dependencies = [
 [[package]]
 name = "smtc-suite"
 version = "2.5.1"
+source = "git+https://github.com/apoint123/smtc-suite#ffbd007e82b4bc6b46729708cbc1af2eb5dd3b10"
 dependencies = [
  "bitflags 2.9.4",
  "cbindgen",
