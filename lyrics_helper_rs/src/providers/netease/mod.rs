@@ -579,9 +579,9 @@ impl Provider for NeteaseClient {
         }
 
         let mut romanizations = Vec::new();
-        if let Some(content) = romalrc_content {
+        if let Some(ref content) = romalrc_content {
             romanizations.push(InputFile {
-                content,
+                content: content.clone(),
                 format: LyricFormat::Lrc,
                 language: Some("ja-Latn".to_string()),
                 filename: None,
@@ -605,6 +605,7 @@ impl Provider for NeteaseClient {
             format: main_format.to_string(),
             content: main_content,
             translation: tlyric_content,
+            romanization: romalrc_content,
         };
 
         Ok(FullLyricsResult {

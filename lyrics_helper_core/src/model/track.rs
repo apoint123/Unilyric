@@ -80,6 +80,8 @@ pub struct RawLyrics {
     pub content: String,
     /// 可选的、与主歌词一同获取的翻译歌词。
     pub translation: Option<String>,
+    /// 可选的、与主歌词一同获取的音译歌词。
+    pub romanization: Option<String>,
 }
 
 /// 代表完整的歌词获取结果，包括解析后的数据和原始副本。

@@ -140,7 +140,6 @@ pub fn parse_ttml(
         raw_metadata,
         agents: state.agent_store,
         source_format: LyricFormat::Ttml,
-        source_filename: None,
         is_line_timed_source: state.is_line_timing_mode,
         warnings,
         detected_formatted_ttml_input: Some(state.format_detection == FormatDetection::IsFormatted),

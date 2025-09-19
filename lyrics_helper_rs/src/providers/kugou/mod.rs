@@ -591,7 +591,8 @@ impl Provider for KugouMusic {
         let raw_lyrics = RawLyrics {
             format: "krc".to_string(),
             content: krc_decrypted,
-            translation: None,
+            translation: None,  // 内嵌在 KRC 的 language 标签中，由解析器自己处理
+            romanization: None, // 内嵌在 KRC 的 language 标签中，由解析器自己处理
         };
 
         Ok(FullLyricsResult {

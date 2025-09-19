@@ -1,0 +1,3946 @@
+{
+    "result": {
+        "songs": [
+            {
+                "no": 22,
+                "rt": "",
+                "copyright": 1,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2724692015,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 259133,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2724692015,
+                "sq": {
+                    "br": 868368,
+                    "fid": 0,
+                    "size": 28132659,
+                    "vd": -23476.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1752163200000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 10367521,
+                    "vd": -23483.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/eqmXR6n6RR3854tx3CNbIA==/109951171443739878.jpg",
+                    "name": "逛街随身听 BGM",
+                    "tns": [],
+                    "pic_str": "109951171443739878",
+                    "id": 277991634,
+                    "pic": 109951171443739878
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4147035,
+                    "vd": -19283.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 6220530,
+                    "vd": -20886.0,
+                    "sr": 44100
+                },
+                "version": 6,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 40,
+                "name": "富士山下",
+                "mark": 17180139520
+            },
+            {
+                "no": 5,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 65766,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 258902,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 65766,
+                "sq": {
+                    "br": 1567785,
+                    "fid": 0,
+                    "size": 50737963,
+                    "vd": -32910.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1164211200000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10359162,
+                    "vd": -32859.0,
+                    "sr": 44100
+                },
+                "mv": 303140,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/oSMs7RzJFx0TgWCqRC8XjA==/109951171844247587.jpg",
+                    "name": "What's Going On…?",
+                    "tns": [],
+                    "pic_str": "109951171844247587",
+                    "id": 6451,
+                    "pic": 109951171844247587
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4143691,
+                    "vd": -28666.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6215515,
+                    "vd": -30259.0,
+                    "sr": 44100
+                },
+                "version": 172,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 206,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 21,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 64517,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 298973,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 64517,
+                "sq": {
+                    "br": 865813,
+                    "fid": 0,
+                    "size": 32356901,
+                    "vd": -16396.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1262275200000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 11962036,
+                    "vd": -16466.0,
+                    "sr": 44100
+                },
+                "mv": 5570930,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/7dbK-A_In2Wol92TDMYIGw==/6636652185368776.jpg",
+                    "name": "DUO 陈奕迅2010演唱会",
+                    "tns": [],
+                    "id": 6365,
+                    "pic": 6636652185368776
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4784840,
+                    "vd": -12158.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 7177239,
+                    "vd": -13884.0,
+                    "sr": 44100
+                },
+                "version": 92,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 126,
+                "name": "富士山下(Live)",
+                "mark": 17179877376
+            },
+            {
+                "no": 5,
+                "rt": "",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 1411495698,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 267168,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 1411495698,
+                "sq": {
+                    "br": 1450485,
+                    "fid": 0,
+                    "size": 48440570,
+                    "vd": 4872.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1136044800000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10689350,
+                    "vd": 4829.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/gK2lsHzXES83aJbHe7lFKA==/109951164575164263.jpg",
+                    "name": "What's Going On...? (Remastered 2019)",
+                    "tns": [],
+                    "pic_str": "109951164575164263",
+                    "id": 84297025,
+                    "pic": 109951164575164263
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4275766,
+                    "vd": 9040.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6413627,
+                    "vd": 7416.0,
+                    "sr": 44100
+                },
+                "version": 6,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 40,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 5,
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 33255173,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 90.0,
+                "dt": 292120,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 33255173,
+                "sq": {
+                    "br": 816431,
+                    "fid": 0,
+                    "size": 29812002,
+                    "vd": -16082.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "02",
+                "publishTime": 1199116800000,
+                "cf": "",
+                "originCoverType": 0,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 11687227,
+                    "vd": -15435.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/oSMs7RzJFx0TgWCqRC8XjA==/109951171844247587.jpg",
+                    "name": "What's Going On…?",
+                    "tns": [],
+                    "pic_str": "109951171844247587",
+                    "id": 6451,
+                    "pic": 109951171844247587
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4674917,
+                    "vd": -11081.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 7012354,
+                    "vd": -12820.0,
+                    "sr": 44100
+                },
+                "version": 62,
+                "cp": 7003,
+                "alia": [
+                    "电影《爱情呼叫转移》主题曲"
+                ],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 96,
+                "name": "富士山下 (Live)",
+                "mark": 17179877376
+            },
+            {
+                "no": 6,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 65171,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 268027,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 65171,
+                "sq": {
+                    "br": 1479183,
+                    "fid": 0,
+                    "size": 49557813,
+                    "vd": 45207.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1198166400000,
+                "cf": "",
+                "originCoverType": 0,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 10723831,
+                    "vd": 45194.0,
+                    "sr": 44100
+                },
+                "mv": 10982886,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/LLwcJY9QWi0S2UDthkmn5A==/109951168369175665.jpg",
+                    "name": "Eason Moving On Stage 1 (Live)",
+                    "tns": [],
+                    "pic_str": "109951168369175665",
+                    "id": 6410,
+                    "pic": 109951168369175665
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4289559,
+                    "vd": 49512.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 6434316,
+                    "vd": 47815.0,
+                    "sr": 44100
+                },
+                "version": 90,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 124,
+                "name": "富士山下 (2007 Live)",
+                "mark": 17179877376
+            },
+            {
+                "no": 17,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 64956,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 258902,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 64956,
+                "sq": {
+                    "br": 1567785,
+                    "fid": 0,
+                    "size": 50737963,
+                    "vd": -32882.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1230739200000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10359162,
+                    "vd": -32859.0,
+                    "sr": 44100
+                },
+                "mv": 303140,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/Qs7rthgurYD-OISrms8hng==/109951166050592954.jpg",
+                    "name": "Solidays 新曲+精选",
+                    "tns": [],
+                    "pic_str": "109951166050592954",
+                    "id": 6394,
+                    "pic": 109951166050592954
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4143691,
+                    "vd": -28666.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6215515,
+                    "vd": -30259.0,
+                    "sr": 44100
+                },
+                "version": 74,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 108,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 8,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2648812866,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 20.0,
+                "dt": 258950,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2648812866,
+                "sq": {
+                    "br": 909526,
+                    "fid": 0,
+                    "size": 29440246,
+                    "vd": -42543.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10360207,
+                    "vd": -43138.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/SaUWIsJFed1cuI0KmIXmQw==/109951170174680742.jpg",
+                    "name": "全网100％好听的女声翻唱26",
+                    "tns": [],
+                    "pic_str": "109951170174680742",
+                    "id": 254531952,
+                    "pic": 109951170174680742
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "富士山下",
+                    "songId": 64956,
+                    "albumMeta": {
+                        "name": "Solidays 新曲+精选",
+                        "id": 6394
+                    }
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4144109,
+                    "vd": -38941.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6216142,
+                    "vd": -40543.0,
+                    "sr": 44100
+                },
+                "version": 4,
+                "cp": 2713520,
+                "alia": [
+                    "可爱女声"
+                ],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "莉沁",
+                        "tns": [],
+                        "alias": [],
+                        "id": 95010460
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 38,
+                "name": "富士山下 陈奕迅",
+                "mark": 8192
+            },
+            {
+                "no": 5,
+                "rt": "",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2106661545,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 292120,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2106661545,
+                "sq": {
+                    "br": 816431,
+                    "fid": 0,
+                    "size": 29812002,
+                    "vd": -15125.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "02",
+                "publishTime": 1169654400000,
+                "cf": "",
+                "originCoverType": 0,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 11687227,
+                    "vd": -15435.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/KCdAOep9QIOlhnAP19TU0Q==/109951169145776030.jpg",
+                    "name": "What's Going On...? (2nd Edition)",
+                    "tns": [],
+                    "pic_str": "109951169145776030",
+                    "id": 180689758,
+                    "pic": 109951169145776030
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4674917,
+                    "vd": -11081.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 7012354,
+                    "vd": -12820.0,
+                    "sr": 44100
+                },
+                "version": 6,
+                "cp": 7003,
+                "alia": [
+                    "电影《爱情呼叫转移》主题曲"
+                ],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 40,
+                "name": "富士山下",
+                "tns": [
+                    "富士 山下 (Eason音乐互动Free Party)"
+                ],
+                "mark": 17179877376
+            },
+            {
+                "no": 0,
+                "rt": "",
+                "copyright": 0,
+                "fee": 0,
+                "privilege": {
+                    "flag": 128,
+                    "code": 0,
+                    "dlLevel": "standard",
+                    "subp": 1,
+                    "fl": 128000,
+                    "fee": 0,
+                    "dl": 128000,
+                    "plLevel": "standard",
+                    "maxBrLevel": "standard",
+                    "rightSource": 0,
+                    "maxbr": 128000,
+                    "id": 2704631154,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 128000,
+                    "downloadMaxBrLevel": "standard",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "standard",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 128000,
+                    "flLevel": "standard",
+                    "pl": 128000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 233105,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2704631154,
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 3,
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/bxnFs-SmLSX4f0SAuIOuQg==/109951170980937469.jpg",
+                    "name": "",
+                    "tns": [],
+                    "pic_str": "109951170980937469",
+                    "id": 0,
+                    "pic": 109951170980937469
+                },
+                "l": {
+                    "br": 128002,
+                    "fid": 0,
+                    "size": 3729493,
+                    "vd": 4318.0,
+                    "sr": 44100
+                },
+                "version": 2,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 1,
+                "ar": [
+                    {
+                        "name": "邝玲玲",
+                        "tns": [],
+                        "alias": [],
+                        "id": 98425131
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 36,
+                "name": "富士山下 (Live)",
+                "mark": 0
+            },
+            {
+                "no": 5,
+                "rt": "",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 1851228561,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 259133,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 1851228561,
+                "sq": {
+                    "br": 868515,
+                    "fid": 0,
+                    "size": 28132659,
+                    "vd": -23510.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1623081600000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 10367521,
+                    "vd": -23483.0,
+                    "sr": 44100
+                },
+                "mv": 14222544,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/DYlMeeaS9I9bBncpD7pnXg==/109951168146331062.jpg",
+                    "name": "Nights of Missing You (想你的夜)",
+                    "tns": [],
+                    "pic_str": "109951168146331062",
+                    "id": 128553621,
+                    "pic": 109951168146331062
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4147035,
+                    "vd": -19283.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 6220530,
+                    "vd": -20886.0,
+                    "sr": 44100
+                },
+                "version": 12,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 46,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 1,
+                "rt": "",
+                "copyright": 1,
+                "fee": 8,
+                "privilege": {
+                    "flag": 261,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2599695445,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 175428,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2599695445,
+                "sq": {
+                    "br": 693340,
+                    "fid": 0,
+                    "size": 15203973,
+                    "vd": -41146.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1718553600000,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 7019668,
+                    "vd": -41130.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/n54STnZQcb-Qlk2tzOpFEA==/109951169898546759.jpg",
+                    "name": "富士山下 (纯净女声版)",
+                    "tns": [],
+                    "pic_str": "109951169898546759",
+                    "id": 239518230,
+                    "pic": 109951169898546759
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "爱情转移",
+                    "songId": 65536,
+                    "albumMeta": {
+                        "name": "认了吧",
+                        "id": 6434
+                    }
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 2807893,
+                    "vd": -36744.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 4211818,
+                    "vd": -38494.0,
+                    "sr": 44100
+                },
+                "version": 10,
+                "cp": 743010,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "吉拉朵",
+                        "tns": [],
+                        "alias": [],
+                        "id": 62353999
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 44,
+                "name": "富士山下 (纯净女声版)",
+                "mark": 270464
+            },
+            {
+                "no": 4,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2648813751,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 258900,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2648813751,
+                "sq": {
+                    "br": 887119,
+                    "fid": 0,
+                    "size": 28709510,
+                    "vd": -40088.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10359162,
+                    "vd": -39828.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/PKB_YzsHIfQWgkBl29jfZA==/109951170174683678.jpg",
+                    "name": "那些年被翻唱过的好歌58",
+                    "tns": [],
+                    "pic_str": "109951170174683678",
+                    "id": 254531915,
+                    "pic": 109951170174683678
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "富士山下",
+                    "songId": 64956,
+                    "albumMeta": {
+                        "name": "Solidays 新曲+精选",
+                        "id": 6394
+                    }
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4143691,
+                    "vd": -35609.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6215515,
+                    "vd": -37226.0,
+                    "sr": 44100
+                },
+                "version": 3,
+                "cp": 2713520,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "TE.D",
+                        "tns": [],
+                        "alias": [],
+                        "id": 61535220
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 37,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 11,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2725027316,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 5.0,
+                "dt": 105997,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2725027316,
+                "sq": {
+                    "br": 552257,
+                    "fid": 0,
+                    "size": 7319258,
+                    "vd": 55909.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 0,
+                "h": {
+                    "br": 320003,
+                    "fid": 0,
+                    "size": 4242329,
+                    "vd": 55911.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/yLartuMBjZ2ipMdUi7dRzA==/109951171440175524.jpg",
+                    "name": "归园田居",
+                    "tns": [],
+                    "pic_str": "109951171440175524",
+                    "id": 278046342,
+                    "pic": 109951171440175524
+                },
+                "l": {
+                    "br": 128003,
+                    "fid": 0,
+                    "size": 1696958,
+                    "vd": 60370.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192003,
+                    "fid": 0,
+                    "size": 2545415,
+                    "vd": 58562.0,
+                    "sr": 44100
+                },
+                "version": 8,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "MC DJ小春",
+                        "tns": [],
+                        "alias": [],
+                        "id": 98590400
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 42,
+                "name": "富士山下 陈奕迅",
+                "mark": 663552
+            },
+            {
+                "no": 35,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 5251245,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 90.0,
+                "dt": 258902,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 5251245,
+                "sq": {
+                    "br": 1567785,
+                    "fid": 0,
+                    "size": 50737963,
+                    "vd": -32843.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1210694400000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10359162,
+                    "vd": -32859.0,
+                    "sr": 44100
+                },
+                "mv": 303140,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/cTGETaHb-GyeHtHjxwu6WQ==/106652627911558.jpg",
+                    "name": "Love Best 最爱情歌集",
+                    "tns": [],
+                    "id": 511844,
+                    "pic": 106652627911558
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4143691,
+                    "vd": -28666.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6215515,
+                    "vd": -30259.0,
+                    "sr": 44100
+                },
+                "version": 689,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 723,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 1,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "hr": {
+                    "br": 1656846,
+                    "fid": 0,
+                    "size": 43227468,
+                    "vd": -33812.0,
+                    "sr": 48000
+                },
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "hires",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2139390811,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 1999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "hires",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "hires",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 208721,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2139390811,
+                "sq": {
+                    "br": 887453,
+                    "fid": 0,
+                    "size": 23153843,
+                    "vd": -33642.0,
+                    "sr": 48000
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 8351085,
+                    "vd": -33837.0,
+                    "sr": 48000
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/wTX5TMFeI11GGamitkefJw==/109951169443592113.jpg",
+                    "name": "富士山下",
+                    "tns": [],
+                    "pic_str": "109951169443592113",
+                    "id": 190129658,
+                    "pic": 109951169443592113
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 3340461,
+                    "vd": -29615.0,
+                    "sr": 48000
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 5010669,
+                    "vd": -31239.0,
+                    "sr": 48000
+                },
+                "version": 7,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "傲七爷（江偌绮）",
+                        "tns": [],
+                        "alias": [],
+                        "id": 13145036
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 41,
+                "name": "富士山下",
+                "mark": 17716748288
+            },
+            {
+                "no": 1,
+                "rt": "",
+                "copyright": 0,
+                "fee": 0,
+                "privilege": {
+                    "flag": 256,
+                    "code": 0,
+                    "dlLevel": "exhigh",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 0,
+                    "dl": 320000,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "exhigh",
+                    "rightSource": 0,
+                    "maxbr": 320000,
+                    "id": 1367241874,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 320000,
+                    "downloadMaxBrLevel": "exhigh",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "exhigh",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 320000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 407457,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 1367241874,
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 16300452,
+                    "vd": -63216.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/dlQl-dumwGmEifujQ427qg==/109951164094757929.jpg",
+                    "name": "陈奕迅 - 富士山下 (DJ阿福 Remix)",
+                    "tns": [],
+                    "pic_str": "109951164094757929",
+                    "id": 79250499,
+                    "pic": 109951164094757929
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 6520207,
+                    "vd": -59131.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 9780289,
+                    "vd": -60739.0,
+                    "sr": 44100
+                },
+                "version": 4,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "DJ阿福",
+                        "tns": [],
+                        "alias": [],
+                        "id": 12050038
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 38,
+                "name": "陈奕迅-富士山下 (DJ阿福 Remix)（DJ阿福 remix）",
+                "mark": 0
+            },
+            {
+                "no": 17,
+                "rt": "",
+                "copyright": 0,
+                "fee": 0,
+                "privilege": {
+                    "flag": 1,
+                    "code": 0,
+                    "dlLevel": "lossless",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 0,
+                    "dl": 999000,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2000257092,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 60.0,
+                "dt": 243083,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2000257092,
+                "sq": {
+                    "br": 1122468,
+                    "fid": 0,
+                    "size": 34106716,
+                    "vd": -30177.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320002,
+                    "fid": 0,
+                    "size": 9725954,
+                    "vd": -30196.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/K24U6GeclLhUm2HHkGmQMw==/109951168078213537.jpg",
+                    "name": "陈奕迅合集",
+                    "tns": [],
+                    "pic_str": "109951168078213537",
+                    "id": 155272152,
+                    "pic": 109951168078213537
+                },
+                "l": {
+                    "br": 128002,
+                    "fid": 0,
+                    "size": 3890408,
+                    "vd": -25741.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192002,
+                    "fid": 0,
+                    "size": 5835590,
+                    "vd": -27551.0,
+                    "sr": 44100
+                },
+                "version": 4,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "一宁",
+                        "tns": [],
+                        "alias": [],
+                        "id": 31010281
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 38,
+                "name": "富士山下  伴奏（唯美钢琴）",
+                "mark": 131200
+            },
+            {
+                "no": 8,
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 36861913,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 90.0,
+                "dt": 259520,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 36861913,
+                "sq": {
+                    "br": 886022,
+                    "fid": 0,
+                    "size": 28742578,
+                    "vd": -28538.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "06",
+                "publishTime": 1447776000000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10383195,
+                    "vd": -28704.0,
+                    "sr": 44100
+                },
+                "mv": 14222544,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/ziBWD32AiSlux93auRKi_g==/109951169072118011.jpg",
+                    "name": "Celebration 45th Anniversary 环球志101",
+                    "tns": [],
+                    "pic_str": "109951169072118011",
+                    "id": 3388880,
+                    "pic": 109951169072118011
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4153304,
+                    "vd": -24541.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6229934,
+                    "vd": -26123.0,
+                    "sr": 44100
+                },
+                "version": 159,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 193,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 4,
+                "copyright": 2,
+                "fee": 0,
+                "privilege": {
+                    "flag": 256,
+                    "code": 0,
+                    "dlLevel": "exhigh",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 0,
+                    "dl": 320000,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "exhigh",
+                    "rightSource": 0,
+                    "maxbr": 320000,
+                    "id": 459839378,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 320000,
+                    "downloadMaxBrLevel": "exhigh",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "exhigh",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 320000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 256719,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 459839378,
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1429459200000,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10279750,
+                    "vd": -54536.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/S_tSCNlb2ctZ6fbUj2UDBQ==/109951162860119591.jpg",
+                    "name": "街角的唱机",
+                    "tns": [],
+                    "pic_str": "109951162860119591",
+                    "id": 35179006,
+                    "pic": 109951162860119591
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4111926,
+                    "vd": -54536.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6167867,
+                    "vd": -54536.0,
+                    "sr": 44100
+                },
+                "version": 28,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "寂静炸弹",
+                        "tns": [],
+                        "alias": [],
+                        "id": 12270956
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 62,
+                "name": "爱情转移+富士山下（翻自 陈奕迅）",
+                "mark": 0
+            },
+            {
+                "no": 1,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2160311964,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 25.0,
+                "dt": 292120,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2160311964,
+                "sq": {
+                    "br": 892680,
+                    "fid": 0,
+                    "size": 32596214,
+                    "vd": -37110.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 11687227,
+                    "vd": -36726.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/g8iNQoDrYolT-zavVCHiZQ==/109951169629262728.jpg",
+                    "name": "耳熟能详的片段翻唱合集5",
+                    "tns": [],
+                    "pic_str": "109951169629262728",
+                    "id": 197499363,
+                    "pic": 109951169629262728
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "富士山下",
+                    "songId": 2106661545,
+                    "albumMeta": {
+                        "name": "What's Going On...? (2nd Edition)",
+                        "id": 180689758
+                    }
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4674917,
+                    "vd": -32454.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 7012354,
+                    "vd": -34119.0,
+                    "sr": 44100
+                },
+                "version": 4,
+                "cp": 2713520,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "咔嚓！睁眼！",
+                        "tns": [],
+                        "alias": [
+                            "kacha"
+                        ],
+                        "id": 61533968,
+                        "alia": [
+                            "kacha"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 38,
+                "name": "富士山下（翻唱完整版）",
+                "mark": 8192
+            },
+            {
+                "no": 2,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "hr": {
+                    "br": 1235110,
+                    "fid": 0,
+                    "size": 16381642,
+                    "vd": 13132.0,
+                    "sr": 48000
+                },
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "hires",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2076615067,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 1999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "hires",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "hires",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 95.0,
+                "dt": 106106,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2076615067,
+                "sq": {
+                    "br": 479088,
+                    "fid": 0,
+                    "size": 6354292,
+                    "vd": 6912.0,
+                    "sr": 48000
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320003,
+                    "fid": 0,
+                    "size": 4247085,
+                    "vd": 13932.0,
+                    "sr": 48000
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/SCL3pg0M5PiNOLAi1rayhA==/109951170721809443.jpg",
+                    "name": "童话",
+                    "tns": [],
+                    "pic_str": "109951170721809443",
+                    "id": 173215236,
+                    "pic": 109951170721809443
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "富士山下",
+                    "songId": 65766,
+                    "albumMeta": {
+                        "name": "What's Going On…?",
+                        "id": 6451
+                    }
+                },
+                "l": {
+                    "br": 128003,
+                    "fid": 0,
+                    "size": 1698861,
+                    "vd": 18382.0,
+                    "sr": 48000
+                },
+                "m": {
+                    "br": 192003,
+                    "fid": 0,
+                    "size": 2548269,
+                    "vd": 16577.0,
+                    "sr": 48000
+                },
+                "version": 8,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "晨曦",
+                        "tns": [],
+                        "alias": [
+                            "晨曦"
+                        ],
+                        "id": 54045419,
+                        "alia": [
+                            "晨曦"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 42,
+                "name": "富士山下（钢琴版）",
+                "mark": 17716879360
+            },
+            {
+                "no": 5,
+                "rt": "",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2106663004,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 70.0,
+                "dt": 259133,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2106663004,
+                "sq": {
+                    "br": 868515,
+                    "fid": 0,
+                    "size": 28132659,
+                    "vd": -23496.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 1169654400000,
+                "cf": "",
+                "originCoverType": 0,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 10367521,
+                    "vd": -23483.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/KCdAOep9QIOlhnAP19TU0Q==/109951169145776030.jpg",
+                    "name": "What's Going On...? (2nd Edition)",
+                    "tns": [],
+                    "pic_str": "109951169145776030",
+                    "id": 180689758,
+                    "pic": 109951169145776030
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4147035,
+                    "vd": -19283.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 6220530,
+                    "vd": -20886.0,
+                    "sr": 44100
+                },
+                "version": 6,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 40,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 4,
+                "rt": "",
+                "copyright": 0,
+                "fee": 0,
+                "privilege": {
+                    "flag": 1,
+                    "code": 0,
+                    "dlLevel": "lossless",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 0,
+                    "dl": 999000,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2136776343,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 40.0,
+                "dt": 230451,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2136776343,
+                "sq": {
+                    "br": 938261,
+                    "fid": 0,
+                    "size": 27027982,
+                    "vd": 171629.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 9220223,
+                    "vd": 172634.0,
+                    "sr": 44100
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/tVv9nLWgse2d6I5ZTA5Mnw==/109951169333591254.jpg",
+                    "name": "陈奕迅专辑",
+                    "tns": [],
+                    "pic_str": "109951169333591254",
+                    "id": 185717706,
+                    "pic": 109951169333591254
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 3688115,
+                    "vd": 177086.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 5532151,
+                    "vd": 175280.0,
+                    "sr": 44100
+                },
+                "version": 3,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "北昼",
+                        "tns": [],
+                        "alias": [],
+                        "id": 49588645
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 37,
+                "name": "富士山下（钢琴纯享）",
+                "mark": 131200
+            },
+            {
+                "no": 7,
+                "rt": "600902000005371150",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 65538,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 250543,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 65538,
+                "sq": {
+                    "br": 1290089,
+                    "fid": 0,
+                    "size": 40402915,
+                    "vd": 3602.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1177344000000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10024795,
+                    "vd": 3893.0,
+                    "sr": 44100
+                },
+                "mv": 281152,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/o_OjL_NZNoeog9fIjBXAyw==/18782957139233959.jpg",
+                    "name": "认了吧",
+                    "tns": [],
+                    "pic_str": "18782957139233959",
+                    "id": 6434,
+                    "pic": 18782957139233959
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4009944,
+                    "vd": 8294.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6014894,
+                    "vd": 6531.0,
+                    "sr": 44100
+                },
+                "version": 90,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 124,
+                "name": "好久不见",
+                "mark": 17179877376
+            },
+            {
+                "no": 2,
+                "rt": "",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 1846519326,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 85.0,
+                "dt": 258902,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 1846519326,
+                "sq": {
+                    "br": 1567785,
+                    "fid": 0,
+                    "size": 50737963,
+                    "vd": -32857.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "03",
+                "publishTime": 1210780800000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10359162,
+                    "vd": -32859.0,
+                    "sr": 44100
+                },
+                "mv": 14222544,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/39Wb7Nm5AZMi4RtKWIK7Mg==/109951165995189664.jpg",
+                    "name": "最爱情歌集",
+                    "tns": [],
+                    "pic_str": "109951165995189664",
+                    "id": 127732892,
+                    "pic": 109951165995189664
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4143691,
+                    "vd": -28666.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6215515,
+                    "vd": -30259.0,
+                    "sr": 44100
+                },
+                "version": 7,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 41,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 16,
+                "rt": "600902000001108413",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 5256763,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 90.0,
+                "dt": 258640,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 5256763,
+                "sq": {
+                    "br": 897871,
+                    "fid": 0,
+                    "size": 29028175,
+                    "vd": -38007.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1173369600000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10348713,
+                    "vd": -38014.0,
+                    "sr": 44100
+                },
+                "mv": 303140,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/sBSorVw7PV-y5LqjOqcKmw==/96757023261568.jpg",
+                    "name": "Love 07 情歌集",
+                    "tns": [],
+                    "id": 512151,
+                    "pic": 96757023261568
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4139511,
+                    "vd": -33838.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6209245,
+                    "vd": -35424.0,
+                    "sr": 44100
+                },
+                "version": 690,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 724,
+                "name": "富士山下",
+                "mark": 17179877376
+            },
+            {
+                "no": 6,
+                "rt": "600902000005371162",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 65536,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 259986,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 65536,
+                "sq": {
+                    "br": 860579,
+                    "fid": 0,
+                    "size": 27967389,
+                    "vd": -46533.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1167580800000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 10402003,
+                    "vd": -46601.0,
+                    "sr": 44100
+                },
+                "mv": 303283,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/o_OjL_NZNoeog9fIjBXAyw==/18782957139233959.jpg",
+                    "name": "认了吧",
+                    "tns": [],
+                    "pic_str": "18782957139233959",
+                    "id": 6434,
+                    "pic": 18782957139233959
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 4160827,
+                    "vd": -42321.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 6241219,
+                    "vd": -43987.0,
+                    "sr": 44100
+                },
+                "version": 84,
+                "cp": 7003,
+                "alia": [
+                    "电影《爱情呼叫转移》主题曲",
+                    " 《富士山下》国语版"
+                ],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 118,
+                "name": "爱情转移",
+                "mark": 17179877376
+            },
+            {
+                "no": 1,
+                "rt": "",
+                "copyright": 0,
+                "fee": 8,
+                "hr": {
+                    "br": 1863907,
+                    "fid": 0,
+                    "size": 41387373,
+                    "vd": -81819.0,
+                    "sr": 48000
+                },
+                "privilege": {
+                    "flag": 260,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 320000,
+                    "fee": 8,
+                    "dl": 0,
+                    "plLevel": "exhigh",
+                    "maxBrLevel": "hires",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 2625803706,
+                    "sp": 7,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 0
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 1999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": false
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "hires",
+                    "cp": 1,
+                    "preSell": false,
+                    "playMaxBrLevel": "hires",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "exhigh",
+                    "pl": 320000
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 90.0,
+                "dt": 177636,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 2625803706,
+                "sq": {
+                    "br": 1095039,
+                    "fid": 0,
+                    "size": 24314948,
+                    "vd": -82234.0,
+                    "sr": 48000
+                },
+                "st": 0,
+                "cd": "01",
+                "publishTime": 0,
+                "cf": "",
+                "originCoverType": 2,
+                "h": {
+                    "br": 320000,
+                    "fid": 0,
+                    "size": 7107885,
+                    "vd": -81834.0,
+                    "sr": 48000
+                },
+                "mv": 0,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/9SlrCL02sNVQXdLln2AEKw==/109951169949712629.jpg",
+                    "name": "富士山下",
+                    "tns": [],
+                    "pic_str": "109951169949712629",
+                    "id": 247485799,
+                    "pic": 109951169949712629
+                },
+                "originSongSimpleData": {
+                    "artists": [
+                        {
+                            "name": "陈奕迅",
+                            "id": 2116
+                        }
+                    ],
+                    "name": "富士山下(Live)",
+                    "songId": 64517,
+                    "albumMeta": {
+                        "name": "DUO 陈奕迅2010演唱会",
+                        "id": 6365
+                    }
+                },
+                "l": {
+                    "br": 128000,
+                    "fid": 0,
+                    "size": 2843181,
+                    "vd": -77793.0,
+                    "sr": 48000
+                },
+                "m": {
+                    "br": 192000,
+                    "fid": 0,
+                    "size": 4264749,
+                    "vd": -79287.0,
+                    "sr": 48000
+                },
+                "version": 3,
+                "cp": 0,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "DJ阿啾",
+                        "tns": [],
+                        "alias": [
+                            "职业DJ制作人"
+                        ],
+                        "id": 61590688,
+                        "alia": [
+                            "职业DJ制作人"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 37,
+                "name": "富士山下",
+                "tns": [
+                    "DJ热播版"
+                ],
+                "mark": 17716748288
+            },
+            {
+                "no": 2,
+                "rt": "600902000005371186",
+                "copyright": 1,
+                "fee": 1,
+                "privilege": {
+                    "flag": 4,
+                    "code": 0,
+                    "dlLevel": "none",
+                    "subp": 1,
+                    "fl": 0,
+                    "fee": 1,
+                    "dl": 0,
+                    "plLevel": "none",
+                    "maxBrLevel": "lossless",
+                    "rightSource": 0,
+                    "maxbr": 999000,
+                    "id": 65528,
+                    "sp": 0,
+                    "payed": 0,
+                    "st": 0,
+                    "chargeInfoList": [
+                        {
+                            "rate": 128000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 192000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 320000,
+                            "chargeType": 1
+                        },
+                        {
+                            "rate": 999000,
+                            "chargeType": 1
+                        }
+                    ],
+                    "freeTrialPrivilege": {
+                        "userConsumable": false,
+                        "resConsumable": true
+                    },
+                    "downloadMaxbr": 999000,
+                    "downloadMaxBrLevel": "lossless",
+                    "cp": 0,
+                    "preSell": false,
+                    "playMaxBrLevel": "lossless",
+                    "cs": false,
+                    "toast": false,
+                    "playMaxbr": 999000,
+                    "flLevel": "none",
+                    "pl": 0
+                },
+                "mst": 9,
+                "pst": 0,
+                "pop": 100.0,
+                "dt": 285000,
+                "rtype": 0,
+                "s_id": 0,
+                "rtUrls": [],
+                "resourceState": true,
+                "id": 65528,
+                "sq": {
+                    "br": 934480,
+                    "fid": 0,
+                    "size": 33290869,
+                    "vd": -55646.0,
+                    "sr": 44100
+                },
+                "st": 0,
+                "cd": "1",
+                "publishTime": 1167580800000,
+                "cf": "",
+                "originCoverType": 1,
+                "h": {
+                    "br": 320001,
+                    "fid": 0,
+                    "size": 11403015,
+                    "vd": -55708.0,
+                    "sr": 44100
+                },
+                "mv": 303133,
+                "al": {
+                    "picUrl": "http://p1.music.126.net/o_OjL_NZNoeog9fIjBXAyw==/18782957139233959.jpg",
+                    "name": "认了吧",
+                    "tns": [],
+                    "pic_str": "18782957139233959",
+                    "id": 6434,
+                    "pic": 18782957139233959
+                },
+                "l": {
+                    "br": 128001,
+                    "fid": 0,
+                    "size": 4561232,
+                    "vd": -51453.0,
+                    "sr": 44100
+                },
+                "m": {
+                    "br": 192001,
+                    "fid": 0,
+                    "size": 6841826,
+                    "vd": -53121.0,
+                    "sr": 44100
+                },
+                "version": 89,
+                "cp": 7003,
+                "alia": [],
+                "djId": 0,
+                "single": 0,
+                "ar": [
+                    {
+                        "name": "陈奕迅",
+                        "tns": [],
+                        "alias": [
+                            "Eason Chan"
+                        ],
+                        "id": 2116,
+                        "alia": [
+                            "Eason Chan"
+                        ]
+                    }
+                ],
+                "ftype": 0,
+                "t": 0,
+                "v": 123,
+                "name": "淘汰",
+                "mark": 17179877376
+            }
+        ],
+        "songCount": 77
+    },
+    "code": 200,
+    "trp": {
+        "rules": [
+            "search_tab_song::36861913::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2139390811::searchAlg$isGlobalQuality$2",
+            "search_tab_song::1367241874::searchAlg$isGlobalQuality$1",
+            "search_tab_song::5251245::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2106661545::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2724692015::searchAlg$isGlobalQuality$1",
+            "search_tab_song::65766::searchAlg$isGlobalQuality$1",
+            "search_tab_song::65538::searchAlg$isGlobalQuality$1",
+            "search_tab_song::64517::searchAlg$isGlobalQuality$1",
+            "search_tab_song::65528::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2599695445::searchAlg$isGlobalQuality$1",
+            "search_tab_song::64956::searchAlg$isGlobalQuality$1",
+            "search_tab_song::1411495698::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2625803706::searchAlg$isGlobalQuality$1",
+            "search_tab_song::1846519326::searchAlg$isGlobalQuality$1",
+            "search_tab_song::33255173::searchAlg$isGlobalQuality$1",
+            "search_tab_song::5256763::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2106663004::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2704631154::searchAlg$isGlobalQuality$1",
+            "search_tab_song::1851228561::searchAlg$isGlobalQuality$2",
+            "search_tab_song::2648813751::searchAlg$isGlobalQuality$1",
+            "search_tab_song::2076615067::searchAlg$isGlobalQuality$1",
+            "search_tab_song::65171::searchAlg$isGlobalQuality$1"
+        ]
+    }
+}

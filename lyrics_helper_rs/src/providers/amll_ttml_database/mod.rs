@@ -309,7 +309,8 @@ impl Provider for AmllTtmlDatabase {
         let raw_lyrics = RawLyrics {
             format: "ttml".to_string(),
             content: response_text,
-            translation: None,
+            translation: None,  // 由 TTML 解析器自己处理
+            romanization: None, // 由 TTML 解析器自己处理
         };
 
         Ok(FullLyricsResult {

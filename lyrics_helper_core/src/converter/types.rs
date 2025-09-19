@@ -690,13 +690,11 @@ pub struct ParsedSourceData {
     /// 从文件中解析出的所有演唱者信息。
     #[serde(default)]
     pub agents: AgentStore,
-    /// 可选的原始文件名，可用于日志记录或某些特定转换逻辑。
-    pub source_filename: Option<String>,
     /// 指示源文件是否是逐行歌词（例如LRC）。
     pub is_line_timed_source: bool,
     /// 解析过程中产生的警告信息列表。
     pub warnings: Vec<String>,
-    /// 指示输入的TTML（来自`raw_ttml_from_input`）是否被格式化。
+    /// 指示输入的TTML 是否被格式化。
     /// 这影响空格和换行的处理。
     pub detected_formatted_ttml_input: Option<bool>,
     /// 提供商名称

@@ -1264,6 +1264,11 @@ impl QQMusic {
                 } else {
                     Some(trans_lyrics_decrypted)
                 },
+                romanization: if roma_lyrics_decrypted.is_empty() {
+                    None
+                } else {
+                    Some(roma_lyrics_decrypted.to_string())
+                },
             };
             return Ok(FullLyricsResult {
                 parsed: parsed_data,
@@ -1323,6 +1328,11 @@ impl QQMusic {
                 None
             } else {
                 Some(trans_lyrics_decrypted)
+            },
+            romanization: if roma_lyrics_decrypted.is_empty() {
+                None
+            } else {
+                Some(roma_lyrics_decrypted.to_string())
             },
         };
 
