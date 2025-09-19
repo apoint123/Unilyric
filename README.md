@@ -282,10 +282,8 @@ test: 测试相关
 
 如果您遇到问题或有建议：
 
-1. 查看 [常见问题解答](#)（即将添加）
-2. 搜索 [Issues](https://github.com/apoint123/Unilyric/issues) 看看是否已有相关讨论
-3. 提交新的 [Issue](https://github.com/apoint123/Unilyric/issues/new/choose)
-4. 加入讨论 [Discussions](https://github.com/apoint123/Unilyric/discussions)
+1. 搜索 [Issues](https://github.com/apoint123/Unilyric/issues) 看看是否已有相关讨论
+2. 提交新的 [Issue](https://github.com/apoint123/Unilyric/issues/new/choose)
 
 ## 🙏 致谢
 
