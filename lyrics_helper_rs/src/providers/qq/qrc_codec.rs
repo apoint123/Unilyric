@@ -43,7 +43,7 @@ pub fn decrypt_qrc_local(encrypted_bytes: &[u8]) -> Result<String> {
     // 移除 Magic Header
     if data.len() < 11 {
         return Err(crate::error::LyricsHelperError::Decryption(
-            "QMC 解密后数据过短，无法移除文件头".into(),
+            "数据过短，无法移除文件头".into(),
         ));
     }
     let des_data = &data[11..];
@@ -59,7 +59,6 @@ pub fn encrypt_qrc(plaintext: &str) -> Result<String> {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// 内部模块，封装了所有解密逻辑。
 mod qrc_logic {
     use super::Result;
     use crate::error::LyricsHelperError;
@@ -68,9 +67,6 @@ mod qrc_logic {
     use flate2::write::ZlibEncoder;
     use hex::encode;
     use std::io::{Read, Write};
-    use std::sync::LazyLock;
-
-    static CODEC: LazyLock<QqMusicCodec> = LazyLock::new(QqMusicCodec::new);
 
     const ROUNDS: usize = 16;
     const SUB_KEY_SIZE: usize = 6;
@@ -80,38 +76,27 @@ mod qrc_logic {
 
     /// 非标准 3DES 编解码器
     struct QqMusicCodec {
-        encrypt_schedule: TripleDesKeySchedules,
-        decrypt_schedule: TripleDesKeySchedules,
+        encrypt_schedule: &'static TripleDesKeySchedules,
+        decrypt_schedule: &'static TripleDesKeySchedules,
     }
 
+    const ENCRYPT_SCHEDULES: TripleDesKeySchedules = [
+        custom_des::key_schedule(custom_des::KEY_1, custom_des::Mode::Encrypt),
+        custom_des::key_schedule(custom_des::KEY_2, custom_des::Mode::Decrypt),
+        custom_des::key_schedule(custom_des::KEY_3, custom_des::Mode::Encrypt),
+    ];
+    const DECRYPT_SCHEDULES: TripleDesKeySchedules = [
+        custom_des::key_schedule(custom_des::KEY_3, custom_des::Mode::Decrypt),
+        custom_des::key_schedule(custom_des::KEY_2, custom_des::Mode::Encrypt),
+        custom_des::key_schedule(custom_des::KEY_1, custom_des::Mode::Decrypt),
+    ];
+
+    const CODEC: QqMusicCodec = QqMusicCodec {
+        encrypt_schedule: &ENCRYPT_SCHEDULES,
+        decrypt_schedule: &DECRYPT_SCHEDULES,
+    };
+
     impl QqMusicCodec {
-        fn new() -> Self {
-            const ENCRYPT_OPS: [(&[u8; 8], custom_des::Mode); 3] = [
-                (custom_des::KEY_1, custom_des::Mode::Encrypt),
-                (custom_des::KEY_2, custom_des::Mode::Decrypt),
-                (custom_des::KEY_3, custom_des::Mode::Encrypt),
-            ];
-
-            const DECRYPT_OPS: [(&[u8; 8], custom_des::Mode); 3] = [
-                (custom_des::KEY_3, custom_des::Mode::Decrypt),
-                (custom_des::KEY_2, custom_des::Mode::Encrypt),
-                (custom_des::KEY_1, custom_des::Mode::Decrypt),
-            ];
-
-            fn generate_schedules(ops: [(&[u8; 8], custom_des::Mode); 3]) -> TripleDesKeySchedules {
-                let mut schedules: TripleDesKeySchedules = [[[0; SUB_KEY_SIZE]; ROUNDS]; 3];
-                for (i, (key, mode)) in ops.iter().enumerate() {
-                    custom_des::key_schedule(*key, &mut schedules[i], *mode);
-                }
-                schedules
-            }
-
-            Self {
-                encrypt_schedule: generate_schedules(ENCRYPT_OPS),
-                decrypt_schedule: generate_schedules(DECRYPT_OPS),
-            }
-        }
-
         /// 加密一个8字节的数据块。
         fn encrypt_block(&self, input: &[u8], output: &mut [u8]) {
             let mut temp1 = [0u8; 8];
@@ -249,8 +234,6 @@ mod qrc_logic {
 
     /// 将所有非标准的DES实现细节移动到一个子模块中，以作清晰隔离。
     mod custom_des {
-        use std::sync::LazyLock;
-
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub(super) enum Mode {
             Encrypt,
@@ -258,9 +241,9 @@ mod qrc_logic {
         }
 
         // 解密使用的3个8字节的DES密钥
-        pub(super) const KEY_1: &[u8; 8] = b"!@#)(*$%";
-        pub(super) const KEY_2: &[u8; 8] = b"123ZXC!@";
-        pub(super) const KEY_3: &[u8; 8] = b"!@#)(NHL";
+        pub(super) const KEY_1: [u8; 8] = *b"!@#)(*$%";
+        pub(super) const KEY_2: [u8; 8] = *b"123ZXC!@";
+        pub(super) const KEY_3: [u8; 8] = *b"!@#)(NHL";
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -357,26 +340,30 @@ mod qrc_logic {
         ];
 
         /// 生成 S-P 盒合并查找表。
-        #[allow(clippy::cast_possible_truncation)]
-        fn generate_sp_tables() -> [[u32; 64]; 8] {
+        const fn generate_sp_tables() -> [[u32; 64]; 8] {
             let mut sp_tables = [[0u32; 64]; 8];
 
-            for s_box_idx in 0..8 {
-                for s_box_input in 0..64 {
+            let mut s_box_idx = 0;
+            while s_box_idx < 8 {
+                let mut s_box_input = 0;
+                while s_box_input < 64 {
                     let s_box_index = calculate_sbox_index(s_box_input as u8);
                     let four_bit_output = S_BOXES[s_box_idx][s_box_index];
 
-                    let pre_p_box_val = u32::from(four_bit_output) << (28 - (s_box_idx * 4));
+                    let pre_p_box_val = (four_bit_output as u32) << (28 - (s_box_idx * 4));
 
                     sp_tables[s_box_idx][s_box_input] =
                         apply_qq_pbox_permutation(pre_p_box_val, &P_BOX);
+
+                    s_box_input += 1;
                 }
+                s_box_idx += 1;
             }
             sp_tables
         }
 
         /// S-P 盒合并查找表。
-        static SP_TABLES: LazyLock<[[u32; 64]; 8]> = LazyLock::new(generate_sp_tables);
+        const SP_TABLES: [[u32; 64]; 8] = generate_sp_tables();
 
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -388,18 +375,31 @@ mod qrc_logic {
         ///
         /// # 返回
         /// 经过 P-盒置换后的最终 32 位结果。
-        fn apply_qq_pbox_permutation(input: u32, table: &[u8; 32]) -> u32 {
-            let source_bits: [u8; 32] = std::array::from_fn(|i| ((input >> (31 - i)) & 1) as u8);
-            let dest_bits: [u8; 32] = std::array::from_fn(|dest_idx| {
+        const fn apply_qq_pbox_permutation(input: u32, table: &[u8; 32]) -> u32 {
+            let mut source_bits = [0u8; 32];
+            let mut i = 0;
+            while i < 32 {
+                source_bits[i] = ((input >> (31 - i)) & 1) as u8;
+                i += 1;
+            }
+
+            let mut dest_bits = [0u8; 32];
+            let mut dest_idx = 0;
+            while dest_idx < 32 {
                 let source_pos_1_based = table[dest_idx];
-                source_bits[source_pos_1_based as usize - 1]
-            });
-            dest_bits
-                .iter()
-                .enumerate()
-                .fold(0u32, |output, (i, &bit)| {
-                    output | (u32::from(bit) << (31 - i))
-                })
+                dest_bits[dest_idx] = source_bits[source_pos_1_based as usize - 1];
+                dest_idx += 1;
+            }
+
+            let mut output = 0u32;
+            let mut i = 0;
+            while i < 32 {
+                let bit = dest_bits[i] as u32;
+                output |= bit << (31 - i);
+                i += 1;
+            }
+
+            output
         }
 
         /// 非标准: 计算 DES S-盒的查找索引。
@@ -422,18 +422,23 @@ mod qrc_logic {
         /// # 参数
         /// * `key` - 8字节的密钥数组。
         /// * `table` - 0-based 的位索引置换表。
-        fn permute_from_key_bytes(key: [u8; 8], table: &[usize]) -> u64 {
+        const fn permute_from_key_bytes(key: [u8; 8], table: &[usize]) -> u64 {
             // 非标准: 分别将前后 4 个字节按小端序解释，然后按大端序拼起来
-            let word1 = u32::from_le_bytes(key[0..4].try_into().unwrap());
-            let word2 = u32::from_le_bytes(key[4..8].try_into().unwrap());
-            let key = (u64::from(word1) << 32) | u64::from(word2);
+            let word1 = u32::from_le_bytes([key[0], key[1], key[2], key[3]]);
+            let word2 = u32::from_le_bytes([key[4], key[5], key[6], key[7]]);
+            let key_u64 = ((word1 as u64) << 32) | (word2 as u64);
+
             let mut output = 0u64;
             let output_len = table.len();
-            for (i, &pos) in table.iter().enumerate() {
-                let bit = (key >> (63 - pos)) & 1;
+
+            let mut i = 0;
+            while i < output_len {
+                let pos = table[i];
+                let bit = (key_u64 >> (63 - pos)) & 1;
                 if bit != 0 {
                     output |= 1u64 << (output_len - 1 - i);
                 }
+                i += 1;
             }
             output
         }
@@ -445,14 +450,22 @@ mod qrc_logic {
         ///
         /// # 返回
         /// 一个 u64，其低48位是扩展后的结果。
-        fn apply_e_box_permutation(input: u32) -> u64 {
+        const fn apply_e_box_permutation(input: u32) -> u64 {
             let mut output = 0u64;
-            for (i, &source_bit_pos) in E_BOX_TABLE.iter().enumerate() {
+            let mut i = 0;
+
+            while i < E_BOX_TABLE.len() {
+                let source_bit_pos = E_BOX_TABLE[i];
+
                 let shift_amount = 32 - source_bit_pos;
+
                 let bit = (input >> shift_amount) & 1;
 
-                output |= u64::from(bit) << (47 - i);
+                output |= (bit as u64) << (47 - i);
+
+                i += 1;
             }
+
             output
         }
 
@@ -464,8 +477,7 @@ mod qrc_logic {
         /// * `key` - 8字节的DES密钥。
         /// * `schedule` - 一个可变的二维向量，用于存储生成的16个轮密钥，每个轮密钥是6字节（48位）。
         /// * `mode` - 加密 (`Encrypt`) 或解密 (`Decrypt`) 模式。解密时轮密钥的使用顺序相反。
-        #[allow(clippy::cast_possible_truncation)]
-        pub(super) fn key_schedule(key: &[u8], schedule: &mut [[u8; 6]; 16], mode: Mode) {
+        pub(super) const fn key_schedule(key: [u8; 8], mode: Mode) -> [[u8; 6]; 16] {
             // 这几个表是标准的
 
             // 每轮循环左移的位数表
@@ -504,26 +516,34 @@ mod qrc_logic {
                 33, 52, 45, 41, 49, 35, 28, 31,
             ];
 
-            let key_array: &[u8; 8] = key.try_into().expect("密钥必须是8字节");
+            let mut schedule = [[0u8; 6]; 16];
 
             // 应用 PC-1
-            let c0 = permute_from_key_bytes(*key_array, &KEY_PERM_C);
-            let d0 = permute_from_key_bytes(*key_array, &KEY_PERM_D);
+            let c0 = permute_from_key_bytes(key, &KEY_PERM_C);
+            let d0 = permute_from_key_bytes(key, &KEY_PERM_D);
 
             // 将28位的结果左移4位，以匹配 `rotate_left_28bit_in_u32` 对高位对齐的期望。
             let mut c = (c0 as u32) << 4;
             let mut d = (d0 as u32) << 4;
 
-            for (i, &shift) in KEY_RND_SHIFT.iter().enumerate() {
+            let mut i = 0;
+            while i < 16 {
+                let shift = KEY_RND_SHIFT[i];
                 c = rotate_left_28bit_in_u32(c, shift);
                 d = rotate_left_28bit_in_u32(d, shift);
 
-                let to_gen = if mode == Mode::Decrypt { 15 - i } else { i };
+                let to_gen = if matches!(mode, Mode::Decrypt) {
+                    15 - i
+                } else {
+                    i
+                };
 
                 let mut subkey_48bit = 0u64;
 
                 // 应用 PC-2
-                for (k, &pos) in KEY_COMPRESSION.iter().enumerate() {
+                let mut k = 0;
+                while k < 48 {
+                    let pos = KEY_COMPRESSION[k];
                     let bit = if pos < 28 {
                         (c >> (31 - pos)) & 1
                     } else {
@@ -534,11 +554,20 @@ mod qrc_logic {
                     if bit != 0 {
                         subkey_48bit |= 1u64 << (47 - k);
                     }
+                    k += 1;
                 }
 
                 let subkey_bytes = subkey_48bit.to_be_bytes();
-                schedule[to_gen].copy_from_slice(&subkey_bytes[2..]);
+
+                let mut byte_idx = 0;
+                while byte_idx < 6 {
+                    schedule[to_gen][byte_idx] = subkey_bytes[2 + byte_idx];
+                    byte_idx += 1;
+                }
+                i += 1;
             }
+
+            schedule
         }
 
         /// 存储DES置换操作的查找表
@@ -551,8 +580,7 @@ mod qrc_logic {
 
         impl DesPermutationTables {
             /// 创建并填充所有查找表
-            #[allow(clippy::cast_possible_truncation)]
-            fn new() -> Self {
+            const fn new() -> Self {
                 /// 初始置换规则。
                 /// 
                 /// 非标准: 它们全都是不标准的。
@@ -584,13 +612,16 @@ mod qrc_logic {
                 ];
 
                 /// 使用索引表执行一次置换
-                fn apply_permutation(input: [u8; 8], rule: &[u8; 64]) -> u64 {
+                const fn apply_permutation(input: [u8; 8], rule: &[u8; 64]) -> u64 {
                     let normalized_input = u64::from_be_bytes(input);
                     let mut result: u64 = 0;
-                    for (i, &src_bit_pos_from_1) in rule.iter().enumerate() {
+                    let mut i = 0;
+                    while i < 64 {
+                        let src_bit_pos_from_1 = rule[i];
                         let src_bit_pos = src_bit_pos_from_1 as usize - 1;
                         let bit = (normalized_input >> (63 - src_bit_pos)) & 1;
                         result |= bit << (63 - i);
+                        i += 1;
                     }
                     result
                 }
@@ -600,25 +631,35 @@ mod qrc_logic {
                 let mut input = [0u8; 8];
 
                 // 生成 IP 结果查找表
-                for byte_pos in 0..8 {
-                    for byte_val in 0..256 {
-                        input.fill(0);
+                let mut byte_pos = 0;
+                while byte_pos < 8 {
+                    let mut byte_val = 0;
+                    while byte_val < 256 {
+                        let mut i = 0;
+                        while i < input.len() {
+                            input[i] = 0;
+                            i += 1;
+                        }
                         input[byte_pos] = byte_val as u8;
                         let permuted = apply_permutation(input, &IP_RULE);
                         ip_table[byte_pos][byte_val] = ((permuted >> 32) as u32, permuted as u32);
+                        byte_val += 1;
                     }
+                    byte_pos += 1;
                 }
 
                 // 生成 InvIP 结果查找表
-                for (block_pos, current_block) in inv_ip_table.iter_mut().enumerate() {
-                    for (block_val, item) in current_block.iter_mut().enumerate() {
+                let mut block_pos = 0;
+                while block_pos < 8 {
+                    let mut block_val = 0;
+                    while block_val < 256 {
                         let temp_input_u64: u64 = (block_val as u64) << (56 - (block_pos * 8));
                         let temp_input_bytes = temp_input_u64.to_be_bytes();
-
                         let permuted = apply_permutation(temp_input_bytes, &INV_IP_RULE);
-
-                        *item = permuted;
+                        inv_ip_table[block_pos][block_val] = permuted;
+                        block_val += 1;
                     }
+                    block_pos += 1;
                 }
 
                 Self {
@@ -628,40 +669,9 @@ mod qrc_logic {
             }
         }
 
-        // /// DES 的 F 函数。
-        // ///
-        // /// 保留一个适合阅读的版本。
-        // fn f_function_readable(state: u32, key: &[u8]) -> u32 {
-        //     // 使用置换表进行扩展
-        //     let expanded_state = apply_e_box_permutation(state);
-
-        //     // 将6字节的轮密钥也转换为 u64，方便进行异或
-        //     let key_u64 =
-        //         u64::from_be_bytes([0, 0, key[0], key[1], key[2], key[3], key[4], key[5]]);
-
-        //     // 异或
-        //     let xor_result = expanded_state ^ key_u64;
-
-        //     // S盒代换
-        //     let mut s_box_output = 0u32;
-
-        //     for i in 0..8 {
-        //         let shift_amount = 42 - (i * 6);
-        //         let six_bit_chunk = ((xor_result >> shift_amount) & 0x3F) as u8;
-
-        //         let s_box_index = calculate_sbox_index(six_bit_chunk);
-        //         let four_bit_result = u32::from(S_BOXES[i][s_box_index]);
-
-        //         s_box_output |= four_bit_result << (28 - (i * 4));
-        //     }
-
-        //     // P盒置换
-        //     apply_qq_pbox_permutation(s_box_output, &P_BOX)
-        // }
-
         /// DES 的 F 函数。
         #[rustfmt::skip]
-        fn f_function(state: u32, key: &[u8]) -> u32 {
+        const fn f_function(state: u32, key: &[u8]) -> u32 {
             // 扩展置换
             let expanded_state = apply_e_box_permutation(state);
 
@@ -684,7 +694,7 @@ mod qrc_logic {
         }
 
         /// 查找表实例
-        static TABLES: LazyLock<DesPermutationTables> = LazyLock::new(DesPermutationTables::new);
+        const TABLES: DesPermutationTables = DesPermutationTables::new();
 
         /// 初始置换
         fn initial_permutation(state: &mut [u32; 2], input: &[u8]) {
@@ -747,9 +757,9 @@ mod qrc_logic {
             #[ignore]
             fn capture_key_schedule() {
                 let key = KEY_1;
-                let mut schedule = [[0u8; 6]; 16];
+                let schedule = [[0u8; 6]; 16];
 
-                key_schedule(key, &mut schedule, Mode::Encrypt);
+                key_schedule(key, Mode::Encrypt);
 
                 for (i, round_key) in schedule.iter().enumerate() {
                     print!("[");
@@ -786,9 +796,7 @@ mod qrc_logic {
                 ];
 
                 let key = KEY_1;
-                let mut schedule = [[0u8; 6]; 16];
-
-                key_schedule(key, &mut schedule, Mode::Encrypt);
+                let schedule = key_schedule(key, Mode::Encrypt);
 
                 for i in 0..16 {
                     assert_eq!(
