@@ -1,6 +1,6 @@
 [package]
 name = "lyrics_helper_core"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["apoint123 <vpnzaph@outlook.com>"]
 description = "lyrics_helper_rs 的核心类型。"
