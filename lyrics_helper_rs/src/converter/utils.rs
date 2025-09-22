@@ -77,7 +77,7 @@ pub(crate) fn parse_and_store_metadata(
 ///
 /// # 参数
 /// * `raw_text_slice` - 两个时间戳之间的原始文本切片。
-/// * `syllables` - 正在构建的音节列表，此函数可能会修改其中最后一个元素（为其添加尾随空格）。
+/// * `syllables` - 正在构建的音节列表，此函数可能会修改其中最后一个元素（为其添加 `ends_with_space` 标记）。
 ///
 /// # 返回
 /// * `Some((clean_text, ends_with_space))` - 如果原始文本包含有效内容。元组中第一个元素是
