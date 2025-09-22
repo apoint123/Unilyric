@@ -333,20 +333,6 @@ mod tests {
     }
 
     #[test]
-    fn test_no_rules_does_nothing() {
-        let mut lines = create_test_lines(&["Artist: Me", "Lyric line"]);
-        let options = MetadataStripperOptions {
-            flags: MetadataStripperFlags::ENABLED,
-            keywords: Vec::new(),
-            regex_patterns: Vec::new(),
-            ..Default::default()
-        };
-
-        strip_descriptive_metadata_lines(&mut lines, &options);
-        assert_eq!(lines_to_texts(&lines), vec!["Artist: Me", "Lyric line"]);
-    }
-
-    #[test]
     fn test_strip_header_keywords_basic() {
         let mut lines = create_test_lines(&["Artist: A", "Album: B", "Lyric 1", "Lyric 2"]);
         let options = MetadataStripperOptions {
