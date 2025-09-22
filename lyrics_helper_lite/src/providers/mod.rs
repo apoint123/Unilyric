@@ -1,5 +1,5 @@
 use crate::error::{FetcherError, Result};
-use lyrics_helper_core::{RawLyrics, SearchResult, Track};
+use lyrics_helper_core::{ParsedSourceData, SearchResult, Track};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -52,7 +52,7 @@ pub trait LyricProvider {
         query: &TrackQuery,
     ) -> Result<Vec<SearchResult>>;
     fn prepare_lyrics_request(&self, search_result: &SearchResult) -> Result<RequestInfo>;
-    fn handle_lyrics_response(&self, response_text: &str) -> Result<RawLyrics>;
+    fn handle_lyrics_response(&self, response_text: &str) -> Result<ParsedSourceData>;
 }
 
 pub mod netease;

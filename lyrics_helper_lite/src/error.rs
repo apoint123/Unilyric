@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::num::ParseIntError;
 use thiserror::Error;
 use wasm_bindgen::prelude::*;
 
@@ -24,6 +25,12 @@ pub enum FetcherError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("Invalid time format: {0}")]
+    InvalidTime(String),
+
+    #[error("Lyric parsing failed: {0}")]
+    Parse(String),
 }
 
 impl From<FetcherError> for JsValue {
@@ -34,6 +41,8 @@ impl From<FetcherError> for JsValue {
             FetcherError::WasmSerialization(msg) => ("WasmSerializationError", msg.clone()),
             FetcherError::Provider(msg) => ("ProviderError", msg.clone()),
             FetcherError::InvalidInput(msg) => ("InvalidInput", msg.clone()),
+            FetcherError::InvalidTime(msg) => ("InvalidTimeError", msg.clone()),
+            FetcherError::Parse(msg) => ("ParseError", msg.clone()),
         };
         let error_obj = WasmError {
             code: code.to_string(),
@@ -53,6 +62,14 @@ impl From<reqwest::Error> for FetcherError {
 impl From<serde_wasm_bindgen::Error> for FetcherError {
     fn from(err: serde_wasm_bindgen::Error) -> Self {
         Self::WasmSerialization(err.to_string())
+    }
+}
+
+impl From<ParseIntError> for FetcherError {
+    fn from(err: ParseIntError) -> Self {
+        Self::InvalidTime(format!(
+            "Failed to parse integer from time component: {err}"
+        ))
     }
 }
 

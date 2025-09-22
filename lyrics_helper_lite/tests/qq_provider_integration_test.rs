@@ -72,28 +72,37 @@ fn test_prepare_lyrics_request() {
 #[test]
 fn test_handle_lyrics_response() {
     let provider = QQProvider;
-    let raw_lyrics = provider
+    let parsed_data = provider
         .handle_lyrics_response(LYRICS_RESPONSE_XML)
         .unwrap();
 
     assert!(
-        !raw_lyrics.content.is_empty(),
-        "Decrypted lyric content should not be empty"
+        parsed_data.raw_metadata.contains_key("ti"),
+        "Metadata should contain title [ti]"
     );
     assert!(
-        raw_lyrics.content.contains("[ti:"),
-        "Lyric should contain metadata tags"
+        parsed_data.raw_metadata.contains_key("ar"),
+        "Metadata should contain artist [ar]"
     );
+
     assert!(
-        raw_lyrics.content.contains("[ar:"),
-        "Lyric should contain metadata tags"
+        !parsed_data.lines.is_empty(),
+        "Parsed lyric lines should not be empty"
     );
+
+    let has_translation = parsed_data.lines.iter().any(|line| {
+        line.main_track()
+            .is_some_and(|t| !t.translations.is_empty())
+    });
+
     assert!(
-        raw_lyrics.translation.is_some(),
-        "Translation should be present"
+        has_translation,
+        "A translation should be present and merged into the lyric lines"
     );
+
+    let first_translation_text = parsed_data.lines[0].main_track().unwrap().translations[0].text();
     assert!(
-        !raw_lyrics.translation.as_ref().unwrap().is_empty(),
-        "Translation should not be empty"
+        !first_translation_text.is_empty(),
+        "First translation text should not be empty"
     );
 }

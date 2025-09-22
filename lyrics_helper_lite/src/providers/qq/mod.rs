@@ -2,19 +2,38 @@ mod decoder;
 mod models;
 
 use crate::error::{FetcherError, Result};
+use crate::parser::parse_qrc;
+use crate::parser::{merge_lyric_lines, parse_lrc};
 use crate::providers::qq::decoder::decrypt_qrc;
 use crate::providers::{
     LyricProvider, RequestBodyFormat, RequestInfo, TrackQuery, checked_json_parser,
 };
 use crate::search::matcher::sort_and_rate_results;
-use lyrics_helper_core::MatchType;
 use lyrics_helper_core::model::generic::Artist as CoreArtist;
-use lyrics_helper_core::{RawLyrics, SearchResult};
+use lyrics_helper_core::{MatchType, ParsedSourceData, SearchResult};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use regex::Regex;
 use serde_json::json;
+use std::sync::LazyLock;
+
+static QRC_CONTENT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"LyricContent="(?s)(.+?)""#).expect("Failed to compile QRC_CONTENT_REGEX")
+});
 
 pub struct QQProvider;
+
+fn extract_qrc_content_from_xml(xml_text: &str) -> Result<String> {
+    QRC_CONTENT_REGEX
+        .captures(xml_text)
+        .and_then(|caps| caps.get(1))
+        .map(|m| m.as_str().to_string())
+        .ok_or_else(|| {
+            FetcherError::Provider(
+                "Failed to extract LyricContent from decrypted QRC XML".to_string(),
+            )
+        })
+}
 
 impl LyricProvider for QQProvider {
     fn prepare_search_request(&self, query: &TrackQuery) -> Result<RequestInfo> {
@@ -117,7 +136,7 @@ impl LyricProvider for QQProvider {
         })
     }
 
-    fn handle_lyrics_response(&self, response_text: &str) -> Result<RawLyrics> {
+    fn handle_lyrics_response(&self, response_text: &str) -> Result<ParsedSourceData> {
         let xml_content = response_text
             .trim()
             .strip_prefix("<!--")
@@ -173,15 +192,31 @@ impl LyricProvider for QQProvider {
             ));
         }
 
-        let main_lyrics = decrypt_qrc(&main_lyrics_encrypted)?;
-        let translation = decrypt_qrc(&trans_lyrics_encrypted).ok();
-        let romanization = decrypt_qrc(&roma_lyrics_encrypted).ok();
+        let decrypted_main_xml = decrypt_qrc(&main_lyrics_encrypted)?;
+        let main_lyrics = extract_qrc_content_from_xml(&decrypted_main_xml)?;
 
-        Ok(RawLyrics {
-            format: "QRC".to_string(),
-            content: main_lyrics,
-            translation,
-            romanization,
-        })
+        let translation_content = decrypt_qrc(&trans_lyrics_encrypted).ok();
+
+        let romanization_content = decrypt_qrc(&roma_lyrics_encrypted)
+            .ok()
+            .and_then(|xml| extract_qrc_content_from_xml(&xml).ok());
+
+        let mut main_parsed = parse_qrc(&main_lyrics)?;
+
+        let translation_lines = translation_content
+            .map(|t| parse_lrc(&t).map(|p| p.lines))
+            .transpose()?;
+
+        let romanization_lines = romanization_content
+            .map(|r| parse_qrc(&r).map(|p| p.lines))
+            .transpose()?;
+
+        let merged_lines =
+            merge_lyric_lines(main_parsed.lines, translation_lines, romanization_lines);
+        main_parsed.lines = merged_lines;
+
+        main_parsed.source_name = "qq".to_string();
+
+        Ok(main_parsed)
     }
 }

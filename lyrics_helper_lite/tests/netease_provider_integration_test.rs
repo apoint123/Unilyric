@@ -31,11 +31,31 @@ fn test_handle_netease_search_response() {
 #[test]
 fn test_handle_netease_lyrics_response() {
     let provider = NeteaseProvider;
-    let raw_lyrics = provider
+    let parsed_data = provider
         .handle_lyrics_response(LYRICS_RESPONSE_JSON)
         .unwrap();
 
-    assert!(!raw_lyrics.content.is_empty());
-    assert!(raw_lyrics.content.contains("](") && raw_lyrics.content.contains(",0)")); // 检查 YRC 歌词
-    assert!(raw_lyrics.translation.is_none() || raw_lyrics.translation.as_deref() == Some(""));
+    assert!(
+        !parsed_data.lines.is_empty(),
+        "There should be parsed lyric lines"
+    );
+
+    let first_line = &parsed_data.lines[0];
+    assert!(
+        first_line.start_ms > 0,
+        "First line should have a start time"
+    );
+    assert!(
+        first_line.main_text().is_some(),
+        "First line should have main text"
+    );
+
+    let has_translation = parsed_data.lines.iter().any(|line| {
+        line.main_track()
+            .is_some_and(|t| !t.translations.is_empty())
+    });
+    assert!(
+        !has_translation,
+        "Translation should not be present in this test case"
+    );
 }

@@ -3,13 +3,13 @@ mod models;
 
 use self::models::LyricApiResponse;
 use crate::error::{FetcherError, Result};
+use crate::parser::{merge_lyric_lines, parse_lrc, parse_yrc};
 use crate::providers::{
     LyricProvider, RequestBodyFormat, RequestInfo, TrackQuery, checked_json_parser,
 };
 use crate::search::matcher::sort_and_rate_results;
-use lyrics_helper_core::{
-    MatchType, RawLyrics, SearchResult, model::generic::Artist as CoreArtist,
-};
+use lyrics_helper_core::ParsedSourceData;
+use lyrics_helper_core::{MatchType, SearchResult, model::generic::Artist as CoreArtist};
 use serde_json::json;
 
 const SEARCH_CLOUDSEARCH_PC_PATH: &str = "/api/cloudsearch/pc";
@@ -111,38 +111,51 @@ impl LyricProvider for NeteaseProvider {
         })
     }
 
-    fn handle_lyrics_response(&self, response_text: &str) -> Result<RawLyrics> {
+    fn handle_lyrics_response(&self, response_text: &str) -> Result<ParsedSourceData> {
         let api_response: LyricApiResponse = checked_json_parser(response_text, 200, &[])?;
 
-        let main_lyric = api_response
+        let main_parsed_result = api_response
             .yrc
-            .and_then(|y| y.lyric)
-            .or_else(|| api_response.lrc.and_then(|l| l.lyric));
+            .as_ref()
+            .and_then(|y| y.lyric.as_ref())
+            .filter(|s| !s.is_empty())
+            .map(|content| parse_yrc(content))
+            .or_else(|| {
+                api_response
+                    .lrc
+                    .as_ref()
+                    .and_then(|l| l.lyric.as_ref())
+                    .filter(|s| !s.is_empty())
+                    .map(|content| parse_lrc(content))
+            })
+            .ok_or_else(|| FetcherError::Provider("Lyric not found in API response".to_string()))?;
 
-        let main_content = match main_lyric {
-            Some(content) if !content.is_empty() => content,
-            _ => {
-                return Err(FetcherError::Provider(
-                    "Lyric not found in API response".to_string(),
-                ));
-            }
-        };
+        let mut main_parsed = main_parsed_result?;
 
-        let translation = api_response
+        let translation_content = api_response
             .tlyric
             .and_then(|t| t.lyric)
             .filter(|s| !s.is_empty());
 
-        let romanization = api_response
+        let romanization_content = api_response
             .romalrc
             .and_then(|r| r.lyric)
             .filter(|s| !s.is_empty());
 
-        Ok(RawLyrics {
-            format: "lrc".to_string(),
-            content: main_content,
-            translation,
-            romanization,
-        })
+        let translation_lines = translation_content
+            .map(|t| parse_lrc(&t).map(|p| p.lines))
+            .transpose()?;
+
+        let romanization_lines = romanization_content
+            .map(|r| parse_lrc(&r).map(|p| p.lines))
+            .transpose()?;
+
+        let merged_lines =
+            merge_lyric_lines(main_parsed.lines, translation_lines, romanization_lines);
+        main_parsed.lines = merged_lines;
+
+        main_parsed.source_name = "netease".to_string();
+
+        Ok(main_parsed)
     }
 }
