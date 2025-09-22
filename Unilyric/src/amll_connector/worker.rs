@@ -6,7 +6,7 @@ use std::{
 };
 use tracing::{debug, error, info, warn};
 
-use smtc_suite::{MediaCommand, MediaUpdate, SmtcControlCommand};
+use smtc_suite::{MediaCommand, MediaUpdate, RepeatMode as SmtcRepeatMode, SmtcControlCommand};
 use tokio::{
     sync::{
         mpsc::{
@@ -20,12 +20,11 @@ use tokio::{
 };
 
 use crate::amll_connector::{
-    protocol::BinClientMessage,
+    protocol_v2::*,
     types::{ActorSettings, UiUpdate},
 };
 
 use super::{
-    protocol::{Artist, ClientMessage, OutgoingMessage},
     translation::convert_to_protocol_lyrics,
     types::{AMLLConnectorConfig, ConnectorCommand, ConnectorUpdate, WebsocketStatus},
     websocket_client,
@@ -107,47 +106,50 @@ fn send_music_info_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::N
             name: name.as_str().into(),
         }]
     });
-    let json_body = ClientMessage::SetMusicInfo {
+    let music_info = MusicInfo {
         music_id: Default::default(),
-        music_name: info.title.clone().map_or(Default::default(), |s| s),
+        music_name: info.title.clone().unwrap_or_default(),
         album_id: Default::default(),
-        album_name: info.album_title.clone().map_or(Default::default(), |s| s),
+        album_name: info.album_title.clone().unwrap_or_default(),
         artists: artists_vec,
         duration: info.duration_ms.unwrap_or(0),
     };
-    let msg = OutgoingMessage::Json(json_body);
-    handle_websocket_send_error(tx.try_send(msg), "SetMusicInfo");
+
+    let payload = Payload::State(StateUpdate::SetMusic(music_info));
+    let msg = OutgoingMessage::Json(MessageV2 { payload });
+    handle_websocket_send_error(tx.try_send(msg), "SetMusic");
 }
 
 fn send_cover_to_ws(tx: &TokioSender<OutgoingMessage>, cover_data: &[u8]) {
     if !cover_data.is_empty() {
-        let bin_body = BinClientMessage::SetMusicAlbumCoverImageData {
+        let bin_body = BinaryV2::SetCoverData {
             data: cover_data.to_vec(),
         };
-        let msg = OutgoingMessage::LegacyBinary(bin_body);
+        let msg = OutgoingMessage::Binary(bin_body);
 
-        handle_websocket_send_error(tx.try_send(msg), "SetMusicAlbumCoverImageData");
+        handle_websocket_send_error(tx.try_send(msg), "SetCoverData");
     }
 }
 
 fn send_play_state_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
     if let Some(status) = info.playback_status {
-        let json_body = match status {
-            smtc_suite::PlaybackStatus::Playing => ClientMessage::OnResumed,
+        let state_update = match status {
+            smtc_suite::PlaybackStatus::Playing => StateUpdate::Resumed,
             smtc_suite::PlaybackStatus::Paused | smtc_suite::PlaybackStatus::Stopped => {
-                ClientMessage::OnPaused
+                StateUpdate::Paused
             }
         };
-        let msg = OutgoingMessage::Json(json_body);
+        let payload = Payload::State(state_update);
+        let msg = OutgoingMessage::Json(MessageV2 { payload });
         handle_websocket_send_error(tx.try_send(msg), "播放状态");
     }
 }
 
 fn send_progress_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
     if let Some(progress) = info.position_ms {
-        let json_body = ClientMessage::OnPlayProgress { progress };
-        let msg = OutgoingMessage::Json(json_body);
-        handle_websocket_send_error(tx.try_send(msg), "OnPlayProgress");
+        let payload = Payload::State(StateUpdate::Progress { progress });
+        let msg = OutgoingMessage::Json(MessageV2 { payload });
+        handle_websocket_send_error(tx.try_send(msg), "Progress");
     }
 }
 
@@ -240,7 +242,7 @@ fn handle_smtc_update(
             (&state.connection, state.session_ready)
         {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
-            let msg = OutgoingMessage::LegacyBinary(BinClientMessage::OnAudioData {
+            let msg = OutgoingMessage::Binary(BinaryV2::OnAudioData {
                 data: i16_byte_data,
             });
             handle_websocket_send_error(tx.try_send(msg), "OnAudioData");
@@ -271,12 +273,52 @@ fn handle_smtc_update(
                     send_cover_to_ws(tx, cover_data);
                 }
 
+                let modes_changed = state.last_track_info.as_ref().is_none_or(|cached| {
+                    cached.repeat_mode != new_info.repeat_mode
+                        || cached.is_shuffle_active != new_info.is_shuffle_active
+                });
+
+                if modes_changed {
+                    debug!("[AMLL Actor] 检测到播放模式更新，发送更新。");
+                    let shuffle_state = new_info.is_shuffle_active.unwrap_or(false);
+                    let smtc_repeat_mode = new_info.repeat_mode.unwrap_or_default();
+
+                    let protocol_repeat_mode = match smtc_repeat_mode {
+                        SmtcRepeatMode::Off => RepeatMode::Off,
+                        SmtcRepeatMode::One => RepeatMode::One,
+                        SmtcRepeatMode::All => RepeatMode::All,
+                    };
+
+                    let state_update = StateUpdate::ModeChanged {
+                        repeat: protocol_repeat_mode,
+                        shuffle: shuffle_state,
+                    };
+
+                    let payload = Payload::State(state_update);
+                    let msg = OutgoingMessage::Json(MessageV2 { payload });
+                    handle_websocket_send_error(tx.try_send(msg), "ModeChanged");
+                }
+
                 send_play_state_to_ws(tx, &new_info);
                 send_progress_to_ws(tx, &new_info);
             }
             state.last_track_info = Some(new_info.clone());
             repaint_needed = true;
             ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(new_info))
+        }
+        MediaUpdate::VolumeChanged { volume, .. } => {
+            if let (ConnectionState::Running { tx, .. }, true) =
+                (&state.connection, state.session_ready)
+            {
+                debug!("[AMLL Actor] 检测到音量更新，发送更新。音量值: {volume:.2}",);
+                let state_update = StateUpdate::Volume {
+                    volume: volume as f64,
+                };
+                let payload = Payload::State(state_update);
+                let msg = OutgoingMessage::Json(MessageV2 { payload });
+                handle_websocket_send_error(tx.try_send(msg), "VolumeChanged");
+            }
+            ConnectorUpdate::SmtcUpdate(update)
         }
         other_update => {
             if matches!(
@@ -364,8 +406,8 @@ async fn handle_app_command(
         }
         ConnectorCommand::SetProgress(progress) => {
             if let ConnectionState::Running { tx, .. } = &state.connection {
-                let json_body = ClientMessage::OnPlayProgress { progress };
-                let msg = OutgoingMessage::Json(json_body);
+                let payload = Payload::State(StateUpdate::Progress { progress });
+                let msg = OutgoingMessage::Json(MessageV2 { payload });
                 handle_websocket_send_error(tx.try_send(msg), "SetProgress");
             }
         }
@@ -388,11 +430,12 @@ async fn handle_app_command(
         }
         ConnectorCommand::SendLyric(parsed_data) => {
             if let ConnectionState::Running { tx, .. } = &state.connection {
-                let protocol_lyrics = convert_to_protocol_lyrics(&parsed_data);
-                let json_body = ClientMessage::SetLyric {
-                    data: protocol_lyrics,
+                let protocol_lyrics: Vec<LyricLine> = convert_to_protocol_lyrics(&parsed_data);
+                let lyric_content = LyricContent::Structured {
+                    lines: protocol_lyrics,
                 };
-                let msg = OutgoingMessage::Json(json_body);
+                let payload = Payload::State(StateUpdate::SetLyric(lyric_content));
+                let msg = OutgoingMessage::Json(MessageV2 { payload });
                 handle_websocket_send_error(tx.try_send(msg), "SetLyric");
             }
         }
@@ -537,8 +580,10 @@ pub async fn amll_connector_actor(
                 {
                     let command = MediaCommand::SetHighFrequencyProgressUpdates(true);
                     handle_smtc_send_error(smtc_command_tx.send(command).await, "启用高频更新").await;
-                    let init_msg = OutgoingMessage::Json(ClientMessage::InitializeV2);
-                    handle_websocket_send_error(tx.try_send(init_msg), "InitializeV2");
+
+                    let init_payload = Payload::Initialize;
+                    let init_msg = OutgoingMessage::Json(MessageV2 { payload: init_payload });
+                    handle_websocket_send_error(tx.try_send(init_msg), "Initialize");
 
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                     state.session_ready = true;

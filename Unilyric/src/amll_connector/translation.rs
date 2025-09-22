@@ -1,4 +1,4 @@
-use crate::amll_connector::{protocol, protocol_strings::NullString};
+use crate::amll_connector::protocol_v2::*;
 use lyrics_helper_core::converter::types as helper_types;
 use std::collections::HashMap;
 
@@ -27,7 +27,7 @@ fn extract_line_components(
     translations: &[helper_types::LyricTrack],
     romanizations: &[helper_types::LyricTrack],
     is_instrumental: bool,
-) -> (Vec<protocol::LyricWord>, String, String) {
+) -> (Vec<LyricWord>, String, String) {
     let roman_syllables: Vec<_> = romanizations
         .first()
         .map(|track| {
@@ -82,7 +82,7 @@ fn extract_line_components(
 
             let roman_word_text = roman_groups[i].join("");
 
-            protocol::LyricWord {
+            LyricWord {
                 start_time: syllable.start_ms,
                 end_time,
                 word: NullString(word_text),
@@ -112,7 +112,7 @@ fn extract_line_components(
 
 pub(super) fn convert_to_protocol_lyrics(
     source_data: &helper_types::ParsedSourceData,
-) -> Vec<protocol::LyricLine> {
+) -> Vec<LyricLine> {
     let is_instrumental = if source_data.lines.len() == 1 {
         source_data
             .lines
@@ -193,7 +193,7 @@ pub(super) fn convert_to_protocol_lyrics(
                         .max()
                         .unwrap_or(helper_line.end_ms);
 
-                    Some(protocol::LyricLine {
+                    Some(LyricLine {
                         start_time,
                         end_time,
                         words,
@@ -241,7 +241,7 @@ pub(super) fn convert_to_protocol_lyrics(
                         .max()
                         .unwrap_or(helper_line.end_ms);
 
-                    Some(protocol::LyricLine {
+                    Some(LyricLine {
                         start_time,
                         end_time,
                         words: bg_words,
@@ -338,15 +338,15 @@ mod tests {
 
                 assert_eq!(main_syllables.len(), protocol_words.len());
 
-                // for (main_syl, protocol_word) in main_syllables.iter().zip(protocol_words.iter()) {
-                //     println!(
-                //         "  Main: '{}' ({} - {}) -> Romanization: '{}'",
-                //         main_syl.text,
-                //         main_syl.start_ms,
-                //         main_syl.end_ms,
-                //         protocol_word.roman_word.0
-                //     );
-                // }
+                for (main_syl, protocol_word) in main_syllables.iter().zip(protocol_words.iter()) {
+                    println!(
+                        "  Main: '{}' ({} - {}) -> Romanization: '{}'",
+                        main_syl.text,
+                        main_syl.start_ms,
+                        main_syl.end_ms,
+                        protocol_word.roman_word.0
+                    );
+                }
             } else {
                 println!("  (No main track in this line)");
             }

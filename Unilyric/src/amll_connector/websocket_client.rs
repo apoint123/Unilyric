@@ -1,5 +1,5 @@
 use futures_util::{SinkExt, StreamExt, stream::SplitSink};
-use smtc_suite::SmtcControlCommand;
+use smtc_suite::{RepeatMode as SmtcRepeatMode, SmtcControlCommand};
 use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::{Receiver as TokioReceiver, Sender as TokioSender};
@@ -9,15 +9,12 @@ use tokio_tungstenite::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-use super::protocol::{
-    BinClientMessage, BinServerMessage, ClientMessage, OutgoingMessage, ServerMessage,
-};
+use super::protocol_v2::*;
 use crate::amll_connector::WebsocketStatus;
 
 /// 连接结束的原因枚举
 #[derive(Debug, Clone)]
 enum LifecycleEndReason {
-    PongTimeout,
     StreamFailure(String),
     ServerClosed,
 }
@@ -35,14 +32,11 @@ const MIN_VOLUME_SET_INTERVAL: Duration = Duration::from_millis(100);
 
 /// 应用层 Ping 消息的发送间隔
 const APP_PING_INTERVAL: Duration = Duration::from_secs(5);
-/// 应用层 Pong 消息的等待超时时长
-const APP_PONG_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 用于封装单个活跃连接期间所有状态的结构体
 struct ConnectionState {
     last_seek_request_info: Option<(u64, Instant)>,
     last_volume_set_processed_time: Option<Instant>,
-    last_app_ping_sent_at: Option<Instant>,
     waiting_for_app_pong: bool,
 }
 
@@ -51,195 +45,138 @@ impl ConnectionState {
         Self {
             last_seek_request_info: None,
             last_volume_set_processed_time: None,
-            last_app_ping_sent_at: None,
             waiting_for_app_pong: false,
         }
     }
 }
 
-async fn handle_json_body(
-    parsed_body: ServerMessage,
+async fn handle_v2_message(
+    payload: Payload,
     writer: &mut WsWriter,
     media_cmd_tx: &TokioSender<SmtcControlCommand>,
     state: &mut ConnectionState,
 ) -> Result<(), LifecycleEndReason> {
-    match parsed_body {
-        ServerMessage::Ping => {
-            trace!("[WebSocket 客户端] 收到服务器的 JSON Ping。回复 Pong。");
-            let pong_json = ClientMessage::Pong;
-            if let Ok(text) = serde_json::to_string(&pong_json) {
+    match payload {
+        Payload::Ping => {
+            trace!("[WebSocket 客户端] 收到服务器的 Ping。回复 Pong。");
+            let pong_payload = Payload::Pong;
+            let pong_msg = MessageV2 {
+                payload: pong_payload,
+            };
+            if let Ok(text) = serde_json::to_string(&pong_msg) {
                 if writer.send(WsMessage::Text(text.into())).await.is_err() {
-                    return Err(LifecycleEndReason::StreamFailure(
-                        "回复 JSON Pong 失败".into(),
-                    ));
+                    return Err(LifecycleEndReason::StreamFailure("回复 Pong 失败".into()));
                 }
             } else {
-                error!("[WebSocket 客户端] 序列化 JSON Pong 失败。");
+                error!("[WebSocket 客户端] 序列化 Pong 失败。");
             }
         }
-        ServerMessage::Pong => {
-            trace!("[WebSocket 客户端] 收到服务器的 JSON Pong。");
+        Payload::Pong => {
+            trace!("[WebSocket 客户端] 收到服务器的 Pong。");
             state.waiting_for_app_pong = false;
         }
-        ServerMessage::Pause => {
-            info!("[WebSocket 客户端] 收到服务器JSON命令: 暂停。");
-            state.last_seek_request_info = None;
-            if media_cmd_tx.try_send(SmtcControlCommand::Pause).is_err() {
-                warn!("[WebSocket 客户端] 发送暂停命令到 Actor 失败 (通道已满或关闭)。");
+        Payload::Command(command) => match command {
+            Command::Pause => {
+                info!("[WebSocket 客户端] 收到服务器命令: 暂停。");
+                state.last_seek_request_info = None;
+                if media_cmd_tx.try_send(SmtcControlCommand::Pause).is_err() {
+                    warn!("[WebSocket 客户端] 发送暂停命令到 Actor 失败 (通道已满或关闭)。");
+                }
             }
-        }
-        ServerMessage::Resume => {
-            info!("[WebSocket 客户端] 收到服务器JSON命令: 播放。");
-            state.last_seek_request_info = None;
-            if media_cmd_tx.try_send(SmtcControlCommand::Play).is_err() {
-                warn!("[WebSocket 客户端] 发送播放命令到 Actor 失败 (通道已满或关闭)。");
+            Command::Resume => {
+                info!("[WebSocket 客户端] 收到服务器命令: 播放。");
+                state.last_seek_request_info = None;
+                if media_cmd_tx.try_send(SmtcControlCommand::Play).is_err() {
+                    warn!("[WebSocket 客户端] 发送播放命令到 Actor 失败 (通道已满或关闭)。");
+                }
             }
-        }
-        ServerMessage::ForwardSong => {
-            info!("[WebSocket 客户端] 收到服务器JSON命令: 下一首。");
-            if media_cmd_tx.try_send(SmtcControlCommand::SkipNext).is_err() {
-                warn!("[WebSocket 客户端] 发送下一首命令到 Actor 失败 (通道已满或关闭)。");
+            Command::ForwardSong => {
+                info!("[WebSocket 客户端] 收到服务器命令: 下一首。");
+                if media_cmd_tx.try_send(SmtcControlCommand::SkipNext).is_err() {
+                    warn!("[WebSocket 客户端] 发送下一首命令到 Actor 失败 (通道已满或关闭)。");
+                }
             }
-        }
-        ServerMessage::BackwardSong => {
-            info!("[WebSocket 客户端] 收到服务器JSON命令: 上一首。");
-            if media_cmd_tx
-                .try_send(SmtcControlCommand::SkipPrevious)
-                .is_err()
-            {
-                warn!("[WebSocket 客户端] 发送上一首命令到 Actor 失败 (通道已满或关闭)。");
-            }
-        }
-        ServerMessage::SeekPlayProgress { progress } => {
-            let now = Instant::now();
-            if state.last_seek_request_info.is_none_or(|(_, last_time)| {
-                now.duration_since(last_time) >= SEEK_DEBOUNCE_DURATION
-            }) {
-                info!("[WebSocket 客户端] 收到服务器JSON命令: 跳转到 {progress}.");
-                state.last_seek_request_info = Some((progress, now));
+            Command::BackwardSong => {
+                info!("[WebSocket 客户端] 收到服务器命令: 上一首。");
                 if media_cmd_tx
-                    .try_send(SmtcControlCommand::SeekTo(progress))
+                    .try_send(SmtcControlCommand::SkipPrevious)
                     .is_err()
                 {
-                    warn!("[WebSocket 客户端] 发送跳转命令到 Actor 失败 (通道已满或关闭)。");
+                    warn!("[WebSocket 客户端] 发送上一首命令到 Actor 失败 (通道已满或关闭)。");
                 }
             }
-        }
-        ServerMessage::SetVolume { volume } => {
-            let now = Instant::now();
-            if state
-                .last_volume_set_processed_time
-                .is_none_or(|last_time| now.duration_since(last_time) >= MIN_VOLUME_SET_INTERVAL)
-            {
-                info!("[WebSocket 客户端] 收到服务器JSON命令: 设置音量为 {volume:.2}");
-                state.last_volume_set_processed_time = Some(now);
-                if (0.0..=1.0).contains(&volume) {
+            Command::SeekPlayProgress { progress } => {
+                let now = Instant::now();
+                if state.last_seek_request_info.is_none_or(|(_, last_time)| {
+                    now.duration_since(last_time) >= SEEK_DEBOUNCE_DURATION
+                }) {
+                    info!("[WebSocket 客户端] 收到服务器命令: 跳转到 {progress}.");
+                    state.last_seek_request_info = Some((progress, now));
                     if media_cmd_tx
-                        .try_send(SmtcControlCommand::SetVolume(volume as f32))
+                        .try_send(SmtcControlCommand::SeekTo(progress))
                         .is_err()
                     {
-                        warn!(
-                            "[WebSocket 客户端] 发送设置音量命令到 Actor 失败 (通道已满或关闭)。"
-                        );
+                        warn!("[WebSocket 客户端] 发送跳转命令到 Actor 失败 (通道已满或关闭)。");
                     }
-                } else {
-                    warn!("[WebSocket 客户端] 收到无效的音量值: {volume}。");
                 }
             }
-        }
-    }
-    Ok(())
-}
-
-async fn handle_binary_body(
-    parsed_body: BinServerMessage,
-    writer: &mut WsWriter,
-    media_cmd_tx: &TokioSender<SmtcControlCommand>,
-    state: &mut ConnectionState,
-) -> Result<(), LifecycleEndReason> {
-    match parsed_body {
-        BinServerMessage::Ping => {
-            trace!("[WebSocket 客户端] 收到服务器的 Binary Ping。回复 Pong。");
-            let pong_bin = BinClientMessage::Pong;
-            if let Ok(bytes) = pong_bin.encode()
-                && writer.send(WsMessage::Binary(bytes.into())).await.is_err()
-            {
-                return Err(LifecycleEndReason::StreamFailure(
-                    "回复 Binary Pong 失败".into(),
-                ));
+            Command::SetVolume { volume } => {
+                let now = Instant::now();
+                if state
+                    .last_volume_set_processed_time
+                    .is_none_or(|last_time| {
+                        now.duration_since(last_time) >= MIN_VOLUME_SET_INTERVAL
+                    })
+                {
+                    info!("[WebSocket 客户端] 收到服务器命令: 设置音量为 {volume:.2}");
+                    state.last_volume_set_processed_time = Some(now);
+                    if (0.0..=1.0).contains(&volume) {
+                        if media_cmd_tx
+                            .try_send(SmtcControlCommand::SetVolume(volume as f32))
+                            .is_err()
+                        {
+                            warn!(
+                                "[WebSocket 客户端] 发送设置音量命令到 Actor 失败 (通道已满或关闭)。"
+                            );
+                        }
+                    } else {
+                        warn!("[WebSocket 客户端] 收到无效的音量值: {volume}。");
+                    }
+                }
             }
-        }
-        BinServerMessage::Pong => {
-            trace!("[WebSocket 客户端] 收到服务器的 Binary Pong。");
-        }
-        BinServerMessage::Pause => {
-            info!("[WebSocket 客户端] 收到服务器Binary命令: 暂停。");
-            state.last_seek_request_info = None;
-            if media_cmd_tx.try_send(SmtcControlCommand::Pause).is_err() {
-                warn!("[WebSocket 客户端] (Binary)发送暂停命令到 Actor 失败 (通道已满或关闭)。");
-            }
-        }
-        BinServerMessage::Resume => {
-            info!("[WebSocket 客户端] 收到服务器Binary命令: 播放。");
-            state.last_seek_request_info = None;
-            if media_cmd_tx.try_send(SmtcControlCommand::Play).is_err() {
-                warn!("[WebSocket 客户端] (Binary)发送播放命令到 Actor 失败 (通道已满或关闭)。");
-            }
-        }
-        // NEW: 填充以下分支
-        BinServerMessage::ForwardSong => {
-            info!("[WebSocket 客户端] 收到服务器Binary命令: 下一首。");
-            if media_cmd_tx.try_send(SmtcControlCommand::SkipNext).is_err() {
-                warn!("[WebSocket 客户端] (Binary)发送下一首命令到 Actor 失败 (通道已满或关闭)。");
-            }
-        }
-        BinServerMessage::BackwardSong => {
-            info!("[WebSocket 客户端] 收到服务器Binary命令: 上一首。");
-            if media_cmd_tx
-                .try_send(SmtcControlCommand::SkipPrevious)
-                .is_err()
-            {
-                warn!("[WebSocket 客户端] (Binary)发送上一首命令到 Actor 失败 (通道已满或关闭)。");
-            }
-        }
-        BinServerMessage::SeekPlayProgress { progress } => {
-            let now = Instant::now();
-            if state.last_seek_request_info.is_none_or(|(_, last_time)| {
-                now.duration_since(last_time) >= SEEK_DEBOUNCE_DURATION
-            }) {
-                info!("[WebSocket 客户端] 收到服务器Binary命令: 跳转到 {progress}.");
-                state.last_seek_request_info = Some((progress, now));
+            Command::SetRepeatMode { mode } => {
+                info!(
+                    "[WebSocket 客户端] 收到服务器命令: 设置重复播放模式为 {:?}。",
+                    mode
+                );
+                let smtc_mode = match mode {
+                    super::protocol_v2::RepeatMode::Off => SmtcRepeatMode::Off,
+                    super::protocol_v2::RepeatMode::One => SmtcRepeatMode::One,
+                    super::protocol_v2::RepeatMode::All => SmtcRepeatMode::All,
+                };
                 if media_cmd_tx
-                    .try_send(SmtcControlCommand::SeekTo(progress))
+                    .try_send(SmtcControlCommand::SetRepeatMode(smtc_mode))
                     .is_err()
                 {
                     warn!(
-                        "[WebSocket 客户端] (Binary)发送跳转命令到 Actor 失败 (通道已满或关闭)。"
+                        "[WebSocket 客户端] 发送设置重复播放模式命令到 Actor 失败 (通道已满或关闭)。"
                     );
                 }
             }
-        }
-        BinServerMessage::SetVolume { volume } => {
-            let now = Instant::now();
-            if state
-                .last_volume_set_processed_time
-                .is_none_or(|last_time| now.duration_since(last_time) >= MIN_VOLUME_SET_INTERVAL)
-            {
-                info!("[WebSocket 客户端] 收到服务器Binary命令: 设置音量为 {volume:.2}");
-                state.last_volume_set_processed_time = Some(now);
-                if (0.0..=1.0).contains(&volume) {
-                    if media_cmd_tx
-                        .try_send(SmtcControlCommand::SetVolume(volume as f32))
-                        .is_err()
-                    {
-                        warn!(
-                            "[WebSocket 客户端] (Binary)发送设置音量命令到 Actor 失败 (通道已满或关闭)。"
-                        );
-                    }
-                } else {
-                    warn!("[WebSocket 客户端] (Binary)收到无效的音量值: {volume}。");
+            Command::SetShuffleMode { enabled } => {
+                info!("[WebSocket 客户端] 收到服务器命令: 设置随机播放模式为 {enabled}。");
+                if media_cmd_tx
+                    .try_send(SmtcControlCommand::SetShuffle(enabled))
+                    .is_err()
+                {
+                    warn!(
+                        "[WebSocket 客户端] 发送设置随机播放模式命令到 Actor 失败 (通道已满或关闭)。"
+                    );
                 }
             }
+        },
+        Payload::Initialize | Payload::State(_) => {
+            warn!("[WebSocket 客户端] 收到意外的 Initialize/State 消息 (应该是我们发送的)");
         }
     }
     Ok(())
@@ -254,26 +191,17 @@ async fn handle_ws_message(
 ) -> Result<(), LifecycleEndReason> {
     match ws_msg_option {
         Some(Ok(message)) => match message {
-            WsMessage::Text(text_data) => match serde_json::from_str::<ServerMessage>(&text_data) {
-                Ok(parsed_body) => {
-                    handle_json_body(parsed_body, writer, media_cmd_tx, state).await?;
+            WsMessage::Text(text_data) => match serde_json::from_str::<MessageV2>(&text_data) {
+                Ok(parsed_message) => {
+                    handle_v2_message(parsed_message.payload, writer, media_cmd_tx, state).await?;
                 }
                 Err(e) => {
-                    error!(
-                        "[WebSocket 客户端] 反序列化服务器 JSON 消息失败: {e:?}. 内容: {text_data}"
-                    );
+                    error!("[WebSocket 客户端] 反序列化服务器消息失败: {e:?}. 内容: {text_data}");
                 }
             },
-            WsMessage::Binary(bin_data) => match BinServerMessage::decode(&bin_data) {
-                Ok(parsed_body) => {
-                    handle_binary_body(parsed_body, writer, media_cmd_tx, state).await?;
-                }
-                Err(_) => {
-                    trace!(
-                        "[WebSocket 客户端] 收到一个无法解码为旧协议的二进制消息 (可能为音频/封面数据)。"
-                    );
-                }
-            },
+            WsMessage::Binary(_) => {
+                warn!("[WebSocket 客户端] 收到一个二进制消息，但不再支持，请尝试更新 AMLL Player");
+            }
             WsMessage::Ping(_) => trace!("[WebSocket 客户端] 收到 WebSocket 底层 PING"),
             WsMessage::Pong(_) => trace!("[WebSocket 客户端] 收到 WebSocket 底层 PONG"),
             WsMessage::Close(close_frame) => {
@@ -323,20 +251,20 @@ async fn handle_connection(
             maybe_body_to_send = outgoing_rx.recv() => {
                 if let Some(body_to_send) = maybe_body_to_send {
                     let ws_message = match body_to_send {
-                        OutgoingMessage::Json(json_body) => {
-                            match serde_json::to_string(&json_body) {
+                        OutgoingMessage::Json(v2_msg) => {
+                            match serde_json::to_string(&v2_msg) {
                                 Ok(text) => WsMessage::Text(text.into()),
                                 Err(e) => {
-                                    error!("[WebSocket 客户端] JSON 序列化失败: {e:?}");
+                                    error!("[WebSocket 客户端] 序列化失败: {e:?}");
                                     continue;
                                 }
                             }
                         }
-                        OutgoingMessage::LegacyBinary(bin_body) => {
-                            match bin_body.encode() {
+                        OutgoingMessage::Binary(bin_body) => {
+                            match super::protocol_v2::to_binary_v2(&bin_body) {
                                 Ok(bytes) => WsMessage::Binary(bytes.into()),
                                 Err(e) => {
-                                    error!("[WebSocket 客户端] 旧协议二进制编码失败: {e:?}");
+                                    error!("[WebSocket 客户端] 二进制编码失败: {e:?}");
                                     continue;
                                 }
                             }
@@ -359,30 +287,6 @@ async fn handle_connection(
                     media_cmd_tx,
                     &mut state,
                 ).await?
-            }
-
-            // 4. 处理应用层 Ping 定时器
-            _ = app_ping_interval_timer.tick() => {
-                if state.waiting_for_app_pong {
-                    if let Some(sent_at) = state.last_app_ping_sent_at
-                        && Instant::now().duration_since(sent_at) > APP_PONG_TIMEOUT {
-                            warn!("[WebSocket 客户端] 服务器应用层 Pong 超时! 断开连接。");
-                            ws_writer.close().await.ok();
-                            return Err(LifecycleEndReason::PongTimeout);
-                        }
-                } else {
-                    trace!("[WebSocket 客户端] 定时发送 JSON Ping 到服务器。");
-                    let ping_msg = ClientMessage::Ping;
-                    if let Ok(text) = serde_json::to_string(&ping_msg) {
-                         if ws_writer.send(WsMessage::Text(text.into())).await.is_err() {
-                            return Err(LifecycleEndReason::StreamFailure("发送应用层 Ping 失败".to_string()));
-                        }
-                        state.last_app_ping_sent_at = Some(Instant::now());
-                        state.waiting_for_app_pong = true;
-                    } else {
-                        error!("[WebSocket 客户端] 序列化 Ping 消息失败。");
-                    }
-                }
             }
         }
     }
@@ -446,7 +350,6 @@ pub async fn run_websocket_client(
         Err(lifecycle_reason) => {
             let error_message = match lifecycle_reason {
                 LifecycleEndReason::StreamFailure(msg) => format!("连接流错误: {msg}"),
-                LifecycleEndReason::PongTimeout => "心跳响应超时".to_string(),
                 LifecycleEndReason::ServerClosed => "服务器关闭了连接".to_string(),
             };
             warn!("[WebSocket 客户端] 连接因 '{error_message}' 而异常终止。");
