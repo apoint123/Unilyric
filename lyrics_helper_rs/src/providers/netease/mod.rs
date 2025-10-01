@@ -510,7 +510,20 @@ impl Provider for NeteaseClient {
     async fn get_full_lyrics(&self, id: &str) -> Result<FullLyricsResult> {
         let header = self.build_eapi_header();
 
-        let mut payload = json!({ "id": id, "cp": "false", "lv": "0", "kv": "0", "tv": "0", "rv": "0", "yv": "0", "ytv": "0", "yrv": "0", "csrf_token": "" });
+        // 各个歌词的版本，传入版本号可以让服务器只返回更新的歌词
+        // 目前始终让服务器返回所有歌词，之后或许可以扩展一下
+        let mut payload = json!({
+            "id": id,
+            "cp": "false",
+            "lv": "0",
+            "kv": "0",
+            "tv": "0",
+            "rv": "0",
+            "yv": "0",
+            "ytv": "0",
+            "yrv": "0",
+            "csrf_token": ""
+        });
         payload["header"] = header;
 
         let resp: models::LyricResult = self
