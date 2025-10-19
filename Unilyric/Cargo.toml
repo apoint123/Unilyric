@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 arboard = "3.6.1"
 eframe = "0.31.1"
-egui = "0.31.1"
+egui = "0.33.0"
 egui-toast = "0.17.0"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 rfd = "0.15.4"
