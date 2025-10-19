@@ -17,7 +17,7 @@ ttml_processor = { path = "ttml_processor" }
 getrandom = { version = "0.3", features = ["wasmjs"] }
 
 [profile.release]
-opt-level = 'z'
+opt-level = 3
 lto = true
 codegen-units = 1
 panic = 'abort'
