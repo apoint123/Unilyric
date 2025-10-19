@@ -99,7 +99,7 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                                 app.player.is_first_song_processed = true;
                             }
                         }
-                        app.player.current_now_playing = new_info.clone();
+                        app.player.current_now_playing = *new_info.clone();
                         crate::app_fetch_core::clear_last_fetch_results(app);
                         app.auto_fetch_trigger_time =
                             Some(std::time::Instant::now() + std::time::Duration::from_millis(200));

@@ -302,7 +302,7 @@ fn handle_smtc_update(
                 send_play_state_to_ws(tx, &new_info);
                 send_progress_to_ws(tx, &new_info);
             }
-            state.last_track_info = Some(new_info.clone());
+            state.last_track_info = Some(*new_info.clone());
             repaint_needed = true;
             ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(new_info))
         }
