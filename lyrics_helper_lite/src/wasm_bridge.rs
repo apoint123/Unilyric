@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use crate::client::create_http_client;
 use crate::error::Result;
-use crate::providers::{RequestBodyFormat, TrackQuery, get_provider};
+use crate::providers::{RequestBodyFormat, TrackQuery, get_all_providers, get_provider};
+use crate::search::matcher::aggregate_and_sort_results;
+use futures::future;
 use lyrics_helper_core::SearchResult;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
@@ -14,6 +18,12 @@ fn set_panic_hook() {
 #[derive(Serialize)]
 struct SearchResultsWrapper {
     results: Vec<SearchResult>,
+}
+
+#[derive(Serialize)]
+struct ProviderInfo {
+    id: &'static str,
+    name: &'static str,
 }
 
 /// Searches for a song using the high-level API, which handles HTTP requests internally.
@@ -106,6 +116,146 @@ pub async fn get_lyrics(
     }
     .await;
 
+    result.map_err(Into::into)
+}
+
+/// Searches for a song across all available providers and returns a single, aggregated list.
+///
+/// This function is ideal for scenarios without CORS restrictions.
+///
+/// # Arguments
+///
+/// * `track_query_json` - A JSON string representing the `TrackQuery` object.
+///
+/// # Returns
+///
+/// A `Promise` that resolves to a JS object: `{ results: [SearchResult, ...] }`,
+/// with results from all providers sorted together by relevance.
+#[wasm_bindgen]
+pub async fn unified_search_songs(track_query_json: &str) -> std::result::Result<JsValue, JsValue> {
+    set_panic_hook();
+    let result: Result<JsValue> = async {
+        let query: TrackQuery = serde_json::from_str(track_query_json)?;
+        let providers = get_all_providers();
+        let client = create_http_client();
+
+        let search_futures = providers.into_values().map(|provider| {
+            let query_ref = &query;
+            let client_ref = &client;
+            async move {
+                let req_info = provider.prepare_search_request(query_ref)?;
+                let body_str = req_info.body.as_deref().unwrap_or("");
+
+                let response_text = match req_info.method.as_str() {
+                    "POST" => match req_info.body_format {
+                        RequestBodyFormat::Json => {
+                            client_ref.post_json(&req_info.url, body_str).await?
+                        }
+                        RequestBodyFormat::UrlEncodedForm => {
+                            client_ref.post_form(&req_info.url, body_str).await?
+                        }
+                    },
+                    "GET" => client_ref.get(&req_info.url).await?,
+                    _ => {
+                        return Err(crate::error::FetcherError::InvalidInput(format!(
+                            "Unsupported HTTP method: {}",
+                            req_info.method
+                        )));
+                    }
+                };
+                provider.handle_search_response(&response_text, query_ref)
+            }
+        });
+
+        let results: Vec<Vec<SearchResult>> = future::join_all(search_futures)
+            .await
+            .into_iter()
+            .filter_map(std::result::Result::ok)
+            .collect();
+
+        let aggregated_results =
+            query.with_track(|track| aggregate_and_sort_results(&track, results));
+
+        let wrapper = SearchResultsWrapper {
+            results: aggregated_results,
+        };
+        Ok(serde_wasm_bindgen::to_value(&wrapper)?)
+    }
+    .await;
+
+    result.map_err(Into::into)
+}
+
+/// Generates the necessary HTTP request details for all providers for a unified search.
+///
+/// This is part of the low-level API. Ideal for WASM.
+///
+/// # Returns
+///
+/// A JS object mapping provider names to their request details.
+/// Example: `{ "qq": { url, ... }, "netease": { url, ... } }`
+#[wasm_bindgen]
+pub fn prepare_unified_search_requests(
+    track_query_json: &str,
+) -> std::result::Result<JsValue, JsValue> {
+    set_panic_hook();
+    let result: Result<JsValue> = (|| {
+        let query: TrackQuery = serde_json::from_str(track_query_json)?;
+        let providers = get_all_providers();
+        let requests: HashMap<_, _> = providers
+            .into_iter()
+            .filter_map(|(name, provider)| {
+                provider
+                    .prepare_search_request(&query)
+                    .ok()
+                    .map(|req| (name, req))
+            })
+            .collect();
+        Ok(serde_wasm_bindgen::to_value(&requests)?)
+    })();
+    result.map_err(Into::into)
+}
+
+/// Parses and aggregates raw search responses from multiple providers.
+///
+/// This is part of the low-level API. Ideal for WASM.
+///
+/// # Arguments
+///
+/// * `responses_json` - A JSON string mapping provider names to their raw response strings.
+///   Example: `{ "qq": "...", "netease": "..." }`
+/// * `track_query_json` - The original JSON string for the `TrackQuery`.
+///
+/// # Returns
+///
+/// A JS object: `{ results: [SearchResult, ...] }`, sorted by relevance.
+#[wasm_bindgen]
+pub fn handle_unified_search_responses(
+    responses_json: &str,
+    track_query_json: &str,
+) -> std::result::Result<JsValue, JsValue> {
+    set_panic_hook();
+    let result: Result<JsValue> = (|| {
+        let query: TrackQuery = serde_json::from_str(track_query_json)?;
+        let responses: HashMap<String, String> = serde_json::from_str(responses_json)?;
+
+        let mut all_results = Vec::new();
+        for (provider_name, response_text) in responses {
+            if let Ok(provider) = get_provider(&provider_name)
+                && let Ok(results) = provider.handle_search_response(&response_text, &query)
+            {
+                all_results.push(results);
+            }
+        }
+
+        let aggregated_results =
+            query.with_track(|track| aggregate_and_sort_results(&track, all_results));
+
+        let wrapper = SearchResultsWrapper {
+            results: aggregated_results,
+        };
+        Ok(serde_wasm_bindgen::to_value(&wrapper)?)
+    })();
     result.map_err(Into::into)
 }
 
@@ -215,6 +365,25 @@ pub fn handle_lyrics_response(
         let provider = get_provider(provider_name)?;
         let raw_lyrics = provider.handle_lyrics_response(response_text)?;
         Ok(serde_wasm_bindgen::to_value(&raw_lyrics)?)
+    })();
+    result.map_err(Into::into)
+}
+
+/// Returns a list of all available provider names.
+///
+/// # Returns
+///
+/// A `Promise` that resolves to a JS array of strings, e.g., `["qq", "netease"]`.
+#[wasm_bindgen]
+pub fn get_available_providers() -> std::result::Result<JsValue, JsValue> {
+    set_panic_hook();
+    let result: Result<JsValue> = (|| {
+        let providers = get_all_providers();
+        let provider_info: Vec<ProviderInfo> = providers
+            .keys()
+            .map(|&name| ProviderInfo { id: name, name })
+            .collect();
+        Ok(serde_wasm_bindgen::to_value(&provider_info)?)
     })();
     result.map_err(Into::into)
 }

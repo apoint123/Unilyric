@@ -62,6 +62,14 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     app: &mut UniLyricApp,
     track_info: NowPlayingInfo,
 ) {
+    info!(
+        "[initial_auto_fetch_and_send_lyrics] 封面哈希: {:?}",
+        track_info.cover_data_hash
+    );
+
+    let mut lyrics_found_in_cache = false;
+    let mut cover_found_in_cache = false;
+
     *app.fetcher.local_cache_status.lock().unwrap() = AutoSearchStatus::Searching;
 
     let cache_index = app.local_cache.index.lock().unwrap();
@@ -78,9 +86,13 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             let file_path = cache_dir.join(&entry.ttml_filename);
             match std::fs::read_to_string(&file_path) {
                 Ok(ttml_content) => {
-                    let helper_clone = Arc::clone(&app.lyrics_helper_state.helper);
+                    lyrics_found_in_cache = true;
+                    *app.fetcher.local_cache_status.lock().unwrap() =
+                        AutoSearchStatus::Success(LyricFormat::Ttml);
 
+                    let helper_clone = Arc::clone(&app.lyrics_helper_state.helper);
                     let result_tx = app.fetcher.result_tx.clone();
+                    let track_info_clone_for_lyrics = track_info.clone();
 
                     app.tokio_runtime.spawn(async move {
                         let main_lyric =
@@ -113,12 +125,11 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                                     lyrics: full_lyrics_result,
                                     source_track: Default::default(),
                                 };
-
                                 let result_to_send = AutoFetchResult::LyricsSuccess {
                                     source: AutoSearchSource::LocalCache,
                                     lyrics_and_metadata: Box::new(lyrics_and_metadata),
-                                    title: track_info.title.clone().unwrap_or_default(),
-                                    artist: track_info.artist.clone().unwrap_or_default(),
+                                    title: track_info_clone_for_lyrics.title.unwrap_or_default(),
+                                    artist: track_info_clone_for_lyrics.artist.unwrap_or_default(),
                                 };
 
                                 if result_tx.send(result_to_send).is_err() {
@@ -133,7 +144,36 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                         }
                     });
 
-                    return;
+                    if let (Some(hash), Some(cover_cache_dir)) =
+                        (track_info.cover_data_hash, &app.local_cache.cover_cache_dir)
+                        && hash != 0
+                    {
+                        let cover_path = cover_cache_dir.join(format!("{}.jpg", hash));
+                        if cover_path.exists() {
+                            info!(
+                                "[CoverCache] 在本地缓存中找到匹配的封面: {}",
+                                cover_path.display()
+                            );
+                            match std::fs::read(&cover_path) {
+                                Ok(cover_data) => {
+                                    cover_found_in_cache = true;
+                                    let cover_result = AutoFetchResult::CoverUpdate {
+                                        title: track_info.title.clone().unwrap_or_default(),
+                                        artist: track_info.artist.clone().unwrap_or_default(),
+                                        cover_data: Some(cover_data),
+                                    };
+                                    if app.fetcher.result_tx.send(cover_result).is_err() {
+                                        error!(
+                                            "[CoverCache Task] 发送本地缓存的封面结果到主线程失败。"
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[CoverCache] 读取缓存的封面文件失败: {e}");
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     error!("[LocalCache] 读取缓存文件 {:?} 失败: {}", file_path, e);
@@ -142,7 +182,17 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 }
             }
         }
-    } else {
+    }
+
+    if lyrics_found_in_cache && cover_found_in_cache {
+        *app.fetcher.qqmusic_status.lock().unwrap() = AutoSearchStatus::NotAttempted;
+        *app.fetcher.kugou_status.lock().unwrap() = AutoSearchStatus::NotAttempted;
+        *app.fetcher.netease_status.lock().unwrap() = AutoSearchStatus::NotAttempted;
+        *app.fetcher.amll_db_status.lock().unwrap() = AutoSearchStatus::NotAttempted;
+        return;
+    }
+
+    if !lyrics_found_in_cache {
         info!("[LocalCache] 本地缓存未命中。");
         *app.fetcher.local_cache_status.lock().unwrap() = AutoSearchStatus::NotFound;
     }
@@ -204,14 +254,62 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
         let mut final_lyrics: Option<LyricsAndMetadata> = None;
         let mut final_candidates: Vec<SearchResult> = Vec::new();
 
-        if app_settings.prioritize_amll_db {
-            let amll_mode = SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
-            let amll_search_result = {
+        if !lyrics_found_in_cache {
+            if app_settings.prioritize_amll_db {
+                let amll_mode = SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
+                let amll_search_result = {
+                    let future_res = {
+                        let helper_guard = helper.lock().await;
+                        helper_guard.search_lyrics_comprehensive(
+                            &track_to_search,
+                            &amll_mode,
+                            Some(cancellation_token.clone()),
+                        )
+                    };
+                    match future_res {
+                        Ok(future) => future.await,
+                        Err(e) => Err(e),
+                    }
+                };
+
+                if let Ok(Some(comprehensive_result)) = amll_search_result
+                    && comprehensive_result
+                        .primary_lyric_result
+                        .source_track
+                        .match_type
+                        >= MatchType::PrettyHigh
+                    {
+                        final_lyrics = Some(comprehensive_result.primary_lyric_result);
+                        final_candidates = comprehensive_result.all_search_candidates;
+                    }
+            }
+
+            let regular_search_mode = {
+                let mut providers = lyrics_helper_rs::ProviderName::all();
+                providers.retain(|p| *p != lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
+
+                if app_settings.use_provider_subset {
+                    let user_subset: Vec<_> = app_settings
+                        .auto_search_provider_subset
+                        .iter()
+                        .filter_map(|s| s.parse().ok())
+                        .collect();
+                    providers.retain(|p| user_subset.contains(p));
+                }
+
+                if app_settings.always_search_all_sources {
+                    SearchMode::Subset(providers)
+                } else {
+                    SearchMode::Ordered
+                }
+            };
+
+            let regular_search_result = {
                 let future_res = {
                     let helper_guard = helper.lock().await;
                     helper_guard.search_lyrics_comprehensive(
                         &track_to_search,
-                        &amll_mode,
+                        &regular_search_mode,
                         Some(cancellation_token.clone()),
                     )
                 };
@@ -221,80 +319,63 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                 }
             };
 
-            if let Ok(Some(comprehensive_result)) = amll_search_result
-                && comprehensive_result
-                    .primary_lyric_result
-                    .source_track
-                    .match_type
-                    >= MatchType::PrettyHigh
-                {
-                    final_lyrics = Some(comprehensive_result.primary_lyric_result);
+            match regular_search_result {
+                Ok(Some(comprehensive_result)) => {
                     final_candidates = comprehensive_result.all_search_candidates;
-                }
-        }
-
-        let regular_search_mode = {
-            let mut providers = lyrics_helper_rs::ProviderName::all();
-            providers.retain(|p| *p != lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
-
-            if app_settings.use_provider_subset {
-                let user_subset: Vec<_> = app_settings
-                    .auto_search_provider_subset
-                    .iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect();
-                providers.retain(|p| user_subset.contains(p));
-            }
-
-            if app_settings.always_search_all_sources {
-                SearchMode::Subset(providers)
-            } else {
-                SearchMode::Ordered
-            }
-        };
-
-        let regular_search_result = {
-            let future_res = {
-                let helper_guard = helper.lock().await;
-                helper_guard.search_lyrics_comprehensive(
-                    &track_to_search,
-                    &regular_search_mode,
-                    Some(cancellation_token.clone()),
-                )
-            };
-            match future_res {
-                Ok(future) => future.await,
-                Err(e) => Err(e),
-            }
-        };
-
-        match regular_search_result {
-            Ok(Some(comprehensive_result)) => {
-                final_candidates = comprehensive_result.all_search_candidates;
-                if final_lyrics.is_none() {
-                    final_lyrics = Some(comprehensive_result.primary_lyric_result);
-                }
-            }
-            Ok(None) => {}
-            Err(e) => {
-                let lyrics_helper_rs::LyricsHelperError::Cancelled = e else {
-                    return;
-                };
-
-                error!("[AutoFetch] 常规搜索时发生错误: {}", e);
-                if final_lyrics.is_none() {
-                    if result_tx.send(AutoFetchResult::FetchError(e.into())).is_err() {
-                        error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
+                    if final_lyrics.is_none() {
+                        final_lyrics = Some(comprehensive_result.primary_lyric_result);
                     }
-                    return;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    let lyrics_helper_rs::LyricsHelperError::Cancelled = e else {
+                        return;
+                    };
+
+                    error!("[AutoFetch] 常规搜索时发生错误: {}", e);
+                    if final_lyrics.is_none() {
+                        if result_tx.send(AutoFetchResult::FetchError(e.into())).is_err() {
+                            error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
+                        }
+                        return;
+                    }
                 }
             }
+        } else {
+            let all_providers_mode = SearchMode::Parallel;
+
+            let search_result = {
+                let future_res = {
+                    let helper_guard = helper.lock().await;
+                    helper_guard.search_lyrics_comprehensive(
+                        &track_to_search,
+                        &all_providers_mode,
+                        Some(cancellation_token.clone()),
+                    )
+                };
+                match future_res {
+                    Ok(future) => future.await,
+                    Err(e) => Err(e),
+                }
+            };
+
+            match search_result {
+                 Ok(Some(comprehensive_result)) => {
+                     final_candidates = comprehensive_result.all_search_candidates;
+                 },
+                 Ok(None) => {},
+                 Err(e) => {
+                     error!("[AutoFetch] 为获取封面候选进行搜索时发生错误: {e}");
+                 }
+            }
         }
+
+        let mut lyrics_processed_online = false;
 
         if let Some(mut lyrics_and_metadata) = final_lyrics {
+            lyrics_processed_online = true;
             let source: AutoSearchSource =
                 lyrics_and_metadata.source_track.provider_name.clone().into();
-
 
             if app_settings.auto_apply_metadata_stripper {
                 lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
@@ -347,9 +428,10 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
 
             if result_tx.send(lyrics_result).is_err() {
                 error!("[AutoFetch Task] 发送 LyricsReady 结果到主线程失败。");
-                return;
             }
+        }
 
+        if !cover_found_in_cache && !final_candidates.is_empty() {
             let smtc_cover_hash = track_info.cover_data_hash.unwrap_or(0);
 
             let final_cover_data = fetch_and_validate_cover(
@@ -371,7 +453,8 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             if result_tx.send(cover_result).is_err() {
                 error!("[AutoFetch Task] 发送封面更新结果到主线程失败。");
             }
-        } else {
+        }
+        if !lyrics_found_in_cache && !lyrics_processed_online {
             info!("[AutoFetch] 所有在线源均未找到歌词。");
             if result_tx.send(AutoFetchResult::NotFound).is_err() {
                 error!("[AutoFetch Task] 发送 NotFound 结果到主线程失败。");

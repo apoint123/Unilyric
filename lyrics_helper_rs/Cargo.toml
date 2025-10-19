@@ -60,7 +60,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 fst = "0.4"
-lyrics_helper_core = "0.1.0"
+lyrics_helper_core = "0.2.0"
 ttml_processor = "0.1.0"
 getrandom = { version = "0.2", features = ["js"] }
 

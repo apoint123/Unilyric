@@ -313,3 +313,12 @@ fn compare_duration(duration1: Option<u64>, duration2: Option<u64>) -> Option<Du
 
     Some(DurationMatchType::NoMatch)
 }
+
+/// Aggregates search results from multiple providers into a single list and then sorts them.
+pub fn aggregate_and_sort_results(
+    query: &Track<'_>,
+    provider_results: Vec<Vec<SearchResult>>,
+) -> Vec<SearchResult> {
+    let all_candidates: Vec<SearchResult> = provider_results.into_iter().flatten().collect();
+    sort_and_rate_results(query, all_candidates)
+}

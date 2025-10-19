@@ -1,4 +1,9 @@
-use crate::error::{FetcherError, Result};
+use std::collections::HashMap;
+
+use crate::{
+    error::{FetcherError, Result},
+    providers::{netease::NeteaseProvider, qq::QQProvider},
+};
 use lyrics_helper_core::{ParsedSourceData, SearchResult, Track};
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +71,15 @@ pub fn get_provider(name: &str) -> Result<Box<dyn LyricProvider>> {
             "Provider '{name}' not supported"
         ))),
     }
+}
+
+/// Returns a map of all available lyric providers.
+#[must_use]
+pub fn get_all_providers() -> HashMap<&'static str, Box<dyn LyricProvider>> {
+    let mut providers: HashMap<&'static str, Box<dyn LyricProvider>> = HashMap::new();
+    providers.insert("netease", Box::new(NeteaseProvider));
+    providers.insert("qq", Box::new(QQProvider));
+    providers
 }
 
 pub fn checked_json_parser<T: serde::de::DeserializeOwned>(
