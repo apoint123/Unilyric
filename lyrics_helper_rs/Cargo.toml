@@ -45,7 +45,7 @@ num-bigint = "0.4.6"
 num-traits = "0.2.19"
 pinyin = "0.10.0"
 quick-xml = { version = "0.38.3", features = ["serialize"] }
-rand = { version = "0.8" }
+rand = { version = "0.9" }
 rayon = { version = "1.11", optional = true }
 regex = "1.11"
 wreq-util = "3.0.0-rc.1"
