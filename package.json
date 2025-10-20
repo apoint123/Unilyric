@@ -24,7 +24,7 @@
   "devDependencies": {
     "@commitlint/config-conventional": "^20.0.0",
     "commit-and-tag-version": "^12.6.0",
-    "commitlint": "^19.8.1",
+    "commitlint": "^20.0.0",
     "husky": "^9.1.7"
   }
 }
