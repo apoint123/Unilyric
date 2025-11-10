@@ -3137,9 +3137,9 @@ checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 
 [[package]]
 name = "iri-string"
-version = "0.7.8"
+version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dbc5ebe9c3a1a7a5127f920a418f7585e9e758e911d0466ed004f393b0e380b2"
+checksum = "4f867b9d1d896b67beb18518eda36fdb77a32ea590de864f1325b294a6d14397"
 dependencies = [
  "memchr",
  "serde",
@@ -6374,18 +6374,18 @@ dependencies = [
 
 [[package]]
 name = "typed-builder"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "398a3a3c918c96de527dc11e6e846cd549d4508030b8a33e1da12789c856b81a"
+checksum = "0d0dd654273fc253fde1df4172c31fb6615cf8b041d3a4008a028ef8b1119e66"
 dependencies = [
  "typed-builder-macro",
 ]
 
 [[package]]
 name = "typed-builder-macro"
-version = "0.22.0"
+version = "0.23.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e48cea23f68d1f78eb7bc092881b6bb88d3d6b5b7e6234f6f9c911da1ffb221"
+checksum = "016c26257f448222014296978b2c8456e2cad4de308c35bdb1e383acd569ef5b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7551,9 +7551,9 @@ checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
 name = "wreq"
-version = "6.0.0-rc.20"
+version = "6.0.0-rc.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "776885d1475f8358bbde83b65967dae6408de22ef9efa96432fb2b24ab054110"
+checksum = "a28455ebcfbae058a7d2f9ccfae9e7921ce33d8cc001f962dc614d756c3b2b03"
 dependencies = [
  "ahash",
  "boring2",
@@ -7589,9 +7589,9 @@ dependencies = [
 
 [[package]]
 name = "wreq-util"
-version = "3.0.0-rc.6"
+version = "3.0.0-rc.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05af16fb18a8b955ce166747c588ff64a39d49266e486211116dc5c38a73c13d"
+checksum = "dde79fd3081d2df630d84f327506bafc0a11c2499dc9238f0302a2f3bc39ac06"
 dependencies = [
  "typed-builder",
  "wreq",

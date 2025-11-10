@@ -19,7 +19,6 @@ use lyrics_helper_core::{
 };
 use md5::{Digest, Md5};
 use parking_lot::Mutex;
-use rand::Rng;
 use serde::Serialize;
 use serde_json::json;
 use tokio::sync::mpsc;
@@ -50,10 +49,6 @@ const API_INTERFACE3_BASE_URL: &str = "https://interface3.music.163.com";
 
 const ACCOUNT_GET_URL: &str = concatcp!(API_BASE_URL, "/api/nuser/account/get");
 const REGISTER_ANONIMOUS_URL: &str = concatcp!(API_BASE_URL, "/api/register/anonimous");
-
-const SONG_ENHANCE_PLAYER_URL_V1_PATH: &str = "/api/song/enhance/player/url/v1";
-const SONG_ENHANCE_PLAYER_URL_V1_URL: &str =
-    concatcp!(API_INTERFACE3_BASE_URL, "/eapi/song/enhance/player/url/v1");
 
 const SEARCH_CLOUDSEARCH_PC_PATH: &str = "/api/cloudsearch/pc";
 const SEARCH_CLOUDSEARCH_PC_URL: &str = concatcp!(API_INTERFACE_BASE_URL, "/eapi/cloudsearch/pc");
@@ -99,26 +94,6 @@ impl Default for ClientConfig {
             channel: Some("netease".to_string()),
         }
     }
-}
-
-#[derive(Serialize)]
-struct PayloadHeader<'a> {
-    os: &'a str,
-    appver: &'a str,
-    osver: &'a str,
-    #[serde(rename = "deviceId")]
-    device_id: &'a str,
-    #[serde(rename = "requestId")]
-    request_id: String,
-}
-
-#[derive(Serialize)]
-struct EapiPayload<'a> {
-    ids: Vec<&'a str>,
-    level: &'a str,
-    #[serde(rename = "encodeType")]
-    encode_type: &'a str,
-    header: String,
 }
 
 /// 网易云音乐的客户端实现。
@@ -307,64 +282,6 @@ impl NeteaseClient {
             "requestId": format!("{}_{:04}", current_time_ms, rand::random::<u16>() % 1000),
             "__csrf": "",
         })
-    }
-
-    /// 使用 EAPI 获取歌曲链接，可用于 VIP 歌曲。
-    pub async fn get_song_link_v1(&self, song_id: &str) -> Result<String> {
-        let request_id = rand::thread_rng()
-            .gen_range(10_000_000..100_000_000)
-            .to_string();
-        let header_struct = PayloadHeader {
-            os: "pc",
-            appver: "",
-            osver: "",
-            device_id: "pyncm!",
-            request_id,
-        };
-        let header_str = serde_json::to_string(&header_struct).map_err(|e| {
-            LyricsHelperError::Internal(format!("序列化 EAPI payload header 失败: {e}"))
-        })?;
-
-        let payload_struct = EapiPayload {
-            ids: vec![song_id],
-            level: "standard",
-            encode_type: "flac",
-            header: header_str,
-        };
-
-        let resp: models::SongUrlResultV1 = self
-            .post_eapi(
-                SONG_ENHANCE_PLAYER_URL_V1_PATH,
-                SONG_ENHANCE_PLAYER_URL_V1_URL,
-                &payload_struct,
-            )
-            .await?;
-
-        if resp.code != 200 {
-            return Err(LyricsHelperError::ApiError(format!(
-                "获取播放链接失败，接口返回状态码: {}",
-                resp.code
-            )));
-        }
-
-        let song_data = resp
-            .data
-            .into_iter()
-            .find(|d| d.id.to_string() == song_id)
-            .ok_or(LyricsHelperError::LyricNotFound)?;
-
-        if song_data.code == 200 {
-            song_data.url.ok_or_else(|| {
-                LyricsHelperError::ApiError(
-                    "获取播放链接失败，可能因 VIP 或版权问题无链接。".into(),
-                )
-            })
-        } else {
-            Err(LyricsHelperError::ApiError(format!(
-                "获取播放链接失败，歌曲接口返回状态码: {}",
-                song_data.code
-            )))
-        }
     }
 
     async fn login_with_cookie_internal(
@@ -1279,33 +1196,60 @@ mod tests {
         println!("✅ 专辑分页测试通过。");
     }
 
-    // 没开 VIP，不测了
-    // #[tokio::test]
-    // #[ignore]
-    // async fn test_get_song_link_v1_vip() {
-    //     init_tracing();
-    //     const VIP_SONG_ID: &str = "1847975477";
+    #[tokio::test]
+    #[ignore]
+    async fn test_get_song_link_v1_with_login() {
+        init_tracing();
 
-    //     let cookie =
-    //         std::env::var("NETEASE_COOKIE").expect("请设置 NETEASE_COOKIE 环境变量");
+        let Ok(music_u_cookie) = env::var("NETEASE_MUSIC_U") else {
+            println!("未找到环境变量 NETEASE_MUSIC_U，跳过测试");
+            return;
+        };
 
-    //     let provider = NeteaseClient::new_with_cookie(cookie).unwrap();
+        let provider = NeteaseClient::new().await.expect("创建 NeteaseClient 失败");
 
-    //     let link_result = provider.get_song_link_v1(VIP_SONG_ID).await;
+        let method = LoginMethod::NeteaseByCookie {
+            music_u: music_u_cookie,
+        };
+        let mut flow = provider.initiate_login(method);
 
-    //     match link_result {
-    //         Ok(link) => {
-    //             assert!(link.starts_with("http"), "返回的链接应以 http/https 开头");
-    //             println!(
-    //                 "✅ 测试 get_song_link_v1 (VIP) 通过: 获取到链接: {}",
-    //                 &link
-    //             );
-    //         }
-    //         Err(e) => {
-    //             panic!("获取 VIP 歌曲链接失败: {e:?}");
-    //         }
-    //     }
-    // }
+        let mut logged_in = false;
+        while let Some(event) = flow.events.next().await {
+            match event {
+                LoginEvent::Success(login_result) => {
+                    println!("✅ 以 '{}' 的身份登录", login_result.profile.nickname);
+
+                    provider
+                        .set_auth_state(&login_result.auth_state)
+                        .expect("设置认证状态失败");
+
+                    logged_in = true;
+                    break;
+                }
+                LoginEvent::Failure(e) => {
+                    panic!("Cookie 登录不应该失败: {e:?}");
+                }
+                LoginEvent::Initiating => {
+                    println!("登录流程已启动...");
+                }
+                _ => {}
+            }
+        }
+
+        assert!(logged_in, "登录流程结束，但未成功登录");
+
+        let link_result = provider.get_song_link(TEST_SONG_ID).await;
+
+        match link_result {
+            Ok(link) => {
+                assert!(link.starts_with("http"), "返回的链接应以 http/https 开头");
+                println!("获取到链接: {link}");
+            }
+            Err(e) => {
+                panic!("获取 EAPI 链接失败: {e:?}");
+            }
+        }
+    }
 
     #[tokio::test]
     #[ignore]

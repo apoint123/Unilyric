@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
                 break;
             }
             Some(LoginEvent::Failure(e)) => {
-                anyhow::bail!("登录失败: {}", e);
+                anyhow::bail!("登录失败: {e}");
             }
             Some(event) => {
                 println!("收到事件: {event:?}");
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(", ");
             println!("正在处理歌曲: {} - {}", song.name, artists_name);
-            match provider.get_song_link_v1(&song.id).await {
+            match provider.get_song_link(&song.id).await {
                 Ok(url) => {
                     let raw_file_name = format!("{} - {}.flac", song.name, artists_name);
                     let file_name = raw_file_name
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
                     println!("  获取歌曲 {} 的下载链接失败: {}", song.name, e);
                 }
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     } else {
         println!("歌单中没有歌曲。");

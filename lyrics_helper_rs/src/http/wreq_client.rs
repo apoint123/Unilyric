@@ -96,7 +96,7 @@ impl WreqClient {
         let cookie_store = Arc::new(SharedCookieStore::new());
 
         let builder = wreq::Client::builder()
-            .emulation(Emulation::Chrome130)
+            .emulation(Emulation::Chrome140)
             .cookie_provider(Arc::clone(&cookie_store));
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -220,7 +220,7 @@ impl HttpClient for WreqClient {
 
     async fn post_form_for_redirect(&self, url: &str, form: &[(&str, &str)]) -> Result<String> {
         let no_redirect_client = wreq::Client::builder()
-            .emulation(Emulation::Chrome130)
+            .emulation(Emulation::Chrome140)
             .cookie_provider(Arc::clone(&self.cookie_store))
             .redirect(wreq::redirect::Policy::none())
             .build()
