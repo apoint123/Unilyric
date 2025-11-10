@@ -3,12 +3,15 @@
 //! 该模块负责生成 TTML 文件的 `<head>` 部分，包括元数据、演唱者信息和
 //! Apple 格式特有的逐字和逐行辅助轨道。
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::{generator::track::write_single_syllable_span, utils::normalize_text_whitespace};
+use crate::{
+    generator::{track::write_single_syllable_span, utils::apply_parentheses_to_bg_text},
+    utils::normalize_text_whitespace,
+};
 use lyrics_helper_core::{
-    Agent, AgentStore, AgentType, CanonicalMetadataKey, ConvertError, LyricLine, LyricTrack,
-    MetadataStore, TrackMetadataKey, TtmlGenerationOptions,
+    Agent, AgentStore, AgentType, CanonicalMetadataKey, ContentType, ConvertError, LyricLine,
+    LyricSyllable, LyricTrack, MetadataStore, TrackMetadataKey, TtmlGenerationOptions,
 };
 use quick_xml::{
     Writer,
@@ -188,24 +191,56 @@ fn write_songwriters<W: std::io::Write>(
     Ok(())
 }
 
+#[derive(Default)]
+struct LineTranslationParts {
+    main_text: Option<String>,
+    bg_text: Option<String>,
+}
+
 /// 从歌词行中收集所有逐行翻译。
 fn collect_line_timed_translations(
     lines: &[LyricLine],
-) -> HashMap<Option<String>, Vec<(String, String)>> {
-    let mut translations_by_lang: HashMap<Option<String>, Vec<(String, String)>> = HashMap::new();
+) -> HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> {
+    let mut translations_by_lang: HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> = // [!MODIFICATION]
+        HashMap::new();
     for (i, line) in lines.iter().enumerate() {
         let p_key = format!("L{}", i + 1);
         for at in &line.tracks {
             for track in &at.translations {
-                if !track.is_timed() || track.syllables().count() <= 1 {
+                if !track.is_timed() {
                     let lang = track.metadata.get(&TrackMetadataKey::Language).cloned();
                     let full_text = track.text();
+                    let normalized_text = normalize_text_whitespace(&full_text);
 
-                    if !full_text.trim().is_empty() {
-                        translations_by_lang
+                    if !normalized_text.is_empty() {
+                        let line_parts = translations_by_lang
                             .entry(lang)
                             .or_default()
-                            .push((p_key.clone(), normalize_text_whitespace(&full_text)));
+                            .entry(p_key.clone())
+                            .or_default();
+
+                        match at.content_type {
+                            ContentType::Main => {
+                                if let Some(existing_text) = &mut line_parts.main_text {
+                                    if !existing_text.is_empty() {
+                                        existing_text.push(' ');
+                                    }
+                                    existing_text.push_str(&normalized_text);
+                                } else {
+                                    line_parts.main_text = Some(normalized_text);
+                                }
+                            }
+                            ContentType::Background => {
+                                if let Some(existing_text) = &mut line_parts.bg_text {
+                                    if !existing_text.is_empty() {
+                                        existing_text.push(' ');
+                                    }
+                                    existing_text.push_str(&normalized_text);
+                                } else {
+                                    line_parts.bg_text = Some(normalized_text);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -214,10 +249,10 @@ fn collect_line_timed_translations(
     translations_by_lang
 }
 
-/// 写入逐行翻译的 <translations> 元素。
+/// 写入逐行翻译的 `<translations>` 元素。
 fn write_line_timed_translations<W: std::io::Write>(
     writer: &mut Writer<W>,
-    translations_by_lang: &HashMap<Option<String>, Vec<(String, String)>>,
+    translations_by_lang: &HashMap<Option<String>, BTreeMap<String, LineTranslationParts>>,
 ) -> Result<(), ConvertError> {
     if translations_by_lang.is_empty() {
         return Ok(());
@@ -225,7 +260,10 @@ fn write_line_timed_translations<W: std::io::Write>(
     writer
         .create_element("translations")
         .write_inner_content(|writer| {
-            for (lang, entries) in translations_by_lang {
+            let mut sorted_groups: Vec<_> = translations_by_lang.iter().collect();
+            sorted_groups.sort_by_key(|&(lang, _)| lang.clone());
+
+            for (lang, entries) in sorted_groups {
                 let mut trans_builder = writer
                     .create_element("translation")
                     .with_attribute(("type", "subtitle"));
@@ -233,11 +271,23 @@ fn write_line_timed_translations<W: std::io::Write>(
                     trans_builder = trans_builder.with_attribute(("xml:lang", lang_code.as_str()));
                 }
                 trans_builder.write_inner_content(|writer| {
-                    for (key, text) in entries {
+                    for (key, parts) in entries {
                         writer
                             .create_element("text")
                             .with_attribute(("for", key.as_str()))
-                            .write_text_content(BytesText::new(text))?;
+                            .write_inner_content(|writer| {
+                                if let Some(main_text) = &parts.main_text {
+                                    writer.write_event(Event::Text(BytesText::new(main_text)))?;
+                                }
+
+                                if let Some(bg_text) = &parts.bg_text {
+                                    writer
+                                        .create_element("span")
+                                        .with_attribute(("ttm:role", "x-bg"))
+                                        .write_text_content(BytesText::new(bg_text))?;
+                                }
+                                Ok(())
+                            })?;
                     }
                     Ok(())
                 })?;
@@ -310,6 +360,7 @@ fn write_amll_metadata<W: std::io::Write>(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn write_timed_tracks_to_head<W: std::io::Write>(
     writer: &mut Writer<W>,
     lines: &[LyricLine],
@@ -317,24 +368,32 @@ fn write_timed_tracks_to_head<W: std::io::Write>(
     track_kind: TimedTrackKind,
     options: &TtmlGenerationOptions,
 ) -> Result<(), ConvertError> {
+    type TracksForLine<'a> = Vec<(ContentType, &'a LyricTrack)>;
+    type LinesMap<'a> = BTreeMap<i32, TracksForLine<'a>>;
+    type GroupedTracksMap<'a> = HashMap<Option<String>, LinesMap<'a>>;
+
     let container_tag_name = track_kind.container_tag_name();
     let item_tag_name = track_kind.item_tag_name();
 
-    let mut grouped_by_lang: HashMap<Option<String>, Vec<(i32, &LyricTrack)>> = HashMap::new();
+    let mut grouped_by_lang: GroupedTracksMap = HashMap::new();
 
     for (line_idx, line) in lines.iter().enumerate() {
+        let line_key =
+            line_idx.try_into().unwrap_or(i32::MAX - p_key_counter_base) + p_key_counter_base;
+
         for annotated_track in &line.tracks {
+            let content_type = annotated_track.content_type;
             let tracks_to_check = track_kind.tracks_from(annotated_track);
 
             for track in tracks_to_check {
                 if track.is_timed() {
                     let lang = track.metadata.get(&TrackMetadataKey::Language).cloned();
-                    let line_key = line_idx.try_into().unwrap_or(i32::MAX - p_key_counter_base)
-                        + p_key_counter_base;
                     grouped_by_lang
                         .entry(lang)
                         .or_default()
-                        .push((line_key, track));
+                        .entry(line_key)
+                        .or_default()
+                        .push((content_type, track));
                 }
             }
         }
@@ -350,29 +409,90 @@ fn write_timed_tracks_to_head<W: std::io::Write>(
             let mut sorted_groups: Vec<_> = grouped_by_lang.into_iter().collect();
             sorted_groups.sort_by_key(|(lang, _)| lang.clone());
 
-            for (lang, entries) in sorted_groups {
+            for (lang, entries_by_line) in sorted_groups {
                 let mut item_builder = writer.create_element(item_tag_name);
                 if let Some(lang_code) = lang.as_ref().filter(|s| !s.is_empty()) {
                     item_builder = item_builder.with_attribute(("xml:lang", lang_code.as_str()));
                 }
 
                 item_builder.write_inner_content(|writer| {
-                    for (line_idx, track) in entries {
+                    for (line_idx, tracks_for_line) in entries_by_line {
                         writer
                             .create_element("text")
                             .with_attribute(("for", format!("L{line_idx}").as_str()))
                             .write_inner_content(|writer| {
-                                let mut syllables_iter = track.syllables().peekable();
+                                let main_tracks: Vec<&LyricTrack> = tracks_for_line
+                                    .iter()
+                                    .filter(|(ct, _)| *ct == ContentType::Main)
+                                    .map(|(_, track)| *track)
+                                    .collect();
 
-                                while let Some(syl) = syllables_iter.next() {
-                                    write_single_syllable_span(writer, syl, options)?;
-                                    if syl.ends_with_space
-                                        && syllables_iter.peek().is_some()
-                                        && !options.format
-                                    {
-                                        writer.write_event(Event::Text(BytesText::new(" ")))?;
+                                let bg_tracks: Vec<&LyricTrack> = tracks_for_line
+                                    .iter()
+                                    .filter(|(ct, _)| *ct == ContentType::Background)
+                                    .map(|(_, track)| *track)
+                                    .collect();
+
+                                for track in main_tracks {
+                                    let mut syllables_iter = track.syllables().peekable();
+                                    while let Some(syl) = syllables_iter.next() {
+                                        write_single_syllable_span(writer, syl, options)?;
+                                        if syl.ends_with_space
+                                            && syllables_iter.peek().is_some()
+                                            && !options.format
+                                        {
+                                            writer.write_event(Event::Text(BytesText::new(" ")))?;
+                                        }
                                     }
                                 }
+
+                                let mut all_bg_syls: Vec<_> =
+                                    bg_tracks.iter().flat_map(|t| t.syllables()).collect();
+                                if all_bg_syls.is_empty() {
+                                    return Ok(());
+                                }
+
+                                all_bg_syls.sort_by_key(|s| s.start_ms);
+
+                                writer
+                                    .create_element("span")
+                                    .with_attribute(("ttm:role", "x-bg"))
+                                    .write_inner_content(|writer| {
+                                        let mut is_first = true;
+                                        let mut iter = all_bg_syls.into_iter().peekable();
+
+                                        while let Some(syl_bg) = iter.next() {
+                                            let is_last = iter.peek().is_none();
+                                            let text_with_parens = apply_parentheses_to_bg_text(
+                                                &syl_bg.text,
+                                                is_first,
+                                                is_last,
+                                            );
+
+                                            is_first = false;
+
+                                            let temp_syl = LyricSyllable {
+                                                text: text_with_parens,
+                                                start_ms: syl_bg.start_ms,
+                                                end_ms: syl_bg.end_ms,
+                                                duration_ms: syl_bg.duration_ms,
+                                                ends_with_space: syl_bg.ends_with_space,
+                                            };
+
+                                            write_single_syllable_span(writer, &temp_syl, options)?;
+
+                                            if syl_bg.ends_with_space
+                                                && iter.peek().is_some()
+                                                && !options.format
+                                            {
+                                                writer.write_event(Event::Text(BytesText::new(
+                                                    " ",
+                                                )))?;
+                                            }
+                                        }
+                                        Ok(())
+                                    })?;
+
                                 Ok(())
                             })?;
                     }

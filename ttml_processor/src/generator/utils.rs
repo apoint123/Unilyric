@@ -19,6 +19,19 @@ pub(super) fn format_ttml_time(ms: u64) -> String {
     }
 }
 
+pub(super) fn apply_parentheses_to_bg_text(text: &str, is_first: bool, is_last: bool) -> String {
+    if text.trim().is_empty() {
+        return text.to_string();
+    }
+
+    match (is_first, is_last) {
+        (true, true) => format!("({text})"),
+        (true, false) => format!("({text}"),
+        (false, true) => format!("{text})"),
+        (false, false) => text.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

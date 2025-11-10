@@ -3,7 +3,7 @@
 //! 该模块负责将 `LyricTrack` 数据结构渲染为具体的 `<span>` XML 元素，
 //! 包括主歌词、背景人声、翻译和罗马音等。
 
-use crate::utils::normalize_text_whitespace;
+use crate::{generator::utils::apply_parentheses_to_bg_text, utils::normalize_text_whitespace};
 use lyrics_helper_core::{
     AnnotatedTrack, ConvertError, LyricSyllable, LyricTrack, TrackMetadataKey,
     TtmlGenerationOptions, TtmlTimingMode,
@@ -30,7 +30,7 @@ pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
         for track in &at.romanizations {
             let is_timed = track.is_timed();
 
-            if !is_timed || !options.use_apple_format_rules {
+            if !is_timed {
                 write_inline_auxiliary_track(writer, track, "x-roman", options)?;
             }
         }
@@ -156,16 +156,10 @@ pub(super) fn write_background_tracks<W: std::io::Write>(
             let mut iter = all_syls.into_iter().peekable();
 
             while let Some(syl_bg) = iter.next() {
-                let text_with_parens = if syl_bg.text.trim().is_empty() {
-                    syl_bg.text.clone()
-                } else {
-                    match (is_first, iter.peek().is_none()) {
-                        (true, true) => format!("({})", syl_bg.text), // 唯一元素
-                        (true, false) => format!("({}", syl_bg.text), // 第一个元素
-                        (false, true) => format!("{})", syl_bg.text), // 最后一个元素
-                        (false, false) => syl_bg.text.clone(),        // 中间元素
-                    }
-                };
+                let is_last = iter.peek().is_none();
+                let text_with_parens =
+                    apply_parentheses_to_bg_text(&syl_bg.text, is_first, is_last);
+
                 is_first = false;
 
                 let temp_syl = LyricSyllable {
