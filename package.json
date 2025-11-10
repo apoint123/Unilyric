@@ -20,7 +20,7 @@
     "url": "https://github.com/apoint123/Unilyric/issues"
   },
   "homepage": "https://github.com/apoint123/Unilyric#readme",
-  "packageManager": "pnpm@10.20.0",
+  "packageManager": "pnpm@10.21.0",
   "devDependencies": {
     "@commitlint/config-conventional": "^20.0.0",
     "commit-and-tag-version": "^12.6.0",
