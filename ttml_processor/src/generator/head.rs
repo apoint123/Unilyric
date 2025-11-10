@@ -5,14 +5,15 @@
 
 use std::collections::HashMap;
 
-use crate::utils::normalize_text_whitespace;
+use crate::{generator::track::write_single_syllable_span, utils::normalize_text_whitespace};
 use lyrics_helper_core::{
     Agent, AgentStore, AgentType, CanonicalMetadataKey, ConvertError, LyricLine, LyricTrack,
     MetadataStore, TrackMetadataKey, TtmlGenerationOptions,
 };
-use quick_xml::{Writer, events::BytesText};
-
-use super::utils::format_ttml_time;
+use quick_xml::{
+    Writer,
+    events::{BytesText, Event},
+};
 
 #[derive(Clone, Copy)]
 enum TimedTrackKind {
@@ -151,8 +152,14 @@ fn write_itunes_metadata<W: std::io::Write>(
                     write_line_timed_translations(writer, &line_timed_translations)?;
                 }
 
-                write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Translation)?;
-                write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Romanization)?;
+                write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Translation, options)?;
+                write_timed_tracks_to_head(
+                    writer,
+                    lines,
+                    1,
+                    TimedTrackKind::Romanization,
+                    options,
+                )?;
                 Ok(())
             })?;
     }
@@ -283,9 +290,6 @@ fn write_amll_metadata<W: std::io::Write>(
         if !written_keys.contains(key)
             && let CanonicalMetadataKey::Custom(s) = key
         {
-            if s.eq_ignore_ascii_case("agent") || s.eq_ignore_ascii_case("xml:lang_root") {
-                continue;
-            }
             custom_metadata.push((s.as_str(), values));
         }
     }
@@ -311,6 +315,7 @@ fn write_timed_tracks_to_head<W: std::io::Write>(
     lines: &[LyricLine],
     p_key_counter_base: i32,
     track_kind: TimedTrackKind,
+    options: &TtmlGenerationOptions,
 ) -> Result<(), ConvertError> {
     let container_tag_name = track_kind.container_tag_name();
     let item_tag_name = track_kind.item_tag_name();
@@ -357,19 +362,15 @@ fn write_timed_tracks_to_head<W: std::io::Write>(
                             .create_element("text")
                             .with_attribute(("for", format!("L{line_idx}").as_str()))
                             .write_inner_content(|writer| {
-                                for word in &track.words {
-                                    for syl in &word.syllables {
-                                        writer
-                                            .create_element("span")
-                                            .with_attribute((
-                                                "begin",
-                                                format_ttml_time(syl.start_ms).as_str(),
-                                            ))
-                                            .with_attribute((
-                                                "end",
-                                                format_ttml_time(syl.end_ms).as_str(),
-                                            ))
-                                            .write_text_content(BytesText::new(&syl.text))?;
+                                let mut syllables_iter = track.syllables().peekable();
+
+                                while let Some(syl) = syllables_iter.next() {
+                                    write_single_syllable_span(writer, syl, options)?;
+                                    if syl.ends_with_space
+                                        && syllables_iter.peek().is_some()
+                                        && !options.format
+                                    {
+                                        writer.write_event(Event::Text(BytesText::new(" ")))?;
                                     }
                                 }
                                 Ok(())

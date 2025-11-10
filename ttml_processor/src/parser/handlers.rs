@@ -140,7 +140,7 @@ fn process_tt_start(
         if !lang_val.is_empty() {
             let lang_val_owned = lang_val.into_owned();
             raw_metadata
-                .entry("xml:lang_root".to_string())
+                .entry("Language".to_string())
                 .or_default()
                 .push(lang_val_owned.clone());
             if state.default_main_lang.is_none() {

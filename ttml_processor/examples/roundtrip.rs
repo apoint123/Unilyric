@@ -3,7 +3,7 @@ use std::fs;
 use ttml_processor::{generate_ttml, parse_ttml};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let input_path = "./tests/test_data/1.ttml";
+    let input_path = "ttml_processor/tests/test_data/complex_round_trip.ttml";
     let output_path = "roundtrip_output.ttml";
     let ttml_content = fs::read_to_string(input_path)?;
     let parsing_options = TtmlParsingOptions::default();
@@ -16,6 +16,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let generation_options = TtmlGenerationOptions {
         format: true,
+        use_apple_format_rules: true,
         ..Default::default()
     };
 
@@ -27,11 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     fs::write(output_path, &generated_ttml)?;
-    let preview: String = generated_ttml
-        .lines()
-        .take(50)
-        .collect::<Vec<_>>()
-        .join("\n");
+    let preview: String = generated_ttml.lines().collect::<Vec<_>>().join("\n");
     println!("{preview}");
 
     Ok(())

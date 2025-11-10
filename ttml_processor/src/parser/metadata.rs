@@ -363,7 +363,9 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
 
             meta_state
                 .line_translation_map
-                .insert(text_key.clone(), (line_translation, lang.clone()));
+                .entry(text_key.clone())
+                .or_default()
+                .push((line_translation, lang.clone()));
         } else if has_main_syllables || has_bg_syllables {
             // 是带时间戳的辅助轨道，存入 timed_track_map。
             let entry = meta_state

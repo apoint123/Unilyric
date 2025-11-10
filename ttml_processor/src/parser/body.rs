@@ -121,50 +121,54 @@ pub(super) fn handle_p_end(
     if let Some(mut p_data) = state.body_state.current_p_element_data.take() {
         if let Some(key) = &p_data.itunes_key {
             // 回填逐行翻译
-            if let Some((line_translation, lang)) =
-                state.metadata_state.line_translation_map.get(key)
+            if let Some(translations_for_line) = state.metadata_state.line_translation_map.get(key)
             {
-                // 处理主音轨翻译
-                if let Some(main_text) = &line_translation.main
-                    && let Some(main_annotated_track) = p_data
-                        .tracks_accumulator
-                        .iter_mut()
-                        .find(|at| at.content_type == ContentType::Main)
-                {
-                    // 检查是否已存在具有相同文本的翻译轨道
-                    let translation_exists =
-                        main_annotated_track.translations.iter().any(|track| {
-                            track
-                                .words
-                                .iter()
-                                .flat_map(|w| &w.syllables)
-                                .any(|s| s.text == *main_text)
-                        });
+                for (line_translation, lang) in translations_for_line {
+                    // 处理主音轨翻译
+                    if let Some(main_text) = &line_translation.main
+                        && let Some(main_annotated_track) = p_data
+                            .tracks_accumulator
+                            .iter_mut()
+                            .find(|at| at.content_type == ContentType::Main)
+                    {
+                        // 检查是否已存在具有相同文本的翻译轨道
+                        let translation_exists =
+                            main_annotated_track.translations.iter().any(|track| {
+                                track
+                                    .words
+                                    .iter()
+                                    .flat_map(|w| &w.syllables)
+                                    .any(|s| s.text == *main_text)
+                            });
 
-                    if !translation_exists {
-                        let translation_track =
-                            create_simple_translation_track(main_text, lang.as_ref());
-                        main_annotated_track.translations.push(translation_track);
+                        if !translation_exists {
+                            let translation_track =
+                                create_simple_translation_track(main_text, lang.as_ref());
+                            main_annotated_track.translations.push(translation_track);
+                        }
                     }
-                }
 
-                // 处理背景人声音轨的翻译
-                if let Some(bg_text) = &line_translation.background {
-                    let bg_annotated_track =
-                        get_or_create_target_annotated_track(&mut p_data, ContentType::Background);
+                    // 处理背景人声音轨的翻译
+                    if let Some(bg_text) = &line_translation.background {
+                        let bg_annotated_track = get_or_create_target_annotated_track(
+                            &mut p_data,
+                            ContentType::Background,
+                        );
 
-                    let translation_exists = bg_annotated_track.translations.iter().any(|track| {
-                        track
-                            .words
-                            .iter()
-                            .flat_map(|w| &w.syllables)
-                            .any(|s| s.text == *bg_text)
-                    });
+                        let translation_exists =
+                            bg_annotated_track.translations.iter().any(|track| {
+                                track
+                                    .words
+                                    .iter()
+                                    .flat_map(|w| &w.syllables)
+                                    .any(|s| s.text == *bg_text)
+                            });
 
-                    if !translation_exists {
-                        let translation_track =
-                            create_simple_translation_track(bg_text, lang.as_ref());
-                        bg_annotated_track.translations.push(translation_track);
+                        if !translation_exists {
+                            let translation_track =
+                                create_simple_translation_track(bg_text, lang.as_ref());
+                            bg_annotated_track.translations.push(translation_track);
+                        }
                     }
                 }
             }

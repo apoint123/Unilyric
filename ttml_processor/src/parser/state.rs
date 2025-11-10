@@ -140,7 +140,7 @@ pub(super) struct DetailedAuxiliaryTracks {
 /// 存储 `<metadata>` 区域解析状态的结构体。
 #[derive(Debug, Default)]
 pub(super) struct MetadataParseState {
-    pub(super) line_translation_map: HashMap<String, (LineTranslation, Option<String>)>,
+    pub(super) line_translation_map: HashMap<String, Vec<(LineTranslation, Option<String>)>>,
     pub(super) timed_track_map: HashMap<String, DetailedAuxiliaryTracks>,
 
     pub(super) context: MetadataContext,
@@ -199,7 +199,7 @@ pub(super) struct SpanContext {
 pub(super) enum SpanRole {
     /// 普通音节
     Generic,
-    /// 翻译    
+    /// 翻译
     Translation,
     /// 罗马音
     Romanization,
