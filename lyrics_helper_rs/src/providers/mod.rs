@@ -21,8 +21,7 @@ use lyrics_helper_core::{
 };
 
 /// 定义了所有音乐平台提供商需要实现的通用接口。
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 pub trait Provider: Send + Sync {
     /// 使用默认的 `WreqClient` HTTP 客户端创建一个新的 Provider 实例。
     async fn new() -> Result<Self>

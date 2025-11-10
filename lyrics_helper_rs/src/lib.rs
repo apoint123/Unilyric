@@ -81,8 +81,6 @@ pub mod http;
 pub mod model;
 pub mod providers;
 pub mod search;
-#[cfg(all(target_arch = "wasm32", feature = "wasm"))]
-pub mod wasm;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -252,23 +250,13 @@ impl SearchMode {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 /// 一个代表歌词搜索结果的 Future。
 pub type SearchLyricsFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<LyricsAndMetadata>>> + Send + 'a>>;
-#[cfg(target_arch = "wasm32")]
-/// 一个代表歌词搜索结果的 Future。
-pub type SearchLyricsFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<LyricsAndMetadata>>> + 'a>>;
 
-#[cfg(not(target_arch = "wasm32"))]
 /// 一个代表全面的歌词搜索结果的 Future。
 pub type SearchLyricsComprehensiveFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Option<ComprehensiveSearchResult>>> + Send + 'a>>;
-#[cfg(target_arch = "wasm32")]
-/// 一个代表全面的歌词搜索结果的 Future。
-pub type SearchLyricsComprehensiveFuture<'a> =
-    Pin<Box<dyn Future<Output = Result<Option<ComprehensiveSearchResult>>> + 'a>>;
 
 /// 顶层歌词助手客户端，封装了所有提供商，为用户提供统一、简单的接口。
 ///
@@ -499,53 +487,10 @@ impl LyricsHelper {
     /// # 返回
     /// 一个 `Result`，成功时包含一个 `Vec<SearchResult>`，该向量已按匹配度从高到低排序。
     #[must_use]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn search_track<'a>(
         &self,
         track_meta: &Track<'a>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<SearchResult>>> + Send + 'a>> {
-        if self.providers.is_empty() {
-            return Box::pin(async { Err(LyricsHelperError::ProvidersNotInitialized) });
-        }
-
-        let providers = self.providers.clone();
-        let track_meta = track_meta.clone();
-
-        Box::pin(async move {
-            let search_futures = providers
-                .iter()
-                .map(|provider| search::search_track(provider.as_ref(), &track_meta, true));
-
-            let all_results: Vec<SearchResult> = future::join_all(search_futures)
-                .await
-                .into_iter()
-                .filter_map(Result::ok)
-                .flatten()
-                .collect();
-
-            let mut sorted_results = all_results;
-            sorted_results.sort_by(|a, b| b.match_type.cmp(&a.match_type));
-
-            let mut unique_results = Vec::new();
-            let mut seen_keys = HashSet::new();
-
-            for result in sorted_results {
-                let key = (result.provider_name.clone(), result.provider_id.clone());
-                if seen_keys.insert(key) {
-                    unique_results.push(result);
-                }
-            }
-
-            Ok(unique_results)
-        })
-    }
-
-    #[must_use]
-    #[cfg(target_arch = "wasm32")]
-    pub fn search_track<'a>(
-        &self,
-        track_meta: &Track<'a>,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<SearchResult>>> + 'a>> {
         if self.providers.is_empty() {
             return Box::pin(async { Err(LyricsHelperError::ProvidersNotInitialized) });
         }

@@ -329,8 +329,6 @@ impl NeteaseClient {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait]
 impl Provider for NeteaseClient {
     fn name(&self) -> &'static str {
@@ -827,8 +825,7 @@ impl Sink<LoginAction> for ActionSink {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 impl LoginProvider for NeteaseClient {
     fn initiate_login(&self, method: LoginMethod) -> LoginFlow {
         let (events_tx, events_rx) = mpsc::channel(16);

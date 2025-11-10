@@ -4,8 +4,7 @@ use crate::providers::Provider;
 use async_trait::async_trait;
 
 /// 为支持登录功能的 Provider 定义的接口
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 pub trait LoginProvider: Provider {
     /// 发起登录流程，返回一个双向事件流
     ///

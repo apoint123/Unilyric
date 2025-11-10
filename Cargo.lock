@@ -3407,7 +3407,6 @@ dependencies = [
  "cbc",
  "chrono",
  "cipher",
- "console_error_panic_hook",
  "const_format",
  "cookie_store 0.22.0",
  "criterion",
@@ -3423,7 +3422,6 @@ dependencies = [
  "futures-util",
  "getrandom 0.3.4",
  "hex",
- "js-sys",
  "lyrics_helper_core",
  "md-5",
  "num-bigint",
@@ -3438,7 +3436,6 @@ dependencies = [
  "reqwest",
  "rsa",
  "serde",
- "serde-wasm-bindgen",
  "serde_json",
  "serde_urlencoded",
  "sha1",
@@ -3450,13 +3447,9 @@ dependencies = [
  "toml 0.9.8",
  "tracing",
  "tracing-subscriber",
- "tracing-wasm",
  "ttml_processor",
  "url",
  "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
  "wreq",
  "wreq-util",
 ]
@@ -6295,17 +6288,6 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
-]
-
-[[package]]
-name = "tracing-wasm"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4575c663a174420fa2d78f4108ff68f65bf2fbb7dd89f33749b6e826b3626e07"
-dependencies = [
- "tracing",
- "tracing-subscriber",
- "wasm-bindgen",
 ]
 
 [[package]]

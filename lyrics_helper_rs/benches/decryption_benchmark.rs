@@ -372,7 +372,6 @@ mod original {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn bench_decryption(c: &mut Criterion) {
     let mut group = c.benchmark_group("QRC Decryption Performance");
 
@@ -391,13 +390,6 @@ fn bench_decryption(c: &mut Criterion) {
     group.finish();
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 criterion_group!(benches, bench_decryption);
 
-#[cfg(not(target_arch = "wasm32"))]
 criterion_main!(benches);
-
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    // Benchmarks are not supported on WASM
-}

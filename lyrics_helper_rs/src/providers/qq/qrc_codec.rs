@@ -126,22 +126,11 @@ mod qrc_logic {
 
         let mut decrypted_data = vec![0; encrypted_bytes.len()];
 
-        #[cfg(not(target_arch = "wasm32"))]
         {
             use rayon::prelude::*;
             decrypted_data
                 .par_chunks_mut(DES_BLOCK_SIZE)
                 .zip(encrypted_bytes.par_chunks(DES_BLOCK_SIZE))
-                .for_each(|(out_slice, chunk)| {
-                    CODEC.decrypt_block(chunk, out_slice);
-                });
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            decrypted_data
-                .chunks_mut(DES_BLOCK_SIZE)
-                .zip(encrypted_bytes.chunks(DES_BLOCK_SIZE))
                 .for_each(|(out_slice, chunk)| {
                     CODEC.decrypt_block(chunk, out_slice);
                 });
@@ -167,22 +156,11 @@ mod qrc_logic {
 
         let mut encrypted_data = vec![0; padded_data.len()];
 
-        #[cfg(not(target_arch = "wasm32"))]
         {
             use rayon::prelude::*;
             encrypted_data
                 .par_chunks_mut(DES_BLOCK_SIZE)
                 .zip(padded_data.par_chunks(DES_BLOCK_SIZE))
-                .for_each(|(out_slice, chunk)| {
-                    CODEC.encrypt_block(chunk, out_slice);
-                });
-        }
-
-        #[cfg(target_arch = "wasm32")]
-        {
-            encrypted_data
-                .chunks_mut(DES_BLOCK_SIZE)
-                .zip(padded_data.chunks(DES_BLOCK_SIZE))
                 .for_each(|(out_slice, chunk)| {
                     CODEC.encrypt_block(chunk, out_slice);
                 });
@@ -483,7 +461,7 @@ mod qrc_logic {
             // 每轮循环左移的位数表
             #[rustfmt::skip]
             const KEY_RND_SHIFT: [u32; 16] = [
-                1, 1, 2, 2, 2, 2, 2, 2, 
+                1, 1, 2, 2, 2, 2, 2, 2,
                 1, 2, 2, 2, 2, 2, 2, 1,
             ];
 
@@ -582,7 +560,7 @@ mod qrc_logic {
             /// 创建并填充所有查找表
             const fn new() -> Self {
                 /// 初始置换规则。
-                /// 
+                ///
                 /// 非标准: 它们全都是不标准的。
                 #[rustfmt::skip]
                 const IP_RULE: [u8; 64] = [
@@ -597,7 +575,7 @@ mod qrc_logic {
                 ];
 
                 /// 逆初始置换规则。
-                /// 
+                ///
                 /// 非标准: 它们全都是不标准的。
                 #[rustfmt::skip]
                 const INV_IP_RULE: [u8; 64] = [

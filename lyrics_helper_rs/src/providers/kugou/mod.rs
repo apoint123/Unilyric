@@ -388,8 +388,6 @@ impl KugouMusic {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait]
 impl Provider for KugouMusic {
     fn name(&self) -> &'static str {

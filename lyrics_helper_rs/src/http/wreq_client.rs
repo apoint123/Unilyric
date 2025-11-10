@@ -99,10 +99,7 @@ impl WreqClient {
             .emulation(Emulation::Chrome140)
             .cookie_provider(Arc::clone(&cookie_store));
 
-        #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.timeout(std::time::Duration::from_secs(10));
-        #[cfg(target_arch = "wasm32")]
-        let builder = builder;
 
         let client = builder
             .build()
@@ -115,8 +112,7 @@ impl WreqClient {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 impl HttpClient for WreqClient {
     fn get_cookies(&self) -> Result<String> {
         let store = self.cookie_store.store.lock();

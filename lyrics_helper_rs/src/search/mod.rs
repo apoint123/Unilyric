@@ -214,8 +214,7 @@ mod tests {
         name: &'static str,
     }
 
-    #[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-    #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+    #[async_trait]
     impl Provider for MockProvider {
         async fn with_http_client(_http_client: Arc<dyn HttpClient>) -> Result<Self>
         where

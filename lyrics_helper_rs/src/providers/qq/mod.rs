@@ -107,8 +107,6 @@ pub struct QQMusic {
     auth_state: Arc<RwLock<Option<ProviderAuthState>>>,
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
 #[async_trait]
 impl Provider for QQMusic {
     fn name(&self) -> &'static str {
@@ -527,8 +525,7 @@ impl Provider for QQMusic {
     }
 }
 
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 impl LoginProvider for QQMusic {
     #[instrument(skip(self, method), fields(provider = "qq"))]
     fn initiate_login(&self, method: LoginMethod) -> LoginFlow {

@@ -11,11 +11,6 @@ pub mod wreq_client;
 
 pub use self::wreq_client::WreqClient;
 
-#[cfg(target_arch = "wasm32")]
-mod wasm_client;
-#[cfg(target_arch = "wasm32")]
-pub use self::wasm_client::WasmClient;
-
 /// HTTP请求方法枚举
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
@@ -61,8 +56,7 @@ impl HttpResponse {
 }
 
 /// 统一的HTTP客户端接口
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[async_trait]
 pub trait HttpClient: Send + Sync + Debug {
     /// 发送GET请求
     async fn get(&self, url: &str) -> Result<HttpResponse>;
