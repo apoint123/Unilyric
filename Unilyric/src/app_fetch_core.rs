@@ -226,7 +226,6 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
     let helper = Arc::clone(&app.lyrics_helper_state.helper);
     let app_settings = app.app_settings.lock().unwrap().clone();
     let result_tx = app.fetcher.result_tx.clone();
-    let target_format = app.lyrics.target_format;
     let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
 
     let cancellation_token = CancellationToken::new();
@@ -256,7 +255,8 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
 
         if !lyrics_found_in_cache {
             if app_settings.prioritize_amll_db {
-                let amll_mode = SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
+                let amll_mode =
+                    SearchMode::specific(lyrics_helper_rs::ProviderName::AmllTtmlDatabase);
                 let amll_search_result = {
                     let future_res = {
                         let helper_guard = helper.lock().await;
@@ -278,10 +278,10 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
                         .source_track
                         .match_type
                         >= MatchType::PrettyHigh
-                    {
-                        final_lyrics = Some(comprehensive_result.primary_lyric_result);
-                        final_candidates = comprehensive_result.all_search_candidates;
-                    }
+                {
+                    final_lyrics = Some(comprehensive_result.primary_lyric_result);
+                    final_candidates = comprehensive_result.all_search_candidates;
+                }
             }
 
             let regular_search_mode = {
@@ -334,7 +334,10 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
 
                     error!("[AutoFetch] 常规搜索时发生错误: {}", e);
                     if final_lyrics.is_none() {
-                        if result_tx.send(AutoFetchResult::FetchError(e.into())).is_err() {
+                        if result_tx
+                            .send(AutoFetchResult::FetchError(e.into()))
+                            .is_err()
+                        {
                             error!("[AutoFetch Task] 发送 Error 结果到主线程失败。");
                         }
                         return;
@@ -360,53 +363,25 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             };
 
             match search_result {
-                 Ok(Some(comprehensive_result)) => {
-                     final_candidates = comprehensive_result.all_search_candidates;
-                 },
-                 Ok(None) => {},
-                 Err(e) => {
-                     error!("[AutoFetch] 为获取封面候选进行搜索时发生错误: {e}");
-                 }
+                Ok(Some(comprehensive_result)) => {
+                    final_candidates = comprehensive_result.all_search_candidates;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    error!("[AutoFetch] 为获取封面候选进行搜索时发生错误: {e}");
+                }
             }
         }
 
         let mut lyrics_processed_online = false;
 
-        if let Some(mut lyrics_and_metadata) = final_lyrics {
+        if let Some(lyrics_and_metadata) = final_lyrics {
             lyrics_processed_online = true;
-            let source: AutoSearchSource =
-                lyrics_and_metadata.source_track.provider_name.clone().into();
-
-            if app_settings.auto_apply_metadata_stripper {
-                lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
-                    &mut lyrics_and_metadata.lyrics.parsed.lines,
-                    &app_settings.metadata_stripper,
-                );
-            }
-            if app_settings.auto_apply_agent_recognizer {
-                lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
-                    &mut lyrics_and_metadata.lyrics.parsed,
-                );
-            }
-
-            let output_text_result =
-                lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
-                    std::hash::RandomState,
-                >(
-                    lyrics_and_metadata.lyrics.parsed.clone(),
-                    target_format,
-                    Default::default(),
-                    None,
-                )
-                .await;
-
-            let output_text = match output_text_result {
-                Ok(res) => res.output_lyrics,
-                Err(e) => {
-                    error!("[AutoFetch] 搜索结果转换失败: {}", e);
-                    String::new()
-                }
-            };
+            let source: AutoSearchSource = lyrics_and_metadata
+                .source_track
+                .provider_name
+                .clone()
+                .into();
 
             if app_settings.auto_cache
                 && lyrics_and_metadata.source_track.match_type
@@ -421,7 +396,6 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
             let lyrics_result = AutoFetchResult::LyricsReady {
                 source,
                 lyrics_and_metadata: Box::new(lyrics_and_metadata),
-                output_text,
                 title: smtc_title.clone(),
                 artist: smtc_artists.join("/"),
             };
@@ -488,7 +462,6 @@ pub(super) fn trigger_manual_refetch_for_source(
         .map(|s| s.split('/').map(|n| n.trim().to_string()).collect())
         .unwrap_or_default();
 
-    let target_format = app.lyrics.target_format;
     let app_settings = app.app_settings.lock().unwrap().clone();
     let cover_cache_dir = app.local_cache.cover_cache_dir.clone();
 
@@ -553,45 +526,18 @@ pub(super) fn trigger_manual_refetch_for_source(
         match search_result {
             Ok(Some(comprehensive_result)) => {
                 info!(
-                    "[ManualRefetch] 在 {:?} 中成功找到歌词，正在进行转换...",
+                    "[ManualRefetch] 在 {:?} 中成功找到歌词...",
                     source_to_refetch
                 );
 
-                let mut lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
-
-                if app_settings.auto_apply_metadata_stripper {
-                    lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
-                        &mut lyrics_and_metadata.lyrics.parsed.lines,
-                        &app_settings.metadata_stripper,
-                    );
-                }
-                if app_settings.auto_apply_agent_recognizer {
-                    lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
-                        &mut lyrics_and_metadata.lyrics.parsed,
-                    );
-                }
-
-                let output_text_result =
-                    lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
-                        std::hash::RandomState,
-                    >(
-                        lyrics_and_metadata.lyrics.parsed.clone(),
-                        target_format,
-                        Default::default(),
-                        None,
-                    )
-                    .await;
-
-                let output_text = match output_text_result {
-                    Ok(conversion_result) => conversion_result.output_lyrics,
-                    Err(e) => {
-                        error!("[ManualRefetch] 转换失败: {}", e);
-                        String::new()
-                    }
-                };
+                let lyrics_and_metadata = comprehensive_result.primary_lyric_result.clone();
 
                 if app_settings.auto_cache
-                    && comprehensive_result.primary_lyric_result.source_track.match_type == lyrics_helper_core::MatchType::Perfect
+                    && comprehensive_result
+                        .primary_lyric_result
+                        .source_track
+                        .match_type
+                        == lyrics_helper_core::MatchType::Perfect
                 {
                     info!("[AutoCache] 歌词匹配度为 Perfect，缓存到本地。");
                     if result_tx.send(AutoFetchResult::RequestCache).is_err() {
@@ -602,7 +548,6 @@ pub(super) fn trigger_manual_refetch_for_source(
                 let lyrics_ready_result = AutoFetchResult::LyricsReady {
                     source: source_to_refetch,
                     lyrics_and_metadata: Box::new(lyrics_and_metadata),
-                    output_text,
                     title: smtc_title.clone(),
                     artist: smtc_artists.join("/"),
                 };

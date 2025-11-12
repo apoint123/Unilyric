@@ -152,42 +152,12 @@ impl UniLyricApp {
         self.lyrics.conversion_in_progress = true;
         let helper = self.lyrics_helper_state.helper.clone();
 
-        // 1. 准备主歌词文件
         let main_lyric = InputFile::new(
             self.lyrics.input_text.clone(),
             self.lyrics.source_format,
             None,
             None,
         );
-
-        // 2. 准备翻译文件列表
-        let translations = if !self.lyrics.display_translation_lrc_output.trim().is_empty() {
-            vec![InputFile::new(
-                self.lyrics.display_translation_lrc_output.clone(),
-                LyricFormat::Lrc,
-                Some("zh-Hans".to_string()),
-                None,
-            )]
-        } else {
-            vec![]
-        };
-
-        // 3. 准备罗马音文件列表
-        let romanizations = if !self
-            .lyrics
-            .display_romanization_lrc_output
-            .trim()
-            .is_empty()
-        {
-            vec![InputFile::new(
-                self.lyrics.display_romanization_lrc_output.clone(),
-                LyricFormat::Lrc,
-                Some("ja-Latn".to_string()),
-                None,
-            )]
-        } else {
-            vec![]
-        };
 
         self.lyrics.metadata_manager.sync_store_from_ui_entries();
         let store_data = self.lyrics.metadata_manager.store.get_all_data();
@@ -205,8 +175,8 @@ impl UniLyricApp {
 
         let input = ConversionInput {
             main_lyric,
-            translations,
-            romanizations,
+            translations: vec![],
+            romanizations: vec![],
             target_format: self.lyrics.target_format,
             user_metadata_overrides: None,
             additional_metadata,
@@ -390,6 +360,23 @@ impl UniLyricApp {
         let mut final_parsed_data = result.parsed;
         let merged_raw_metadata = self.lyrics.metadata_manager.get_metadata_for_backend();
         final_parsed_data.raw_metadata = merged_raw_metadata;
+
+        {
+            let settings = self.app_settings.lock().unwrap();
+            if settings.auto_apply_metadata_stripper {
+                lyrics_helper_rs::converter::processors::metadata_stripper::strip_descriptive_metadata_lines(
+                    &mut final_parsed_data.lines,
+                    &settings.metadata_stripper,
+                );
+            }
+
+            if settings.auto_apply_agent_recognizer {
+                lyrics_helper_rs::converter::processors::agent_recognizer::recognize_agents(
+                    &mut final_parsed_data,
+                );
+            }
+        }
+
         self.lyrics.parsed_lyric_data = Some(final_parsed_data);
         self.dispatch_regeneration_task();
         ActionResult::Success
@@ -569,7 +556,6 @@ impl UniLyricApp {
                 }
                 ActionResult::Success
             }
-            LyricsAction::LoadFetchedResult(result) => self.handle_load_full_lyrics_result(result),
             LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata_box) => {
                 self.lyrics.current_warnings =
                     lyrics_and_metadata_box.lyrics.parsed.warnings.clone();
@@ -733,8 +719,13 @@ impl UniLyricApp {
             }
             DownloaderAction::ApplyAndClose => {
                 if let Some(lyrics_to_apply) = self.downloader.selected_full_lyrics.clone() {
+                    let lyrics_and_metadata =
+                        Box::new(lyrics_helper_core::model::track::LyricsAndMetadata {
+                            lyrics: lyrics_to_apply,
+                            source_track: Default::default(),
+                        });
                     self.send_action(UserAction::Lyrics(Box::new(
-                        LyricsAction::LoadFetchedResult(lyrics_to_apply),
+                        LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata),
                     )));
                     self.send_action(UserAction::Downloader(Box::new(DownloaderAction::Close)));
                 } else {

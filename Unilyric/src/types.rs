@@ -39,7 +39,6 @@ pub enum AutoFetchResult {
     LyricsReady {
         source: AutoSearchSource,
         lyrics_and_metadata: Box<LyricsAndMetadata>,
-        output_text: String,
         title: String,
         artist: String,
     },

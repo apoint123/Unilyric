@@ -208,7 +208,6 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
             AutoFetchResult::LyricsReady {
                 source,
                 lyrics_and_metadata,
-                output_text,
                 title,
                 artist,
             } => {
@@ -232,7 +231,10 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                     return;
                 }
 
-                info!("[AutoFetch] 歌词已就绪，来源: {:?}，正在更新UI。", source);
+                info!(
+                    "[AutoFetch] 歌词已就绪，来源: {:?}，正在更新UI状态。",
+                    source
+                );
 
                 let result_cache_opt = match source {
                     AutoSearchSource::QqMusic => Some(&app.fetcher.last_qq_result),
@@ -258,42 +260,11 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 }
 
                 if !app.fetcher.current_ui_populated {
-                    app.clear_lyrics_state_for_new_song_internal();
-
-                    app.lyrics.source_format = source_format;
-                    app.lyrics.input_text = lyrics_and_metadata.lyrics.raw.content.clone();
-                    app.lyrics.output_text = output_text;
-                    app.lyrics.parsed_lyric_data = Some(lyrics_and_metadata.lyrics.parsed.clone());
-                    app.lyrics.metadata_source_is_download = true;
-                    app.fetcher.last_source_format = Some(source_format);
-                    app.fetcher.current_ui_populated = true;
-                    app.lyrics.display_translation_lrc_output =
-                        app.generate_lrc_from_aux_track(&lyrics_and_metadata.lyrics.parsed, true);
-                    app.lyrics.display_romanization_lrc_output =
-                        app.generate_lrc_from_aux_track(&lyrics_and_metadata.lyrics.parsed, false);
-
-                    app.lyrics
-                        .metadata_manager
-                        .load_from_parsed_data(&lyrics_and_metadata.lyrics.parsed);
-                }
-
-                if app.amll_connector.config.lock().unwrap().enabled {
-                    if let Some(tx) = &app.amll_connector.command_tx {
-                        info!("[AMLL] 自动获取完成，正在发送 TTML 歌词到 Player。");
-                        let data_to_send = lyrics_and_metadata.lyrics.parsed.clone();
-                        if tx
-                            .try_send(crate::amll_connector::ConnectorCommand::SendLyric(
-                                data_to_send,
-                            ))
-                            .is_err()
-                        {
-                            tracing::error!(
-                                "[AMLL] (自动获取完成时) 发送 TTML 歌词失败 (通道已满或关闭)。"
-                            );
-                        }
-                    } else {
-                        tracing::warn!("[AMLL] AMLL Connector 已启用但 command_tx 不可用。");
-                    }
+                    app.send_action(crate::app_actions::UserAction::Lyrics(Box::new(
+                        crate::app_actions::LyricsAction::ApplyFetchedLyrics(
+                            lyrics_and_metadata.clone(),
+                        ),
+                    )));
                 }
 
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
@@ -394,6 +365,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 info!("[UniLyricApp] 自动获取歌词：所有在线源均未找到。");
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
+
             AutoFetchResult::FetchError(err) => {
                 let is_cancelled = if let AppError::LyricsHelper(inner_err) = &err {
                     matches!(**inner_err, lyrics_helper_rs::LyricsHelperError::Cancelled)
@@ -406,6 +378,7 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
                 }
                 app.send_action(UserAction::UI(UIAction::StopOtherSearches));
             }
+
             AutoFetchResult::RequestCache => {
                 app.send_action(UserAction::Player(PlayerAction::SaveToLocalCache));
             }

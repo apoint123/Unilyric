@@ -336,7 +336,7 @@ fn build_words_for_track(
 }
 
 fn handle_main_lyric_line(
-    new_lines: &mut Vec<LyricLine>,
+    state: &mut ParserState,
     has_karaoke_tags: bool,
     caps: &regex::Captures,
     actor_info: ParsedActorInfo,
@@ -346,17 +346,13 @@ fn handle_main_lyric_line(
     let end_ms = parse_ass_time(&caps["End"], subtitle_line_num)?;
     let text_content = &caps["Text"];
 
-    let mut new_line = LyricLine::new(start_ms, end_ms);
-    new_line.agent = actor_info.agent.filter(|_| !actor_info.is_background);
-    new_line.song_part = actor_info.song_part.filter(|_| !actor_info.is_background);
-
     let content_type = if actor_info.is_background {
         ContentType::Background
     } else {
         ContentType::Main
     };
 
-    if has_karaoke_tags {
+    let (annotated_track, calculated_end_ms) = if has_karaoke_tags {
         let (syllables, calculated_end_ms) =
             parse_karaoke_text(text_content, start_ms, subtitle_line_num)?;
         let words = build_words_for_track(syllables, true, text_content, start_ms);
@@ -368,13 +364,48 @@ fn handle_main_lyric_line(
             },
             ..Default::default()
         };
-        new_line.add_track(annotated_track);
-        new_line.end_ms = new_line.end_ms.max(calculated_end_ms);
+        (annotated_track, end_ms.max(calculated_end_ms))
     } else {
-        new_line.add_content_track(content_type, text_content);
+        let words = build_words_for_track(Vec::new(), false, text_content, start_ms);
+        let annotated_track = AnnotatedTrack {
+            content_type,
+            content: LyricTrack {
+                words,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        (annotated_track, end_ms)
+    };
+
+    if actor_info.is_background {
+        let last_main_line = state.lines.iter_mut().rev().find(|line| {
+            line.tracks
+                .iter()
+                .any(|t| t.content_type == ContentType::Main)
+        });
+
+        if let Some(line) = last_main_line {
+            line.add_track(annotated_track);
+            line.end_ms = line.end_ms.max(calculated_end_ms);
+        } else {
+            let mut new_line = LyricLine::new(start_ms, calculated_end_ms);
+            new_line.agent = actor_info.agent.filter(|_| !actor_info.is_background);
+            new_line.song_part = actor_info.song_part.filter(|_| !actor_info.is_background);
+            new_line.add_track(annotated_track);
+            state.lines.push(new_line);
+            state.warnings.push(format!(
+                "第 {subtitle_line_num} 行: 背景人声行未找到可附加的主歌词行"
+            ));
+        }
+    } else {
+        let mut new_line = LyricLine::new(start_ms, calculated_end_ms);
+        new_line.agent = actor_info.agent.filter(|_| !actor_info.is_background);
+        new_line.song_part = actor_info.song_part.filter(|_| !actor_info.is_background);
+        new_line.add_track(annotated_track);
+        state.lines.push(new_line);
     }
 
-    new_lines.push(new_line);
     Ok(())
 }
 
@@ -495,7 +526,7 @@ fn process_dialogue_line(
     let style_lower = style.to_lowercase();
     if style_lower == "orig" || style_lower == "default" {
         handle_main_lyric_line(
-            &mut state.lines,
+            state,
             state.has_karaoke_tags,
             caps,
             actor_info,

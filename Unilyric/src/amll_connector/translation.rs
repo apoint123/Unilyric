@@ -1,6 +1,7 @@
 use crate::amll_connector::protocol_v2::*;
 use lyrics_helper_core::converter::types as helper_types;
 use std::collections::HashMap;
+use tracing::warn;
 
 const CHORUS_AGENT_ID: &str = "v1000";
 const PREFERRED_TRANSLATION_LANG: &str = "zh-CN";
@@ -28,7 +29,27 @@ fn extract_line_components(
     romanizations: &[helper_types::LyricTrack],
     is_instrumental: bool,
 ) -> (Vec<LyricWord>, String, String) {
-    let roman_syllables: Vec<_> = romanizations
+    let mut line_romanization = String::new();
+    let mut syllables_romanizations = romanizations;
+
+    if let Some(first_track) = romanizations.first() {
+        let all_roma_syllables: Vec<_> = first_track
+            .words
+            .iter()
+            .flat_map(|w| &w.syllables)
+            .collect();
+
+        if all_roma_syllables.len() == 1
+            && let Some(syl) = all_roma_syllables.first()
+            && syl.start_ms == 0
+            && syl.end_ms == 0
+        {
+            line_romanization = syl.text.clone();
+            syllables_romanizations = &[];
+        }
+    }
+
+    let roman_syllables: Vec<_> = syllables_romanizations
         .first()
         .map(|track| {
             track
@@ -59,6 +80,11 @@ fn extract_line_components(
 
             if let Some(index) = best_match_index {
                 roman_groups[index].push(roman_syl.text.clone());
+            } else {
+                warn!(
+                    "未匹配的罗马音音节 '{}', {}ms - {}ms",
+                    roman_syl.text, roman_syl.start_ms, roman_syl.end_ms
+                );
             }
         }
     }
@@ -105,7 +131,7 @@ fn extract_line_components(
         translation = String::new();
     }
 
-    let romanization = String::new();
+    let romanization = line_romanization;
 
     (words, translation, romanization)
 }

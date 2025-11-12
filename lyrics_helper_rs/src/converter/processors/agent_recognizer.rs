@@ -79,7 +79,11 @@ pub fn recognize_agents(data: &mut ParsedSourceData) {
             }
         } else {
             // 整行都不匹配演唱者标记的格式
-            line.agent.clone_from(&current_agent_id);
+            if line.agent.is_some() {
+                current_agent_id.clone_from(&line.agent);
+            } else {
+                line.agent.clone_from(&current_agent_id);
+            }
         }
 
         processed_lines.push(line);

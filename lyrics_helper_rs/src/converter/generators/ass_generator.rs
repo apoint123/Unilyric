@@ -3,8 +3,8 @@
 use std::fmt::Write;
 
 use lyrics_helper_core::{
-    AgentStore, AssGenerationOptions, ContentType, ConvertError, LyricLine, LyricTrack,
-    MetadataStore, TrackMetadataKey, Word,
+    AgentStore, AssGenerationOptions, ContentType, ConvertError, LyricLine, LyricSyllable,
+    LyricTrack, MetadataStore, TrackMetadataKey,
 };
 
 /// ASS 生成的主入口函数。
@@ -56,8 +56,12 @@ fn write_ass_header(
         )?;
         writeln!(
             output,
-            "Style: Default,Arial,90,&H00FFFFFF,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,3.5,1,2,10,10,10,1"
+            "Style: Default,Arial,100,&H00FFFFFF,&H003F3F3F,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1"
         )?; // 主歌词
+        writeln!(
+            output,
+            "Style: Orig,Arial,100,&H00FFFFFF,&H003F3F3F,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2,1,2,10,10,10,1"
+        )?; // 主歌词 (旧)
         writeln!(
             output,
             "Style: ts,Arial,55,&H00D3D3D3,&H000000FF,&H00000000,&H99000000,0,0,0,0,100,100,0,0,1,2,1,2,10,10,50,1"
@@ -141,9 +145,28 @@ fn write_events_for_line(
             write!(actor_field, r#" itunes:song-part="{part}""#)?;
         }
 
+        let track_start_ms;
+        let track_end_ms;
+
+        let syllables: Vec<&LyricSyllable> = annotated_track
+            .content
+            .words
+            .iter()
+            .flat_map(|w| &w.syllables)
+            .collect();
+
+        if syllables.is_empty() {
+            track_start_ms = line.start_ms;
+            track_end_ms = line.end_ms;
+        } else {
+            track_start_ms = syllables.first().unwrap().start_ms;
+            track_end_ms = syllables.last().unwrap().end_ms;
+        }
+
         write_dialogue_line(
             output,
-            line,
+            track_start_ms,
+            track_end_ms,
             &annotated_track.content,
             style,
             &actor_field,
@@ -156,9 +179,11 @@ fn write_events_for_line(
                 .metadata
                 .get(&TrackMetadataKey::Language)
                 .map_or(String::new(), |l| format!("x-lang:{l}"));
+
             write_dialogue_line(
                 output,
-                line,
+                track_start_ms,
+                track_end_ms,
                 trans_track,
                 trans_style,
                 &actor,
@@ -172,7 +197,16 @@ fn write_events_for_line(
                 .metadata
                 .get(&TrackMetadataKey::Language)
                 .map_or(String::new(), |l| format!("x-lang:{l}"));
-            write_dialogue_line(output, line, roma_track, roma_style, &actor, is_line_timed)?;
+
+            write_dialogue_line(
+                output,
+                track_start_ms,
+                track_end_ms,
+                roma_track,
+                roma_style,
+                &actor,
+                is_line_timed,
+            )?;
         }
     }
     Ok(())
@@ -180,7 +214,8 @@ fn write_events_for_line(
 
 fn write_dialogue_line(
     output: &mut String,
-    line: &LyricLine,
+    start_ms: u64,
+    end_ms: u64,
     track: &LyricTrack,
     style: &str,
     actor: &str,
@@ -189,15 +224,17 @@ fn write_dialogue_line(
     let text_field = if is_line_timed {
         track.text()
     } else {
-        build_karaoke_text(&track.words)?
+        let syllables: Vec<&LyricSyllable> =
+            track.words.iter().flat_map(|w| &w.syllables).collect();
+        build_karaoke_text(&syllables)?
     };
 
     if !text_field.trim().is_empty() {
         writeln!(
             output,
             "Dialogue: 0,{},{},{},{},0,0,0,,{}",
-            format_ass_time(line.start_ms),
-            format_ass_time(line.end_ms),
+            format_ass_time(start_ms),
+            format_ass_time(end_ms),
             style,
             actor.trim(),
             text_field
@@ -207,8 +244,7 @@ fn write_dialogue_line(
 }
 
 /// 辅助函数，构建带 `\k` 标签的文本
-fn build_karaoke_text(words: &[Word]) -> Result<String, ConvertError> {
-    let syllables: Vec<_> = words.iter().flat_map(|w| &w.syllables).collect();
+fn build_karaoke_text(syllables: &[&LyricSyllable]) -> Result<String, ConvertError> {
     if syllables.is_empty() {
         return Ok(String::new());
     }
@@ -216,7 +252,7 @@ fn build_karaoke_text(words: &[Word]) -> Result<String, ConvertError> {
     let mut text_builder = String::new();
     let mut previous_syllable_end_ms = syllables.first().map_or(0, |s| s.start_ms);
 
-    for syl in syllables {
+    for &syl in syllables {
         // 计算音节间的间隙
         if syl.start_ms > previous_syllable_end_ms {
             let gap_centiseconds = round_duration_to_cs(syl.start_ms - previous_syllable_end_ms);

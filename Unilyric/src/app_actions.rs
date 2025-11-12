@@ -51,7 +51,6 @@ pub enum LyricsAction {
     LrcInputChanged(String, LrcContentType),
     MainInputChanged(String),
     ClearAllData,
-    LoadFetchedResult(FullLyricsResult),
     ApplyFetchedLyrics(Box<LyricsAndMetadata>),
     LoadFileContent(String, std::path::PathBuf),
     ApplyProcessor(ProcessorType),

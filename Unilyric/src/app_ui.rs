@@ -1853,8 +1853,13 @@ impl UniLyricApp {
         }
 
         if let Some((_source, result)) = action_load_lyrics {
+            let lyrics_and_metadata =
+                Box::new(lyrics_helper_core::model::track::LyricsAndMetadata {
+                    lyrics: result,
+                    source_track: Default::default(),
+                });
             self.send_action(UserAction::Lyrics(Box::new(
-                LyricsAction::LoadFetchedResult(result),
+                LyricsAction::ApplyFetchedLyrics(lyrics_and_metadata),
             )));
         }
         if let Some(source) = action_refetch {
