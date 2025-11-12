@@ -39,7 +39,7 @@ use crate::{
 };
 
 mod crypto;
-pub mod models;
+mod models;
 
 const ID_XOR_KEY_1: &[u8] = b"3go8&$8*3*3h0k(2)2";
 
@@ -60,7 +60,10 @@ const ALBUM_GET_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/album/");
 const ARTIST_SONGS_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/artist/songs");
 const PLAYLIST_DETAIL_V6_URL: &str = concatcp!(API_BASE_URL, "/weapi/v6/playlist/detail");
 const SONG_DETAIL_V3_URL: &str = concatcp!(API_BASE_URL, "/weapi/v3/song/detail");
-const SONG_ENHANCE_PLAYER_URL_URL: &str = concatcp!(API_BASE_URL, "/weapi/song/enhance/player/url");
+
+const SONG_URL_V1_PATH: &str = "/api/song/enhance/player/url/v1";
+const SONG_URL_V1_URL: &str =
+    concatcp!(API_INTERFACE3_BASE_URL, "/eapi/song/enhance/player/url/v1");
 
 // TODO: 允许选择设备类型
 #[allow(dead_code)]
@@ -289,7 +292,7 @@ impl NeteaseClient {
         music_u: &str,
     ) -> std::result::Result<LoginResult, LoginError> {
         let mut temp_store = cookie_store::CookieStore::default();
-        let cookie_str = format!("MUSIC_U={music_u}");
+        let cookie_str = format!("MUSIC_U={music_u}; Domain=.music.163.com; Path=/");
         let url = API_BASE_URL
             .parse()
             .map_err(|e| LoginError::Internal(format!("无法解析URL: {e}")))?;
@@ -684,10 +687,27 @@ impl Provider for NeteaseClient {
     }
 
     async fn get_song_link(&self, song_id: &str) -> Result<String> {
-        let payload = json!({ "ids": format!("[{}]", song_id), "br": 999_000, "csrf_token": "" });
+        // "standard" 标准音质
+        // "exhigh"   极高音质
+        // "lossless" 无损音质
+        // "hires"    Hi-Res音质
+        // "sky"      沉浸环绕声
+        // "jyeffect" 高清环绕声
+        // "jymaster" 超清母带
 
-        let resp: models::SongUrlResult = self
-            .post_weapi(SONG_ENHANCE_PLAYER_URL_URL, &payload)
+        let quality = "lossless";
+        let header = self.build_eapi_header();
+        let song_id_num: u64 = song_id.parse().unwrap_or(0);
+
+        let payload = json!({
+            "ids": [song_id_num],
+            "level": quality,
+            "encodeType": "flac",
+            "header": header
+        });
+
+        let resp: models::SongUrlResultV1 = self
+            .post_eapi(SONG_URL_V1_PATH, SONG_URL_V1_URL, &payload)
             .await?;
 
         let song_url_data = resp
