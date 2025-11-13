@@ -1,20 +1,11 @@
 [workspace]
-members = [
-    "lyrics_helper_core",
-    "lyrics_helper_rs",
-    "ttml_processor",
-    "lyrics_helper_lite",
-    "Unilyric",
-]
+members = ["lyrics_helper_core", "lyrics_helper_rs", "ttml_processor"]
 
 resolver = "3"
 
 [patch.crates-io]
 lyrics_helper_core = { path = "lyrics_helper_core" }
 ttml_processor = { path = "ttml_processor" }
-
-[workspace.dependencies]
-getrandom = { version = "0.3", features = ["wasmjs"] }
 
 [profile.release]
 opt-level = 3
