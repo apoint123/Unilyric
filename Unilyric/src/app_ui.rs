@@ -764,23 +764,23 @@ impl UniLyricApp {
                 );
                 grid_ui.end_row();
 
-                grid_ui
-                    .label("校准时间轴")
-                    .on_hover_text("切歌时立刻跳转到0ms，可能对 Spotify 有奇效");
-                grid_ui.checkbox(
-                    &mut self.ui.temp_edit_settings.calibrate_timeline_on_song_change,
-                    "",
-                );
-                grid_ui.end_row();
+                // grid_ui
+                //     .label("校准时间轴")
+                //     .on_hover_text("切歌时立刻跳转到0ms，可能对 Spotify 有奇效");
+                // grid_ui.checkbox(
+                //     &mut self.ui.temp_edit_settings.calibrate_timeline_on_song_change,
+                //     "",
+                // );
+                // grid_ui.end_row();
 
-                grid_ui
-                    .label("在新曲目开始时快速暂停/播放")
-                    .on_hover_text("更强力地校准时间轴");
-                grid_ui.checkbox(
-                    &mut self.ui.temp_edit_settings.flicker_play_pause_on_song_change,
-                    "",
-                );
-                grid_ui.end_row();
+                // grid_ui
+                //     .label("在新曲目开始时快速暂停/播放")
+                //     .on_hover_text("更强力地校准时间轴");
+                // grid_ui.checkbox(
+                //     &mut self.ui.temp_edit_settings.flicker_play_pause_on_song_change,
+                //     "",
+                // );
+                // grid_ui.end_row();
             });
         ui.add_space(10.0);
         ui.strong("AMLL DB 镜像");

@@ -72,32 +72,32 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
                         }
 
                         {
-                            let settings = app.app_settings.lock().unwrap();
-                            if settings.calibrate_timeline_on_song_change
-                                && let Some(tx) = &app.amll_connector.command_tx
-                                && tx
-                                    .try_send(crate::amll_connector::ConnectorCommand::SetProgress(
-                                        0,
-                                    ))
-                                    .is_err()
-                            {
-                                warn!("[TimelineCalibrate] 发送时间轴校准命令失败。");
-                            }
+                            // let settings = app.app_settings.lock().unwrap();
+                            // if settings.calibrate_timeline_on_song_change
+                            //     && let Some(tx) = &app.amll_connector.command_tx
+                            //     && tx
+                            //         .try_send(crate::amll_connector::ConnectorCommand::SetProgress(
+                            //             0,
+                            //         ))
+                            //         .is_err()
+                            // {
+                            //     warn!("[TimelineCalibrate] 发送时间轴校准命令失败。");
+                            // }
 
-                            if app.player.is_first_song_processed {
-                                if settings.flicker_play_pause_on_song_change
-                                    && let Some(tx) = &app.amll_connector.command_tx
-                                    && tx
-                                            .try_send(
-                                                crate::amll_connector::ConnectorCommand::FlickerPlayPause,
-                                            )
-                                            .is_err()
-                                        {
-                                            warn!("[TimelineCalibrate] 发送暂停/播放命令失败。");
-                                        }
-                            } else {
-                                app.player.is_first_song_processed = true;
-                            }
+                            // if app.player.is_first_song_processed {
+                            //     if settings.flicker_play_pause_on_song_change
+                            //         && let Some(tx) = &app.amll_connector.command_tx
+                            //         && tx
+                            //                 .try_send(
+                            //                     crate::amll_connector::ConnectorCommand::FlickerPlayPause,
+                            //                 )
+                            //                 .is_err()
+                            //             {
+                            //                 warn!("[TimelineCalibrate] 发送暂停/播放命令失败。");
+                            //             }
+                            // } else {
+                            //     app.player.is_first_song_processed = true;
+                            // }
                         }
                         app.player.current_now_playing = *new_info.clone();
                         crate::app_fetch_core::clear_last_fetch_results(app);
