@@ -20,7 +20,8 @@ struct DataItem {
 
 #[derive(Debug, Deserialize)]
 struct Attributes {
-    ttml: String,
+    #[serde(alias = "ttmlLocalizations")] // 加入了翻译和音译之后的字段名
+    ttml: String, // 旧版的字段名
 }
 
 /// 解析 Apple Music JSON 格式的字符串内容。

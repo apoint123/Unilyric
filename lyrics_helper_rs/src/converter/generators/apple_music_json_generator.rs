@@ -23,22 +23,22 @@ struct DataItem {
     #[serde(rename = "type")]
     type_field: String,
     attributes: Attributes,
-    play_params: PlayParams,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Attributes {
-    ttml: String,
+    play_params: PlayParams,
+    ttml_localizations: String,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PlayParams {
-    id: String,
-    kind: String,
     catalog_id: String,
     display_type: i32,
+    id: String,
+    kind: String,
 }
 
 /// Apple Music JSON 生成的主入口函数。
@@ -73,12 +73,14 @@ pub fn generate_apple_music_json(
         data: vec![DataItem {
             id: apple_music_id.clone(),
             type_field: "syllable-lyrics".to_string(),
-            attributes: Attributes { ttml: ttml_content },
-            play_params: PlayParams {
-                id: format!("AP_{apple_music_id}"),
-                kind: "lyric".to_string(),
-                catalog_id: apple_music_id,
-                display_type,
+            attributes: Attributes {
+                play_params: PlayParams {
+                    id: format!("AP_{apple_music_id}"),
+                    kind: "lyric".to_string(),
+                    catalog_id: apple_music_id,
+                    display_type,
+                },
+                ttml_localizations: ttml_content,
             },
         }],
     };
