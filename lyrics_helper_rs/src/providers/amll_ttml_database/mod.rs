@@ -142,8 +142,7 @@ impl Provider for AmllTtmlDatabase {
                 (Some(sha.clone()) != local_head, Some(sha))
             }
             Err(LyricsHelperError::RateLimited(msg)) => {
-                tracing::warn!("[AMLL] {msg}");
-                tracing::warn!("[AMLL] 无法检查索引更新，将使用本地缓存（如果存在）。");
+                tracing::info!("[AMLL] GitHub API 速率限制，无法获取索引文件: {msg}");
                 (false, None)
             }
             Err(e) => return Err(e),
