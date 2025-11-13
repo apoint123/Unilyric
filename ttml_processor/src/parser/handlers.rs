@@ -8,7 +8,8 @@ use super::{
     body,
     constants::{
         ATTR_AGENT, ATTR_AGENT_ALIAS, ATTR_BEGIN, ATTR_END, ATTR_ITUNES_KEY, ATTR_ITUNES_SONG_PART,
-        ATTR_ITUNES_TIMING, ATTR_XML_LANG, TAG_BODY, TAG_DIV, TAG_METADATA, TAG_P, TAG_TT,
+        ATTR_ITUNES_SONG_PART_NEW, ATTR_ITUNES_TIMING, ATTR_XML_LANG, TAG_BODY, TAG_DIV,
+        TAG_METADATA, TAG_P, TAG_TT,
     },
     state::{BodyParseState, CurrentPElementData, MetadataParseState, TtmlParserState},
     utils::{get_string_attribute, get_time_attribute},
@@ -46,17 +47,11 @@ pub(super) fn handle_global_event(
             TAG_BODY => state.body_state.in_body = true,
             TAG_DIV if state.body_state.in_body => {
                 state.body_state.in_div = true;
-                // 获取 song-part
-                state.body_state.current_div_song_part = e
-                    .try_get_attribute(ATTR_ITUNES_SONG_PART)
-                    .map_err(ConvertError::new_parse)?
-                    .map(|attr| -> Result<String, ConvertError> {
-                        Ok(attr
-                            .decode_and_unescape_value(reader.decoder())
-                            .map_err(ConvertError::new_parse)?
-                            .into_owned())
-                    })
-                    .transpose()?;
+                state.body_state.current_div_song_part = get_string_attribute(
+                    e,
+                    reader,
+                    &[ATTR_ITUNES_SONG_PART_NEW, ATTR_ITUNES_SONG_PART],
+                )?;
             }
             TAG_P if state.body_state.in_body => {
                 state.body_state.in_p = true;
@@ -68,8 +63,12 @@ pub(super) fn handle_global_event(
                     get_string_attribute(e, reader, &[ATTR_AGENT, ATTR_AGENT_ALIAS])?;
                 let final_agent_id = state.resolve_agent_id(agent_attr_val);
 
-                let song_part = get_string_attribute(e, reader, &[ATTR_ITUNES_SONG_PART])?
-                    .or_else(|| state.body_state.current_div_song_part.clone());
+                let song_part = get_string_attribute(
+                    e,
+                    reader,
+                    &[ATTR_ITUNES_SONG_PART_NEW, ATTR_ITUNES_SONG_PART],
+                )?
+                .or_else(|| state.body_state.current_div_song_part.clone());
                 let itunes_key = get_string_attribute(e, reader, &[ATTR_ITUNES_KEY])?;
 
                 state.body_state.current_p_element_data = Some(CurrentPElementData {

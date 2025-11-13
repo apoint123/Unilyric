@@ -27,6 +27,7 @@ pub(super) const TAG_TEXT: &[u8] = b"text";
 pub(super) const ATTR_ITUNES_TIMING: &[u8] = b"itunes:timing";
 pub(super) const ATTR_XML_LANG: &[u8] = b"xml:lang";
 pub(super) const ATTR_ITUNES_SONG_PART: &[u8] = b"itunes:song-part";
+pub(super) const ATTR_ITUNES_SONG_PART_NEW: &[u8] = b"itunes:songPart";
 pub(super) const ATTR_BEGIN: &[u8] = b"begin";
 pub(super) const ATTR_END: &[u8] = b"end";
 pub(super) const ATTR_AGENT: &[u8] = b"ttm:agent";
