@@ -247,7 +247,9 @@ fn parse_actor(
         }
     }
 
-    if style == "orig" || style == "default" {
+    let style_lower = style.to_lowercase();
+
+    if style_lower == "orig" || style_lower == "default" {
         if role_tags_found.len() > 1 {
             let conflicting_tags: Vec<String> = role_tags_found
                 .iter()
@@ -262,7 +264,9 @@ fn parse_actor(
         if let Some((_, agent_id, agent_type)) = role_tags_found.first() {
             info.agent = Some((*agent_id).to_string());
             info.agent_type = agent_type.clone();
-        } else if !info.is_background {
+        } else if (style_lower == "ts" || style_lower == "trans" || style_lower == "roma")
+            && info.lang_code.is_none()
+        {
             info.agent = Some("v1".to_string());
             info.agent_type = AgentType::Person;
         }
