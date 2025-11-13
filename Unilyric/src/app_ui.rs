@@ -1756,11 +1756,11 @@ impl UniLyricApp {
 
         ui.separator();
 
-        ui.strong("本地歌词:");
+        ui.strong("本地歌词缓存:");
         let can_save_to_local =
             !self.lyrics.output_text.is_empty() && self.player.current_now_playing.title.is_some();
 
-        let save_button_widget = Button::new("💾 保存输出框歌词到本地");
+        let save_button_widget = Button::new("💾 缓存输出框歌词到本地");
         let mut response = ui.add_enabled(can_save_to_local, save_button_widget);
         if !can_save_to_local {
             response = response.on_disabled_hover_text("需先有歌词输出和媒体信息才能缓存");
