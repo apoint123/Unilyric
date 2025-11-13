@@ -70,6 +70,7 @@ struct ActorState {
     retry_attempts: u32,
     last_track_info: Option<smtc_suite::NowPlayingInfo>,
     last_audio_sent_time: Option<Instant>,
+    last_lyric_sent: Option<LyricContent>,
 }
 
 fn handle_websocket_send_error<T>(result: Result<(), TrySendError<T>>, message_type: &str) {
@@ -302,7 +303,20 @@ fn handle_smtc_update(
                 send_play_state_to_ws(tx, &new_info);
                 send_progress_to_ws(tx, &new_info);
             }
-            state.last_track_info = Some(*new_info.clone());
+            let final_info = if let Some(cached_info) = state.last_track_info.take() {
+                if is_new_song {
+                    *new_info.clone()
+                } else {
+                    let mut merged_info = *new_info.clone();
+                    if merged_info.cover_data.is_none() && cached_info.cover_data.is_some() {
+                        merged_info.cover_data = cached_info.cover_data;
+                    }
+                    merged_info
+                }
+            } else {
+                *new_info.clone()
+            };
+            state.last_track_info = Some(final_info);
             repaint_needed = true;
             ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(new_info))
         }
@@ -401,7 +415,16 @@ async fn handle_app_command(
             } = std::mem::replace(&mut state.connection, ConnectionState::Disconnected)
             {
                 let _ = shutdown_tx.send(());
-                handle.await.ok();
+                state.connection = ConnectionState::ShuttingDown {
+                    handle,
+                    next_action: PostShutdownAction::DoNothing,
+                };
+            } else if matches!(state.connection, ConnectionState::WaitingToRetry(_)) {
+                state.connection = ConnectionState::Disconnected;
+                let _ = update_tx.send(UiUpdate {
+                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
+                    repaint_needed: true,
+                });
             }
         }
         ConnectorCommand::SetProgress(progress) => {
@@ -429,15 +452,18 @@ async fn handle_app_command(
             .await;
         }
         ConnectorCommand::SendLyric(parsed_data) => {
+            let protocol_lyrics: Vec<LyricLine> = convert_to_protocol_lyrics(&parsed_data);
+            let lyric_content = LyricContent::Structured {
+                lines: protocol_lyrics,
+            };
+
             if let ConnectionState::Running { tx, .. } = &state.connection {
-                let protocol_lyrics: Vec<LyricLine> = convert_to_protocol_lyrics(&parsed_data);
-                let lyric_content = LyricContent::Structured {
-                    lines: protocol_lyrics,
-                };
-                let payload = Payload::State(StateUpdate::SetLyric(lyric_content));
+                let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
                 let msg = OutgoingMessage::Json(MessageV2 { payload });
                 handle_websocket_send_error(tx.try_send(msg), "SetLyric");
             }
+
+            state.last_lyric_sent = Some(lyric_content);
         }
         ConnectorCommand::SendCover(cover_data) => {
             if let ConnectionState::Running { tx, .. } = &state.connection {
@@ -478,6 +504,7 @@ pub async fn amll_connector_actor(
         retry_attempts: 0,
         last_track_info: None,
         last_audio_sent_time: None,
+        last_lyric_sent: None,
     };
 
     if state.config.enabled {
@@ -595,6 +622,11 @@ pub async fn amll_connector_actor(
                         }
                         send_play_state_to_ws(tx, track_info);
                         send_progress_to_ws(tx, track_info);
+                        if let Some(ref lyric_content) = state.last_lyric_sent {
+                            let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
+                            let msg = OutgoingMessage::Json(MessageV2 { payload });
+                            handle_websocket_send_error(tx.try_send(msg), "SetLyric (重连)");
+                        }
                     }
                 } else if matches!(status, WebsocketStatus::Disconnected | WebsocketStatus::Error(_)) {
                     state.session_ready = false;
