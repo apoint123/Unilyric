@@ -1,49 +1,29 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import "./App.css";
+import { Route, Routes } from "react-router-dom";
+import { Sidebar } from "./components/Sidebar";
+import { ConverterPage } from "./pages/Converter";
+import { HomePage } from "./pages/Home";
+import { SettingsPage } from "./pages/Settings";
+import { SongDetailPage } from "./pages/SongDetailPage";
 
 function App() {
-	const [greetMsg, setGreetMsg] = useState("");
-	const [name, setName] = useState("");
-
-	async function greet() {
-		// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-		setGreetMsg(await invoke("greet", { name }));
-	}
-
 	return (
-		<main className="container">
-			<h1>Welcome to Tauri + React</h1>
+		<main className="dark text-foreground bg-background flex h-screen">
+			<aside className="w-60 shrink-0 bg-content1 p-4">
+				<Sidebar />
+			</aside>
 
-			<div className="row">
-				<a href="https://vite.dev" target="_blank" rel="noopener">
-					<img src="/vite.svg" className="logo vite" alt="Vite logo" />
-				</a>
-				<a href="https://tauri.app" target="_blank" rel="noopener">
-					<img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-				</a>
-				<a href="https://react.dev" target="_blank" rel="noopener">
-					<img src={reactLogo} className="logo react" alt="React logo" />
-				</a>
-			</div>
-			<p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-			<form
-				className="row"
-				onSubmit={(e) => {
-					e.preventDefault();
-					greet();
-				}}
-			>
-				<input
-					id="greet-input"
-					onChange={(e) => setName(e.currentTarget.value)}
-					placeholder="Enter a name..."
-				/>
-				<button type="submit">Greet</button>
-			</form>
-			<p>{greetMsg}</p>
+			<main className="flex-1 overflow-y-auto bg-content2 p-9">
+				<Routes>
+					<Route path="/" element={<HomePage />} />
+					<Route path="/converter" element={<ConverterPage />} />
+					<Route path="/settings" element={<SettingsPage />} />
+					<Route path="/downloads" element={<div>下载页面</div>} />
+					<Route
+						path="/song/:providerName/:providerId"
+						element={<SongDetailPage />}
+					/>
+				</Routes>
+			</main>
 		</main>
 	);
 }

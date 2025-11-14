@@ -12,8 +12,15 @@
 	},
 	"css": {
 		"parser": {
-			"cssModules": true
+			"cssModules": true,
+			"tailwindDirectives": true
 		}
+	},
+	"html": {
+		"formatter": {
+			"enabled": true
+		},
+		"experimentalFullSupportEnabled": true
 	},
 	"linter": {
 		"enabled": true,
