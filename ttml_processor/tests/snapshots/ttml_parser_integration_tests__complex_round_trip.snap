@@ -61,7 +61,6 @@ expression: generated_ttml_output
         <span begin="11.200" end="11.800">テスト</span>
         <span ttm:role="x-translation" xml:lang="en-US">This is the first line (Vocalist A)</span>
         <span ttm:role="x-translation" xml:lang="zh-Hans-CN">这是第一行歌词 (演唱者A)</span>
-        <span ttm:role="x-roman" xml:lang="ja-Latn">Kore wa tesuto</span>
       </p>
       <p begin="15.000" end="17.000" itunes:key="L2" ttm:agent="v2">
         <span begin="15.000" end="15.800">二つ目 </span>
@@ -69,7 +68,6 @@ expression: generated_ttml_output
         <span begin="16.500" end="17.000">ライン</span>
         <span ttm:role="x-translation" xml:lang="en-US">This is the second line (Vocalist B)</span>
         <span ttm:role="x-translation" xml:lang="zh-Hans-CN">这是第二行歌词 (演唱者B)</span>
-        <span ttm:role="x-roman" xml:lang="ja-Latn">Futatsume no rain</span>
       </p>
     </div>
     <div begin="20.000" end="25.000" itunes:song-part="Chorus">
@@ -78,7 +76,6 @@ expression: generated_ttml_output
         <span begin="21.500" end="22.000">です</span>
         <span ttm:role="x-translation" xml:lang="en-US">This is the chorus line</span>
         <span ttm:role="x-translation" xml:lang="zh-Hans-CN">这是合唱部分</span>
-        <span ttm:role="x-roman" xml:lang="ja-Latn">Kōrasu desu</span>
         <span ttm:role="x-bg" begin="22.500" end="23.800">
           <span begin="22.500" end="23.800">(背景)</span>
           <span ttm:role="x-translation" xml:lang="en">Background</span>
