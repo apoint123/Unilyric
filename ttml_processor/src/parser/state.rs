@@ -1,13 +1,7 @@
-//! # TTML 解析器的状态机和数据结构
-//!
-//! 该模块定义了在解析 TTML 文件时用于跟踪状态和累积数据的所有结构体和枚举。
+//! # 解析器的状态机和数据结构
 
-use lyrics_helper_core::{Agent, AgentStore, AgentType, AnnotatedTrack, LyricSyllable, LyricTrack};
+use lyrics_helper_core::{Agent, AgentStore, AgentType, AnnotatedTrack, ContentType, LyricTrack};
 use std::collections::HashMap;
-
-// =================================================================================
-// 1. 状态机和元数据结构体
-// =================================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum FormatDetection {
@@ -137,6 +131,18 @@ pub(super) struct DetailedAuxiliaryTracks {
     pub(super) background_tracks: AuxiliaryTrackSet,
 }
 
+/// 在 `<p>` 或 `<text>` 标签内解析到的内容
+#[derive(Debug, Clone)]
+pub(super) enum PendingItem {
+    Syllable {
+        text: String,
+        start_ms: u64,
+        end_ms: u64,
+        content_type: ContentType,
+    },
+    FreeText(String),
+}
+
 /// 存储 `<metadata>` 区域解析状态的结构体。
 #[derive(Debug, Default)]
 pub(super) struct MetadataParseState {
@@ -144,8 +150,7 @@ pub(super) struct MetadataParseState {
     pub(super) timed_track_map: HashMap<String, DetailedAuxiliaryTracks>,
 
     pub(super) context: MetadataContext,
-    pub(super) current_main_syllables: Vec<LyricSyllable>,
-    pub(super) current_bg_syllables: Vec<LyricSyllable>,
+    pub(super) pending_items: Vec<PendingItem>,
 
     pub(super) current_main_plain_text: String,
     pub(super) current_bg_plain_text: String,
@@ -166,8 +171,6 @@ pub(super) struct BodyParseState {
     pub(super) current_p_element_data: Option<CurrentPElementData>,
     /// `<span>` 标签的上下文堆栈，用于处理嵌套的 span。
     pub(super) span_stack: Vec<SpanContext>,
-    /// 记录上一个处理的音节信息，主要用于判断音节间的空格。
-    pub(super) last_syllable_info: LastSyllableInfo,
 }
 
 /// 存储当前处理的 `<p>` 元素解析过程中的临时数据。
@@ -176,12 +179,10 @@ pub(super) struct CurrentPElementData {
     pub(super) start_ms: u64,
     pub(super) end_ms: u64,
     pub(super) agent: Option<String>,
-    pub(super) song_part: Option<String>, // 继承自 div 或 p 自身
+    pub(super) song_part: Option<String>,
     pub(super) itunes_key: Option<String>,
-    /// 用于在逐行模式下累积所有文本内容。
-    pub(super) line_text_accumulator: String,
-    /// 累积所有带注解的轨道数据
     pub(super) tracks_accumulator: Vec<AnnotatedTrack>,
+    pub(super) pending_items: Vec<PendingItem>,
 }
 
 /// 代表当前 `<span>` 的上下文信息，用于处理嵌套和内容分类。
@@ -205,18 +206,6 @@ pub(super) enum SpanRole {
     Romanization,
     /// 背景人声容器
     Background,
-}
-
-/// 记录最后一个结束的音节信息，用于正确处理音节间的空格。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum LastSyllableInfo {
-    #[default]
-    /// 初始状态或上一个不是音节
-    None,
-    EndedSyllable {
-        /// 标记这个音节是否属于背景人声
-        was_background: bool,
-    },
 }
 
 /// 用于存储从 `<head>` 中解析的逐行翻译。

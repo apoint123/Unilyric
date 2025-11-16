@@ -4,11 +4,15 @@
 
 use std::collections::HashMap;
 
+use crate::parser::state::PendingItem;
+
 use super::{
     state::{AuxTrackType, MetadataContext, SpanContext, SpanRole, TtmlParserState},
     utils::{get_attribute_with_aliases, get_string_attribute, get_time_attribute},
 };
-use lyrics_helper_core::{Agent, AgentType, ConvertError, LyricTrack, TrackMetadataKey, Word};
+use lyrics_helper_core::{
+    Agent, AgentType, ContentType, ConvertError, LyricSyllable, LyricTrack, TrackMetadataKey, Word,
+};
 use quick_xml::{
     Reader,
     events::{BytesStart, BytesText, Event},
@@ -32,6 +36,48 @@ pub(super) fn handle_metadata_event(
     match event {
         Event::Start(e) => handle_metadata_start_tag(e, reader, state, raw_metadata, warnings),
         Event::Text(e) => handle_metadata_text(e, state, raw_metadata),
+        Event::GeneralRef(e) => {
+            let (decoded_char, warning) = match e.resolve_char_ref() {
+                Ok(Some(ch)) => (ch, None),
+                Ok(None) => match &**e {
+                    b"lt" => ('<', None),
+                    b"gt" => ('>', None),
+                    b"amp" => ('&', None),
+                    b"apos" => ('\'', None),
+                    b"quot" => ('"', None),
+                    _ => {
+                        let warn_msg =
+                            format!("忽略了未知的XML实体 '&{};'", String::from_utf8_lossy(e));
+                        ('\0', Some(warn_msg))
+                    }
+                },
+                Err(err) => {
+                    let warn_msg = format!("无效的XML数字实体: {err}");
+                    ('\0', Some(warn_msg))
+                }
+            };
+
+            if let Some(warn_msg) = warning {
+                warnings.push(warn_msg);
+            }
+
+            if decoded_char != '\0' {
+                let meta_state = &mut state.metadata_state;
+                if !meta_state.span_stack.is_empty() {
+                    meta_state.text_buffer.push(decoded_char);
+                } else if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. }) {
+                    let s = decoded_char.to_string();
+                    meta_state.current_main_plain_text.push(decoded_char);
+                    meta_state.pending_items.push(PendingItem::FreeText(s));
+                } else if matches!(meta_state.context, MetadataContext::InSongwriter) {
+                    raw_metadata
+                        .entry("songwriters".to_string())
+                        .or_default()
+                        .push(decoded_char.to_string());
+                }
+            }
+            Ok(())
+        }
         Event::End(e) => {
             handle_metadata_end_tag(e, state);
             Ok(())
@@ -165,8 +211,7 @@ fn process_text_start_in_metadata(
         };
         meta_state.current_main_plain_text.clear();
         meta_state.current_bg_plain_text.clear();
-        meta_state.current_main_syllables.clear();
-        meta_state.current_bg_syllables.clear();
+        meta_state.pending_items.clear();
         meta_state.span_stack.clear();
         meta_state.text_buffer.clear();
     }
@@ -213,25 +258,20 @@ fn handle_metadata_text(
     raw_metadata: &mut HashMap<String, Vec<String>>,
 ) -> Result<(), ConvertError> {
     let meta_state = &mut state.metadata_state;
+    let text_slice = e.xml_content().map_err(ConvertError::new_parse)?;
+
     if !meta_state.span_stack.is_empty() {
-        // 处理在 span 内部的文本
-        meta_state
-            .text_buffer
-            .push_str(&e.xml_content().map_err(ConvertError::new_parse)?);
+        meta_state.text_buffer.push_str(&text_slice);
     } else if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. }) {
-        // 处理 `<text>` 标签直接子节点中的文本（即主翻译）
+        meta_state.current_main_plain_text.push_str(&text_slice);
         meta_state
-            .current_main_plain_text
-            .push_str(&e.xml_content().map_err(ConvertError::new_parse)?);
+            .pending_items
+            .push(PendingItem::FreeText(text_slice.into_owned()));
     } else if matches!(meta_state.context, MetadataContext::InSongwriter) {
         raw_metadata
             .entry("songwriters".to_string())
             .or_default()
-            .push(
-                e.xml_content()
-                    .map_err(ConvertError::new_parse)?
-                    .into_owned(),
-            );
+            .push(text_slice.into_owned());
     }
     Ok(())
 }
@@ -263,7 +303,6 @@ fn handle_metadata_end_tag(e: &quick_xml::events::BytesEnd, state: &mut TtmlPars
     }
 }
 
-/// 处理 `metadata` 中的 `</span>` 结束标签
 fn process_span_end_in_metadata(state: &mut TtmlParserState) {
     let meta_state = &mut state.metadata_state;
     if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. })
@@ -272,12 +311,6 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
         let raw_text = std::mem::take(&mut meta_state.text_buffer);
 
         if let (Some(start_ms), Some(end_ms)) = (ended_span_ctx.start_ms, ended_span_ctx.end_ms) {
-            if raw_text.is_empty() {
-                return;
-            }
-
-            let trimmed_text = raw_text.trim();
-
             let is_within_background_container = meta_state
                 .span_stack
                 .iter()
@@ -286,27 +319,25 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
             let is_background_syllable =
                 ended_span_ctx.role == SpanRole::Background || is_within_background_container;
 
-            let target_syllables = if is_background_syllable {
-                &mut meta_state.current_bg_syllables
+            let target_content_type = if is_background_syllable {
+                ContentType::Background
             } else {
-                &mut meta_state.current_main_syllables
+                ContentType::Main
             };
 
-            if trimmed_text.is_empty() {
-                if let Some(last_syl) = target_syllables.last_mut() {
-                    last_syl.ends_with_space = true;
-                }
-                return;
+            let trimmed_text = raw_text.trim();
+            if trimmed_text.is_empty() && !raw_text.is_empty() {
+                meta_state
+                    .pending_items
+                    .push(PendingItem::FreeText(raw_text));
+            } else if !trimmed_text.is_empty() {
+                meta_state.pending_items.push(PendingItem::Syllable {
+                    text: raw_text,
+                    start_ms,
+                    end_ms: end_ms.max(start_ms),
+                    content_type: target_content_type,
+                });
             }
-
-            super::body::process_syllable(
-                start_ms,
-                end_ms,
-                &raw_text,
-                is_background_syllable,
-                &mut state.text_processing_buffer,
-                target_syllables,
-            );
         } else if !raw_text.trim().is_empty() {
             let is_within_background_container = meta_state
                 .span_stack
@@ -321,11 +352,14 @@ fn process_span_end_in_metadata(state: &mut TtmlParserState) {
             } else {
                 meta_state.current_main_plain_text.push_str(&raw_text);
             }
+            meta_state
+                .pending_items
+                .push(PendingItem::FreeText(raw_text));
         }
     }
 }
 
-/// 处理 `metadata` 中的 `</text>` 结束标签
+#[allow(clippy::too_many_lines)]
 fn process_text_end_in_metadata(state: &mut TtmlParserState) {
     let meta_state = &mut state.metadata_state;
     if let MetadataContext::InAuxiliaryText {
@@ -338,16 +372,12 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
         let bg_plain_text = meta_state.current_bg_plain_text.trim();
         let has_plain_text = !main_plain_text.is_empty() || !bg_plain_text.is_empty();
 
-        let has_main_syllables = !meta_state.current_main_syllables.is_empty();
-        let has_bg_syllables = !meta_state.current_bg_syllables.is_empty();
+        let has_syllables = meta_state
+            .pending_items
+            .iter()
+            .any(|item| matches!(item, PendingItem::Syllable { .. }));
 
-        // 判断是逐行翻译，还是带时间的辅助轨道
-        if !has_main_syllables
-            && !has_bg_syllables
-            && has_plain_text
-            && matches!(aux_type, AuxTrackType::Translation)
-        {
-            // 是逐行翻译，存入 line_translation_map
+        if !has_syllables && has_plain_text && matches!(aux_type, AuxTrackType::Translation) {
             let line_translation = super::state::LineTranslation {
                 main: if main_plain_text.is_empty() {
                     None
@@ -366,8 +396,55 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                 .entry(text_key.clone())
                 .or_default()
                 .push((line_translation, lang.clone()));
-        } else if has_main_syllables || has_bg_syllables {
-            // 是带时间戳的辅助轨道，存入 timed_track_map。
+        } else if has_syllables {
+            let mut main_syllables: Vec<LyricSyllable> = Vec::new();
+            let mut bg_syllables: Vec<LyricSyllable> = Vec::new();
+
+            let mut iter = meta_state.pending_items.iter().peekable();
+            while let Some(item) = iter.next() {
+                if let PendingItem::Syllable {
+                    text,
+                    start_ms,
+                    end_ms,
+                    content_type,
+                } = item
+                {
+                    let mut external_space = false;
+                    while let Some(PendingItem::FreeText(next_text)) = iter.peek() {
+                        if next_text.chars().all(char::is_whitespace) {
+                            iter.next();
+
+                            let has_space = next_text.chars().any(|c| c == ' ');
+                            let has_newline = next_text.chars().any(|c| c == '\n' || c == '\r');
+
+                            if has_space && !has_newline {
+                                external_space = true;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let target_syllables = match content_type {
+                        ContentType::Main => &mut main_syllables,
+                        ContentType::Background => &mut bg_syllables,
+                    };
+
+                    super::body::process_syllable(
+                        *start_ms,
+                        *end_ms,
+                        text,
+                        *content_type == ContentType::Background,
+                        &mut state.text_processing_buffer,
+                        target_syllables,
+                    );
+
+                    if let Some(syl) = target_syllables.last_mut() {
+                        syl.ends_with_space = syl.ends_with_space || external_space;
+                    }
+                }
+            }
+
             let entry = meta_state
                 .timed_track_map
                 .entry(text_key.clone())
@@ -377,10 +454,10 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                 metadata.insert(TrackMetadataKey::Language, language.clone());
             }
 
-            if has_main_syllables {
+            if !main_syllables.is_empty() {
                 let track = LyricTrack {
                     words: vec![Word {
-                        syllables: std::mem::take(&mut meta_state.current_main_syllables),
+                        syllables: main_syllables,
                         ..Default::default()
                     }],
                     metadata: metadata.clone(),
@@ -391,10 +468,10 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                     AuxTrackType::Romanization => target_set.romanizations.push(track),
                 }
             }
-            if has_bg_syllables {
+            if !bg_syllables.is_empty() {
                 let track = LyricTrack {
                     words: vec![Word {
-                        syllables: std::mem::take(&mut meta_state.current_bg_syllables),
+                        syllables: bg_syllables,
                         ..Default::default()
                     }],
                     metadata: metadata.clone(),
@@ -409,8 +486,8 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
 
         meta_state.current_main_plain_text.clear();
         meta_state.current_bg_plain_text.clear();
+        meta_state.pending_items.clear();
     }
-    // 回到上一级上下文
     if let MetadataContext::InAuxiliaryText { aux_type, lang, .. } = &meta_state.context {
         meta_state.context = MetadataContext::InAuxiliaryEntry {
             aux_type: *aux_type,
