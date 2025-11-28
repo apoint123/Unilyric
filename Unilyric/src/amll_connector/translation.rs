@@ -169,6 +169,8 @@ pub(super) fn convert_to_protocol_lyrics(
         .flat_map(|helper_line| {
             let current_line_is_duet = match helper_line.agent.as_deref() {
                 None | Some(CHORUS_AGENT_ID) => false,
+                // AMLL 的对唱标识
+                Some("v2") => true,
                 Some(agent_id) => {
                     if let Some(is_duet) = agent_duet_map.get(agent_id) {
                         *is_duet
