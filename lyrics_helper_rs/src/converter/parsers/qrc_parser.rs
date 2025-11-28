@@ -19,11 +19,6 @@ static LYRIC_TOKEN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("编译 LYRIC_TOKEN_REGEX 失败")
 });
 
-static KANA_UNIT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?P<count>\d+)(?P<kana>[\p{Hiragana}\p{Katakana}ー]+)")
-        .expect("编译 KANA_UNIT_REGEX 失败")
-});
-
 static HAS_KANJI_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\p{Han}").expect("编译 HAS_KANJI_REGEX 失败"));
 
@@ -35,12 +30,6 @@ struct LyricToken {
     text: String,
     start_ms: u64,
     end_ms: u64,
-}
-
-#[derive(Debug)]
-struct KanaToken {
-    char_count: usize,
-    syllables: Option<Vec<FuriganaSyllable>>,
 }
 
 struct MatchedWord {
@@ -98,8 +87,6 @@ fn parse_furigana_qrc(
     full_lyric_content: &str,
     kana_stream: &str,
 ) -> Result<(Vec<MatchedWord>, Vec<String>), ConvertError> {
-    let kana_tokens = tokenize_kana(kana_stream)?;
-
     let mut lyric_tokens: Vec<(LyricToken, usize)> = Vec::new();
     let main_lyric_stream = KANA_TAG_REGEX.replace_all(full_lyric_content, "");
 
@@ -116,61 +103,120 @@ fn parse_furigana_qrc(
     }
 
     let mut matched_words: Vec<MatchedWord> = Vec::new();
-    let mut warnings: Vec<String> = Vec::new();
-    let mut lyric_idx = 0;
+    let warnings: Vec<String> = Vec::new();
 
-    for kana_token in &kana_tokens {
-        let mut found_match_for_current_kana = false;
+    let mut kana_cursor = 0;
+    let kana_chars: Vec<char> = kana_stream.chars().collect();
+    let kana_len = kana_chars.len();
 
-        while lyric_idx < lyric_tokens.len() {
-            let (current_lyric, line_idx) = &lyric_tokens[lyric_idx];
-            let clean_text = current_lyric.text.trim();
+    for (current_lyric, line_idx) in lyric_tokens {
+        let clean_text = current_lyric.text.trim();
 
-            let is_match = !clean_text.is_empty()
-                && HAS_KANJI_REGEX.is_match(clean_text)
-                && clean_text.chars().count() == kana_token.char_count;
+        if !clean_text.is_empty() && HAS_KANJI_REGEX.is_match(clean_text) {
+            let mut word_syllables = Vec::new();
+            let mut remaining_char_count = clean_text.chars().count();
 
-            if is_match {
-                // 匹配成功
-                process_lyric_token(
-                    current_lyric,
-                    *line_idx,
-                    kana_token.syllables.clone(),
-                    &mut matched_words,
-                );
-                lyric_idx += 1;
-                found_match_for_current_kana = true;
-                break;
+            while remaining_char_count > 0 && kana_cursor < kana_len {
+                let mut count_str = String::new();
+                while kana_cursor < kana_len && kana_chars[kana_cursor].is_ascii_digit() {
+                    count_str.push(kana_chars[kana_cursor]);
+                    kana_cursor += 1;
+                }
+
+                if count_str.is_empty() {
+                    if kana_cursor < kana_len {
+                        kana_cursor += 1;
+                    }
+                    continue;
+                }
+
+                let parsed_count: usize = count_str.parse().unwrap_or(0);
+
+                let kana_start = kana_cursor;
+                let mut paren_depth = 0;
+
+                while kana_cursor < kana_len {
+                    let c = kana_chars[kana_cursor];
+
+                    if c == '(' || c == '（' {
+                        paren_depth += 1;
+                    } else if (c == ')' || c == '）') && paren_depth > 0 {
+                        paren_depth -= 1;
+                    }
+
+                    if c.is_ascii_digit() && paren_depth == 0 {
+                        break;
+                    }
+
+                    kana_cursor += 1;
+                }
+
+                let raw_kana_text: String = kana_chars[kana_start..kana_cursor].iter().collect();
+
+                let (applied_count, syllables_text) = if raw_kana_text.is_empty() {
+                    if parsed_count > remaining_char_count {
+                        let used_digits = remaining_char_count.to_string().len();
+                        let total_digits = count_str.len();
+
+                        if total_digits > used_digits {
+                            kana_cursor -= total_digits - used_digits;
+                        }
+                        (remaining_char_count, None)
+                    } else {
+                        (parsed_count, None)
+                    }
+                } else {
+                    (parsed_count, Some(process_kana_content(&raw_kana_text)))
+                };
+
+                if let Some(syls) = syllables_text {
+                    word_syllables.extend(syls);
+                }
+
+                if applied_count == 0 {
+                    break;
+                }
+
+                if remaining_char_count >= applied_count {
+                    remaining_char_count -= applied_count;
+                } else {
+                    remaining_char_count = 0;
+                }
             }
-            // 不匹配
-            process_lyric_token(current_lyric, *line_idx, None, &mut matched_words);
-            lyric_idx += 1;
+
+            let furigana = if word_syllables.is_empty() {
+                None
+            } else {
+                Some(word_syllables)
+            };
+            process_lyric_token(&current_lyric, line_idx, furigana, &mut matched_words);
+        } else {
+            process_lyric_token(&current_lyric, line_idx, None, &mut matched_words);
         }
-
-        if !found_match_for_current_kana {
-            let orphan_kana_text: String = kana_token
-                .syllables
-                .as_ref()
-                .unwrap_or(&vec![])
-                .iter()
-                .map(|s| s.text.clone())
-                .collect();
-
-            warnings.push(format!(
-                "注音 '{}' (对应 {} 个汉字) 未能在歌词中找到匹配项，已忽略。",
-                orphan_kana_text, kana_token.char_count
-            ));
-        }
-    }
-
-    // 处理所有注音结束后，主歌词流中可能还有剩余的词元
-    while lyric_idx < lyric_tokens.len() {
-        let (current_lyric, line_idx) = &lyric_tokens[lyric_idx];
-        process_lyric_token(current_lyric, *line_idx, None, &mut matched_words);
-        lyric_idx += 1;
     }
 
     Ok((matched_words, warnings))
+}
+
+fn process_kana_content(text: &str) -> Vec<FuriganaSyllable> {
+    let mut syllables = Vec::new();
+    if text.contains('(') {
+        for caps in LYRIC_TOKEN_REGEX.captures_iter(text) {
+            let start_ms = caps["start"].parse().unwrap_or(0);
+            let duration_ms = caps["duration"].parse().unwrap_or(0);
+            syllables.push(FuriganaSyllable {
+                text: caps["text"].to_string(),
+                timing: Some((start_ms, start_ms + duration_ms)),
+            });
+        }
+    } else {
+        let clean = LYRIC_TOKEN_REGEX.replace_all(text.trim(), "${text}");
+        syllables.push(FuriganaSyllable {
+            text: clean.to_string(),
+            timing: None,
+        });
+    }
+    syllables
 }
 
 fn process_lyric_token(
@@ -259,60 +305,6 @@ fn tokenize_lyrics(single_line_content: &str) -> Result<Vec<LyricToken>, Convert
             end_ms: start_ms + duration_ms,
         });
     }
-    Ok(tokens)
-}
-
-/// 将 `[kana:...]` 流字符串解析为 `KanaToken` 向量。
-fn tokenize_kana(kana_stream: &str) -> Result<Vec<KanaToken>, ConvertError> {
-    let mut tokens = Vec::new();
-
-    // 找到所有 "数字+假名" 组合的位置
-    let matches: Vec<_> = KANA_UNIT_REGEX.find_iter(kana_stream).collect();
-
-    for i in 0..matches.len() {
-        let current_match = &matches[i];
-        let caps = KANA_UNIT_REGEX.captures(current_match.as_str()).unwrap();
-
-        let char_count: usize = caps["count"].parse()?;
-
-        // 确定这个注音单元的完整文本范围（包括可能的时间戳）
-        let content_start = current_match.start();
-        let content_end = if i + 1 < matches.len() {
-            matches[i + 1].start() // 到下一个匹配的开始位置
-        } else {
-            kana_stream.len() // 或到字符串末尾
-        };
-
-        let full_unit_text = &kana_stream[content_start..content_end];
-
-        // 分离注音和时间戳
-        let kana_text_with_timing = &full_unit_text[caps["count"].len()..];
-
-        let mut syllables = Vec::new();
-        if kana_text_with_timing.contains('(') {
-            for inner_caps in LYRIC_TOKEN_REGEX.captures_iter(kana_text_with_timing) {
-                let text = inner_caps["text"].to_string();
-                let start_ms: u64 = inner_caps["start"].parse()?;
-                let duration_ms: u64 = inner_caps["duration"].parse()?;
-                syllables.push(FuriganaSyllable {
-                    text,
-                    timing: Some((start_ms, start_ms + duration_ms)),
-                });
-            }
-        } else {
-            // 如果没有时间戳，整个文本就是单个音节的文本
-            let text = LYRIC_TOKEN_REGEX
-                .replace_all(kana_text_with_timing.trim(), "${text}")
-                .to_string();
-            syllables.push(FuriganaSyllable { text, timing: None });
-        }
-
-        tokens.push(KanaToken {
-            char_count,
-            syllables: Some(syllables),
-        });
-    }
-
     Ok(tokens)
 }
 
