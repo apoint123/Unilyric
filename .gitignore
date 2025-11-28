@@ -2,15 +2,6 @@
 # will have compiled files and executables
 /target/
 
-# These are usually only created when testing production builds
-# For example, when running `cargo test --release`
-/target/debug/.fingerprint/
-/target/debug/build/
-/target/debug/deps/
-/target/debug/examples/
-/target/debug/incremental/
-/target/debug/test/
-
 # Cargo files
 # For a workspace, the root Cargo.lock is usually committed.
 # If individual crates have their own Cargo.lock, they should be ignored.
@@ -34,3 +25,5 @@ Thumbs.db
 # Ignore target directories within each crate
 **/target/
 node_modules
+**/src-tauri/gen
+**/dist
