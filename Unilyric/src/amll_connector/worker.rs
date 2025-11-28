@@ -551,7 +551,7 @@ pub async fn amll_connector_actor(
                             }
 
                             state.retry_attempts += 1;
-                            const MAX_RETRIES: u32 = 3;
+                            const MAX_RETRIES: u32 = 1;
 
                             if state.retry_attempts > MAX_RETRIES {
                                 error!("[AMLL Actor] 已达到最大重连次数 ({})，将停止自动重连。", MAX_RETRIES);
