@@ -132,29 +132,31 @@ impl<'a> StrippingRules<'a> {
     }
 }
 
-fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
-    let text_for_keyword_check = {
-        let mut text = line_to_check.trim();
+fn clean_text_for_check(line_to_check: &str) -> &str {
+    let mut text = line_to_check.trim();
 
-        // 处理意外包含了 LRC 标签的情况
-        // 这在我们的数据模型中不应该发生
-        if text.starts_with('[') && text.ends_with(']') {
-            text = &text[1..text.len() - 1];
-        } else if text.starts_with('[') {
-            if let Some(end_bracket_idx) = text.find(']') {
-                text = text[end_bracket_idx + 1..].trim_start();
-            }
-        // 某些奇怪的歌词可能会在前面加上背景人声或者演唱者标记之类的东西
-        // 通常不太可能又有这些东西又是元数据行
-        } else if text.starts_with('(') && text.ends_with(')') {
-            text = &text[1..text.len() - 1];
-        } else if text.starts_with('(')
-            && let Some(end_paren_idx) = text.find(')')
-        {
-            text = text[end_paren_idx + 1..].trim_start();
+    // 处理意外包含了 LRC 标签的情况
+    // 这在我们的数据模型中不应该发生
+    if text.starts_with('[') && text.ends_with(']') {
+        text = &text[1..text.len() - 1];
+    } else if text.starts_with('[') {
+        if let Some(end_bracket_idx) = text.find(']') {
+            text = text[end_bracket_idx + 1..].trim_start();
         }
-        text
-    };
+    // 某些奇怪的歌词可能会在前面加上背景人声或者演唱者标记之类的东西
+    // 通常不太可能又有这些东西又是元数据行
+    } else if text.starts_with('(') && text.ends_with(')') {
+        text = &text[1..text.len() - 1];
+    } else if text.starts_with('(')
+        && let Some(end_paren_idx) = text.find(')')
+    {
+        text = text[end_paren_idx + 1..].trim_start();
+    }
+    text
+}
+
+fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
+    let text_for_keyword_check = clean_text_for_check(line_to_check);
 
     if !rules.prepared_keywords.is_empty() {
         let prepared_line: Cow<str> = if rules.keyword_case_sensitive {
@@ -185,17 +187,33 @@ fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
     false
 }
 
+fn line_looks_like_metadata(line_to_check: &str) -> bool {
+    let text = clean_text_for_check(line_to_check);
+    text.contains(':') || text.contains('：')
+}
+
+// 强匹配行：匹配关键词加冒号，或者匹配正则表达式的行
+// 弱匹配行：带有冒号，但不匹配关键词或正则表达式的行。如果夹在强匹配行之间，多半是元数据行但是没有对应的规则。但也有可能是演唱者标识，“男：...”这样的
+// 真正的歌词行：既不匹配规则，又没有冒号的行，作为防火墙来阻止对之后行的移除。避免元数据在歌词中间，把中间的歌词也移除了
+
 fn find_first_lyric_line_index(lines: &[LyricLine], rules: &StrippingRules, limit: usize) -> usize {
-    let mut last_matching_header_index: Option<usize> = None;
+    let mut last_valid_metadata_index: Option<usize> = None;
 
     for (i, line_item) in lines.iter().enumerate().take(limit) {
         let line_text = get_text(line_item);
-        if line_matches_rules(&line_text, rules) {
-            last_matching_header_index = Some(i);
+
+        let is_strict_match = line_matches_rules(&line_text, rules);
+        let is_weak_match = line_looks_like_metadata(&line_text);
+
+        if is_strict_match {
+            last_valid_metadata_index = Some(i);
+        } else if is_weak_match {
+        } else {
+            break;
         }
     }
 
-    last_matching_header_index.map_or(0, |idx| idx + 1)
+    last_valid_metadata_index.map_or(0, |idx| idx + 1)
 }
 
 fn find_last_lyric_line_exclusive_index(
@@ -209,18 +227,26 @@ fn find_last_lyric_line_exclusive_index(
     }
 
     let footer_scan_start_index = lines.len().saturating_sub(limit).max(first_lyric_index);
+    let mut first_valid_footer_index: Option<usize> = None;
 
-    let first_matching_footer_index = lines
-        .iter()
-        .enumerate()
-        .skip(footer_scan_start_index)
-        .find(|(_i, line_item)| {
-            let line_text = get_text(line_item);
-            line_matches_rules(&line_text, rules)
-        })
-        .map(|(index, _line)| index);
+    for (i, line_item) in lines.iter().enumerate().rev() {
+        if i < footer_scan_start_index {
+            break;
+        }
 
-    first_matching_footer_index.unwrap_or(lines.len())
+        let line_text = get_text(line_item);
+        let is_strict_match = line_matches_rules(&line_text, rules);
+        let is_weak_match = line_looks_like_metadata(&line_text);
+
+        if is_strict_match {
+            first_valid_footer_index = Some(i);
+        } else if is_weak_match {
+        } else {
+            break;
+        }
+    }
+
+    first_valid_footer_index.unwrap_or(lines.len())
 }
 
 /// 从 `LyricLine` 列表中移除元数据行。
@@ -280,7 +306,7 @@ mod tests {
     use super::*;
     use lyrics_helper_core::{
         AnnotatedTrack, ContentType, LyricLine, LyricSyllable, LyricTrack, MetadataStripperFlags,
-        MetadataStripperOptions, Word,
+        MetadataStripperOptions, ScanLimitConfig, Word,
     };
 
     fn create_test_lines(texts: &[&str]) -> Vec<LyricLine> {
@@ -430,5 +456,83 @@ mod tests {
 
         strip_descriptive_metadata_lines(&mut lines, &options);
         assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_stripper_block_logic_header() {
+        let texts = vec![
+            "作词：A",
+            "作曲：B",
+            "不匹配规则的行：123",
+            "编曲：C",
+            "真正的歌词行", // 不包含冒号，预期应该在此处停止扫描
+            "演唱者A：D",
+        ];
+
+        let mut lines = create_test_lines(&texts);
+
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec![
+                "作词".to_string(),
+                "作曲".to_string(),
+                "编曲".to_string(),
+                "演唱者A".to_string(), // 意外情况：是真正的歌词，但是匹配规则
+            ],
+            // 避免尾部扫描把最后一行也移除了
+            footer_scan_limit: ScanLimitConfig {
+                ratio: 0.0,
+                min_lines: 0,
+                max_lines: 0,
+            },
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+
+        assert_eq!(lines_to_texts(&lines), vec!["真正的歌词行", "演唱者A：D"]);
+    }
+
+    #[test]
+    fn test_stripper_block_logic_footer() {
+        let texts = vec![
+            "Line 1",
+            "Line 2",
+            "Line 3",
+            "制作人：X",
+            "Extra Info: Y",
+            "发行：Z",
+        ];
+        let mut lines = create_test_lines(&texts);
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["制作人".to_string(), "发行".to_string()],
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+
+        assert_eq!(lines_to_texts(&lines), vec!["Line 1", "Line 2", "Line 3"]);
+    }
+
+    #[test]
+    fn test_stripper_pure_gap_no_colon() {
+        let texts = vec!["Title: A", "123", "Artist: B"];
+        let mut lines = create_test_lines(&texts);
+
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            keywords: vec!["Title".to_string(), "Artist".to_string()],
+            footer_scan_limit: ScanLimitConfig {
+                ratio: 0.0,
+                min_lines: 0,
+                max_lines: 0,
+            },
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+
+        assert_eq!(lines_to_texts(&lines), vec!["123", "Artist: B"]);
     }
 }
