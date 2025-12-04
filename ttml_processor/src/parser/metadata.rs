@@ -420,7 +420,7 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                         if next_text.chars().all(char::is_whitespace) {
                             iter.next();
 
-                            let has_space = next_text.chars().any(|c| c == ' ');
+                            let has_space = next_text.chars().any(char::is_whitespace);
                             let has_newline = next_text.chars().any(|c| c == '\n' || c == '\r');
 
                             if has_space && !has_newline {

@@ -206,6 +206,13 @@ fn process_span_start(
     reader: &Reader<&[u8]>,
     warnings: &mut Vec<String>,
 ) -> Result<(), ConvertError> {
+    if !state.body_state.span_stack.is_empty() && !state.text_buffer.is_empty() {
+        let text = std::mem::take(&mut state.text_buffer);
+        if let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
+            p_data.pending_items.push(PendingItem::FreeText(text));
+        }
+    }
+
     state.text_buffer.clear();
     let role = get_attribute_with_aliases(e, reader, &[ATTR_ROLE, ATTR_ROLE_ALIAS], |s| {
         Ok(match s.as_bytes() {
@@ -515,7 +522,14 @@ fn finalize_p_element(
     state: &mut TtmlParserState,
     warnings: &mut Vec<String>,
 ) -> Vec<AnnotatedTrack> {
-    if state.is_line_timing_mode {
+    let has_explicit_syllables = p_data
+        .pending_items
+        .iter()
+        .any(|item| matches!(item, PendingItem::Syllable { .. }));
+
+    let use_line_mode_logic = state.is_line_timing_mode || !has_explicit_syllables;
+
+    if use_line_mode_logic {
         let mut line_text = String::new();
         for item in &p_data.pending_items {
             match item {
@@ -551,7 +565,7 @@ fn finalize_p_element(
                 end_ms,
                 content_type,
             } => {
-                if state.is_line_timing_mode {
+                if use_line_mode_logic {
                     continue;
                 }
 
@@ -560,7 +574,7 @@ fn finalize_p_element(
                     if next_text.chars().all(char::is_whitespace) {
                         iter.next();
 
-                        let has_space = next_text.chars().any(|c| c == ' ');
+                        let has_space = next_text.chars().any(char::is_whitespace);
                         let has_newline = next_text.chars().any(|c| c == '\n' || c == '\r');
 
                         if has_space && !has_newline {
@@ -592,7 +606,7 @@ fn finalize_p_element(
                 }
             }
             PendingItem::FreeText(text) => {
-                if !state.is_line_timing_mode && !text.trim().is_empty() {
+                if !use_line_mode_logic && !text.trim().is_empty() {
                     warnings.push(format!(
                         "逐字模式下, 在 <p> ({}ms) 中发现无时间戳的文本, 已忽略: '{}'",
                         p_data.start_ms,
