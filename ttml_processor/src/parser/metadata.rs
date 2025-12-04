@@ -227,6 +227,12 @@ fn process_span_start_in_metadata(
 ) -> Result<(), ConvertError> {
     let meta_state = &mut state.metadata_state;
     if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. }) {
+        if !meta_state.span_stack.is_empty() && !meta_state.text_buffer.is_empty() {
+            let existing_text = std::mem::take(&mut meta_state.text_buffer);
+            meta_state
+                .pending_items
+                .push(PendingItem::FreeText(existing_text));
+        }
         meta_state.text_buffer.clear();
 
         let role = get_attribute_with_aliases(e, reader, &[ATTR_ROLE, ATTR_ROLE_ALIAS], |s| {
