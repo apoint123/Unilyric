@@ -1,6 +1,6 @@
 [package]
 name = "ttml_processor"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 authors = ["apoint123 <vpnzaph@outlook.com>"]
 description = "A Rust library for parsing and generating TTML lyrics files, specifically designed for Apple Music and AMLL formats."
