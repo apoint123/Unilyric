@@ -96,7 +96,7 @@ pub(super) fn handle_p_event(
                 ));
             }
             TAG_P => {
-                handle_p_end(state, lines, warnings);
+                handle_p_end(state, lines);
             }
             TAG_SPAN => {
                 process_span_end(state, warnings)?;
@@ -110,11 +110,7 @@ pub(super) fn handle_p_event(
 
 /// 处理 `</p>` 结束事件。
 /// 在此事件中，会回填来自 <iTunesMetadata> 的逐行翻译
-pub(super) fn handle_p_end(
-    state: &mut TtmlParserState,
-    lines: &mut Vec<LyricLine>,
-    warnings: &mut Vec<String>,
-) {
+pub(super) fn handle_p_end(state: &mut TtmlParserState, lines: &mut Vec<LyricLine>) {
     if let Some(p_data) = state.body_state.current_p_element_data.take() {
         let start_ms = p_data.start_ms;
         let end_ms = p_data.end_ms;
@@ -122,7 +118,7 @@ pub(super) fn handle_p_end(
         let song_part = p_data.song_part.clone();
         let itunes_key = p_data.itunes_key.clone();
 
-        let mut tracks = finalize_p_element(p_data, state, warnings);
+        let mut tracks = finalize_p_element(p_data, state);
 
         if let Some(key) = &itunes_key
             && let Some(translations_for_line) = state.metadata_state.line_translation_map.get(key)
@@ -250,9 +246,19 @@ fn process_text_event(e_text: &BytesText, state: &mut TtmlParserState) -> Result
     if !state.body_state.span_stack.is_empty() {
         state.text_buffer.push_str(&text_slice);
     } else if let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
-        p_data
-            .pending_items
-            .push(PendingItem::FreeText(text_slice.to_string()));
+        if text_slice.trim().is_empty() {
+            p_data
+                .pending_items
+                .push(PendingItem::FreeText(text_slice.to_string()));
+        } else {
+            p_data.pending_items.push(PendingItem::Syllable {
+                // trim 是安全的，因为此时应该只有一个单一的音节
+                text: text_slice.trim().to_string(),
+                start_ms: p_data.start_ms,
+                end_ms: p_data.end_ms,
+                content_type: ContentType::Main,
+            });
+        }
     }
 
     Ok(())
@@ -520,16 +526,8 @@ fn handle_background_span_end(
 fn finalize_p_element(
     mut p_data: CurrentPElementData,
     state: &mut TtmlParserState,
-    warnings: &mut Vec<String>,
 ) -> Vec<AnnotatedTrack> {
-    let has_explicit_syllables = p_data
-        .pending_items
-        .iter()
-        .any(|item| matches!(item, PendingItem::Syllable { .. }));
-
-    let use_line_mode_logic = state.is_line_timing_mode || !has_explicit_syllables;
-
-    if use_line_mode_logic {
+    if state.is_line_timing_mode {
         let mut line_text = String::new();
         for item in &p_data.pending_items {
             match item {
@@ -545,6 +543,7 @@ fn finalize_p_element(
                 text: std::mem::take(&mut state.text_processing_buffer),
                 start_ms: p_data.start_ms,
                 end_ms: p_data.end_ms,
+                duration_ms: Some(p_data.end_ms.saturating_sub(p_data.start_ms)),
                 ..Default::default()
             };
             let main_track =
@@ -565,7 +564,7 @@ fn finalize_p_element(
                 end_ms,
                 content_type,
             } => {
-                if use_line_mode_logic {
+                if state.is_line_timing_mode {
                     continue;
                 }
 
@@ -605,15 +604,7 @@ fn finalize_p_element(
                     syl.ends_with_space = syl.ends_with_space || external_space;
                 }
             }
-            PendingItem::FreeText(text) => {
-                if !use_line_mode_logic && !text.trim().is_empty() {
-                    warnings.push(format!(
-                        "逐字模式下, 在 <p> ({}ms) 中发现无时间戳的文本, 已忽略: '{}'",
-                        p_data.start_ms,
-                        text.trim().escape_debug()
-                    ));
-                }
-            }
+            PendingItem::FreeText(_) => {}
         }
     }
 

@@ -176,7 +176,7 @@ pub(super) fn attempt_recovery_from_error(
 
         // 处理和保存当前 <p> 中已经累积的数据
         // 把current_p_element_data中的内容（即使不完整）转换成一个 LyricLine
-        body::handle_p_end(state, lines, warnings);
+        body::handle_p_end(state, lines);
 
         // handle_p_end 已经将 in_p 设为 false，并清理了 span 栈，
         // 我们现在回到了“p之外，body之内”的安全状态
