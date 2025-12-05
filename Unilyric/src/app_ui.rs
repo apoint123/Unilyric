@@ -873,19 +873,6 @@ impl UniLyricApp {
                 );
             }
 
-            let mut keyword_case_sensitive = options
-                .flags
-                .contains(lyrics_helper_core::MetadataStripperFlags::KEYWORD_CASE_SENSITIVE);
-            if stripper_ui
-                .checkbox(&mut keyword_case_sensitive, "关键词匹配区分大小写")
-                .changed()
-            {
-                options.flags.set(
-                    lyrics_helper_core::MetadataStripperFlags::KEYWORD_CASE_SENSITIVE,
-                    keyword_case_sensitive,
-                );
-            }
-
             let mut regex_enabled = options
                 .flags
                 .contains(lyrics_helper_core::MetadataStripperFlags::ENABLE_REGEX_STRIPPING);
@@ -896,19 +883,6 @@ impl UniLyricApp {
                 options.flags.set(
                     lyrics_helper_core::MetadataStripperFlags::ENABLE_REGEX_STRIPPING,
                     regex_enabled,
-                );
-            }
-
-            let mut regex_case_sensitive = options
-                .flags
-                .contains(lyrics_helper_core::MetadataStripperFlags::REGEX_CASE_SENSITIVE);
-            if stripper_ui
-                .checkbox(&mut regex_case_sensitive, "正则表达式匹配区分大小写")
-                .changed()
-            {
-                options.flags.set(
-                    lyrics_helper_core::MetadataStripperFlags::REGEX_CASE_SENSITIVE,
-                    regex_case_sensitive,
                 );
             }
 
