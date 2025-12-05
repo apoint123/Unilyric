@@ -189,7 +189,7 @@ fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
 
 fn line_looks_like_metadata(line_to_check: &str) -> bool {
     let text = clean_text_for_check(line_to_check);
-    text.contains(':') || text.contains('：')
+    text.contains(':') || text.contains('：') || text.contains('-') // 一般是第一行的 歌曲名 - 歌手名 格式
 }
 
 // 强匹配行：匹配关键词加冒号，或者匹配正则表达式的行
