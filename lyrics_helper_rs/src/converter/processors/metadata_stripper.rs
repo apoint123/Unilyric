@@ -135,17 +135,9 @@ impl<'a> StrippingRules<'a> {
 fn clean_text_for_check(line_to_check: &str) -> &str {
     let mut text = line_to_check.trim();
 
-    // 处理意外包含了 LRC 标签的情况
-    // 这在我们的数据模型中不应该发生
-    if text.starts_with('[') && text.ends_with(']') {
-        text = &text[1..text.len() - 1];
-    } else if text.starts_with('[') {
-        if let Some(end_bracket_idx) = text.find(']') {
-            text = text[end_bracket_idx + 1..].trim_start();
-        }
     // 某些奇怪的歌词可能会在前面加上背景人声或者演唱者标记之类的东西
     // 通常不太可能又有这些东西又是元数据行
-    } else if text.starts_with('(') && text.ends_with(')') {
+    if text.starts_with('(') && text.ends_with(')') {
         text = &text[1..text.len() - 1];
     } else if text.starts_with('(')
         && let Some(end_paren_idx) = text.find(')')
