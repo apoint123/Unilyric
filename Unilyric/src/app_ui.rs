@@ -44,7 +44,7 @@ impl SettingsCategory {
 
 impl UniLyricApp {
     pub fn draw_toolbar(&mut self, ui: &mut egui::Ui) {
-        egui::menu::bar(ui, |ui_bar| {
+        egui::MenuBar::new().ui(ui, |ui_bar| {
             ui_bar.menu_button("文件", |file_menu| {
                 if file_menu
                     .add(egui::Button::new("打开歌词文件..."))
@@ -291,7 +291,7 @@ impl UniLyricApp {
                             .inner;
 
                         if response.clicked() && is_selectable_source {
-                            ui_combo.close_menu();
+                            ui_combo.close();
                         }
                     }
                 });
@@ -316,7 +316,7 @@ impl UniLyricApp {
                             .selectable_value(&mut temp_target_format, *fmt_option, display_text)
                             .clicked()
                         {
-                            ui_combo.close_menu();
+                            ui_combo.close();
                         }
                     }
                 });
@@ -1061,7 +1061,7 @@ impl UniLyricApp {
                         actions_to_send.push(UserAction::Lyrics(Box::new(
                             LyricsAction::AddMetadata(key_variant),
                         )));
-                        menu.close_menu();
+                        menu.close();
                     }
                 }
                 menu.separator();
@@ -1069,7 +1069,7 @@ impl UniLyricApp {
                     actions_to_send.push(UserAction::Lyrics(Box::new(LyricsAction::AddMetadata(
                         CanonicalMetadataKey::Custom("custom".to_string()),
                     ))));
-                    menu.close_menu();
+                    menu.close();
                 }
             });
         });
@@ -1205,14 +1205,14 @@ impl UniLyricApp {
                 let font_id = egui::TextStyle::Monospace.resolve(s_ui.style());
                 let text_color = s_ui.visuals().text_color();
 
-                let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
+                let mut layouter = |ui: &egui::Ui, val: &dyn egui::TextBuffer, _wrap_width: f32| {
                     let layout_job = egui::text::LayoutJob::simple(
-                        string.to_string(),
+                        val.as_str().to_owned(),
                         font_id.clone(),
                         text_color,
                         f32::INFINITY,
                     );
-                    ui.fonts(|f| f.layout_job(layout_job))
+                    ui.fonts_mut(|f| f.layout_job(layout_job))
                 };
 
                 s_ui.add(text_edit_widget.layouter(&mut layouter))
@@ -1315,15 +1315,16 @@ impl UniLyricApp {
                     let font_id = egui::TextStyle::Monospace.resolve(s_ui_content.style());
                     let text_color = s_ui_content.visuals().text_color();
 
-                    let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
-                        let layout_job = egui::text::LayoutJob::simple(
-                            string.to_string(),
-                            font_id.clone(),
-                            text_color,
-                            f32::INFINITY,
-                        );
-                        ui.fonts(|f| f.layout_job(layout_job))
-                    };
+                    let mut layouter =
+                        |ui: &egui::Ui, val: &dyn egui::TextBuffer, _wrap_width: f32| {
+                            let layout_job = egui::text::LayoutJob::simple(
+                                val.as_str().to_owned(),
+                                font_id.clone(),
+                                text_color,
+                                f32::INFINITY,
+                            );
+                            ui.fonts_mut(|f| f.layout_job(layout_job))
+                        };
                     s_ui_content.add(text_edit_widget.layouter(&mut layouter))
                 } else {
                     s_ui_content.add(text_edit_widget)
@@ -1439,15 +1440,16 @@ impl UniLyricApp {
                     let font_id = egui::TextStyle::Monospace.resolve(s_ui_content.style());
                     let text_color = s_ui_content.visuals().text_color();
 
-                    let mut layouter = |ui: &egui::Ui, string: &str, _wrap_width: f32| {
-                        let layout_job = egui::text::LayoutJob::simple(
-                            string.to_string(),
-                            font_id.clone(),
-                            text_color,
-                            f32::INFINITY,
-                        );
-                        ui.fonts(|f| f.layout_job(layout_job))
-                    };
+                    let mut layouter =
+                        |ui: &egui::Ui, val: &dyn egui::TextBuffer, _wrap_width: f32| {
+                            let layout_job = egui::text::LayoutJob::simple(
+                                val.as_str().to_owned(),
+                                font_id.clone(),
+                                text_color,
+                                f32::INFINITY,
+                            );
+                            ui.fonts_mut(|f| f.layout_job(layout_job))
+                        };
                     s_ui_content.add(text_edit_widget.layouter(&mut layouter))
                 } else {
                     s_ui_content.add(text_edit_widget)
@@ -2079,7 +2081,7 @@ impl UniLyricApp {
         use crate::app_actions::BatchConverterAction;
 
         egui::TopBottomPanel::top("batch_converter_toolbar").show(ctx, |ui| {
-            egui::menu::bar(ui, |bar_ui| {
+            egui::MenuBar::new().ui(ui, |bar_ui| {
                 if bar_ui.button("返回").clicked() {
                     self.send_action(UserAction::UI(UIAction::SetView(AppView::Editor)));
                 }

@@ -414,7 +414,7 @@ pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
 }
 
 fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
-    let available_width = ctx.screen_rect().width();
+    let available_width = ctx.content_rect().width();
     let input_panel_width = (available_width * 0.25).clamp(200.0, 400.0);
 
     egui::SidePanel::left("input_panel")
@@ -514,7 +514,7 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
             .fixed_pos(egui::Pos2::ZERO)
             .order(egui::Order::Foreground)
             .show(ctx, |ui_overlay| {
-                let screen_rect = ui_overlay.ctx().screen_rect();
+                let screen_rect = ui_overlay.ctx().content_rect();
                 ui_overlay.painter().rect_filled(
                     screen_rect,
                     0.0,

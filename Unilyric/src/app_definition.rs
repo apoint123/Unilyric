@@ -210,7 +210,6 @@ pub(super) struct PlayerState {
     pub(super) available_sessions: Vec<SmtcSessionInfo>,
     pub(super) smtc_time_offset_ms: i64,
     pub(super) last_requested_session_id: Option<String>,
-    pub(super) is_first_song_processed: bool,
 }
 
 impl PlayerState {
@@ -221,7 +220,6 @@ impl PlayerState {
             available_sessions: Vec::new(),
             smtc_time_offset_ms: settings.smtc_time_offset_ms,
             last_requested_session_id: None,
-            is_first_song_processed: false,
         }
     }
 }
@@ -391,12 +389,10 @@ impl UiMetadataManager {
             .map(|e| (e.key.clone(), e.value.clone()))
             .collect();
         let mut new_non_conflicting_entries: Vec<EditableMetadataEntry> = Vec::new();
-        let mut loaded_count = 0;
         for (key_str, values) in &parsed.raw_metadata {
             if let Ok(canonical_key) = key_str.parse::<CanonicalMetadataKey>() {
                 for value in values {
                     if !pinned_keys.contains(&(canonical_key.clone(), value.clone())) {
-                        loaded_count += 1;
                         new_non_conflicting_entries.push(EditableMetadataEntry {
                             key: canonical_key.clone(),
                             value: value.clone(),
