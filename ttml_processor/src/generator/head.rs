@@ -271,7 +271,9 @@ fn write_line_timed_romanizations<W: std::io::Write>(
                                     writer
                                         .create_element("span")
                                         .with_attribute(("ttm:role", "x-bg"))
-                                        .write_text_content(BytesText::new(bg_text))?;
+                                        .write_text_content(BytesText::new(&format!(
+                                            "({bg_text})"
+                                        )))?;
                                 }
                                 Ok(())
                             })?;
@@ -399,7 +401,9 @@ fn write_line_timed_translations<W: std::io::Write>(
                                     writer
                                         .create_element("span")
                                         .with_attribute(("ttm:role", "x-bg"))
-                                        .write_text_content(BytesText::new(bg_text))?;
+                                        .write_text_content(BytesText::new(&format!(
+                                            "({bg_text})"
+                                        )))?;
                                 }
                                 Ok(())
                             })?;

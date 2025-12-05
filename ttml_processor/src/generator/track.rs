@@ -146,40 +146,47 @@ pub(super) fn write_background_tracks<W: std::io::Write>(
     let start_ms = all_syls.iter().map(|s| s.start_ms).min().unwrap_or(0);
     let end_ms = all_syls.iter().map(|s| s.end_ms).max().unwrap_or(0);
 
-    writer
+    let start_time_str = format_ttml_time(start_ms);
+    let end_time_str = format_ttml_time(end_ms);
+
+    let mut span_builder = writer
         .create_element("span")
-        .with_attribute(("ttm:role", "x-bg"))
-        .with_attribute(("begin", format_ttml_time(start_ms).as_str()))
-        .with_attribute(("end", format_ttml_time(end_ms).as_str()))
-        .write_inner_content(|writer| {
-            let mut is_first = true;
-            let mut iter = all_syls.into_iter().peekable();
+        .with_attribute(("ttm:role", "x-bg"));
 
-            while let Some(syl_bg) = iter.next() {
-                let is_last = iter.peek().is_none();
-                let text_with_parens =
-                    apply_parentheses_to_bg_text(&syl_bg.text, is_first, is_last);
+    if !options.use_apple_format_rules {
+        span_builder = span_builder
+            .with_attribute(("begin", start_time_str.as_str()))
+            .with_attribute(("end", end_time_str.as_str()));
+    }
 
-                is_first = false;
+    span_builder.write_inner_content(|writer| {
+        let mut is_first = true;
+        let mut iter = all_syls.into_iter().peekable();
 
-                let temp_syl = LyricSyllable {
-                    text: text_with_parens,
-                    start_ms: syl_bg.start_ms,
-                    end_ms: syl_bg.end_ms,
-                    duration_ms: syl_bg.duration_ms,
-                    ends_with_space: syl_bg.ends_with_space,
-                };
+        while let Some(syl_bg) = iter.next() {
+            let is_last = iter.peek().is_none();
+            let text_with_parens = apply_parentheses_to_bg_text(&syl_bg.text, is_first, is_last);
 
-                write_syllable_with_optional_splitting(writer, &temp_syl, options)?;
+            is_first = false;
 
-                if syl_bg.ends_with_space && iter.peek().is_some() && !options.format {
-                    writer.write_event(Event::Text(BytesText::new(" ")))?;
-                }
+            let temp_syl = LyricSyllable {
+                text: text_with_parens,
+                start_ms: syl_bg.start_ms,
+                end_ms: syl_bg.end_ms,
+                duration_ms: syl_bg.duration_ms,
+                ends_with_space: syl_bg.ends_with_space,
+            };
+
+            write_syllable_with_optional_splitting(writer, &temp_syl, options)?;
+
+            if syl_bg.ends_with_space && iter.peek().is_some() && !options.format {
+                writer.write_event(Event::Text(BytesText::new(" ")))?;
             }
+        }
 
-            write_auxiliary_tracks(writer, bg_annotated_tracks, options)?;
+        write_auxiliary_tracks(writer, bg_annotated_tracks, options)?;
 
-            Ok(())
-        })?;
+        Ok(())
+    })?;
     Ok(())
 }
