@@ -137,13 +137,22 @@ fn write_itunes_metadata<W: std::io::Write>(
             .any(|at| at.translations.iter().any(LyricTrack::is_timed))
     });
 
+    let has_any_translations = lines
+        .iter()
+        .any(|l| l.tracks.iter().any(|at| !at.translations.is_empty()));
+
     let has_timed_romanizations = lines.iter().any(|l| {
         l.tracks
             .iter()
             .any(|at| at.romanizations.iter().any(LyricTrack::is_timed))
     });
 
-    if !valid_songwriters.is_empty() || has_timed_translations || has_timed_romanizations {
+    let should_write_metadata = !valid_songwriters.is_empty()
+        || has_timed_translations
+        || has_timed_romanizations
+        || (options.use_apple_format_rules && has_any_translations);
+
+    if should_write_metadata {
         writer
             .create_element("iTunesMetadata")
             .with_attribute(("xmlns", "http://music.apple.com/lyric-ttml-internal"))
