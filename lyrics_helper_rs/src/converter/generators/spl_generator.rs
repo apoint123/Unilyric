@@ -54,6 +54,9 @@ pub fn generate_spl(
                     write!(spl_output, "{}", format_spl_timestamp(syl.start_ms, true))?;
                 }
                 write!(spl_output, "{}", syl.text)?;
+                if syl.ends_with_space {
+                    write!(spl_output, " ")?;
+                }
                 write!(spl_output, "{}", format_spl_timestamp(syl.end_ms, true))?;
                 last_ts = syl.end_ms;
             }
