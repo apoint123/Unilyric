@@ -186,11 +186,11 @@ fn write_itunes_metadata<W: std::io::Write>(
 /// 从歌词行中收集所有逐行音译
 fn collect_line_timed_romanizations(
     lines: &[LyricLine],
-) -> HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> {
-    let mut romanizations_by_lang: HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> =
+) -> HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>> {
+    let mut romanizations_by_lang: HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>> =
         HashMap::new();
     for (i, line) in lines.iter().enumerate() {
-        let p_key = format!("L{}", i + 1);
+        let line_num = i + 1;
         for at in &line.tracks {
             for track in &at.romanizations {
                 if !track.is_timed() {
@@ -202,7 +202,7 @@ fn collect_line_timed_romanizations(
                         let line_parts = romanizations_by_lang
                             .entry(lang)
                             .or_default()
-                            .entry(p_key.clone())
+                            .entry(line_num)
                             .or_default();
 
                         match at.content_type {
@@ -238,7 +238,7 @@ fn collect_line_timed_romanizations(
 /// 写入逐行音译的 `<transliterations>` 元素
 fn write_line_timed_romanizations<W: std::io::Write>(
     writer: &mut Writer<W>,
-    romanizations_by_lang: &HashMap<Option<String>, BTreeMap<String, LineTranslationParts>>,
+    romanizations_by_lang: &HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>>,
 ) -> Result<(), ConvertError> {
     if romanizations_by_lang.is_empty() {
         return Ok(());
@@ -250,17 +250,18 @@ fn write_line_timed_romanizations<W: std::io::Write>(
             sorted_groups.sort_by_key(|&(lang, _)| lang.clone());
 
             for (lang, entries) in sorted_groups {
-                let mut trans_builder = writer.create_element("transliteration");
-
+                let mut trans_builder = writer.create_element("transliteration"); // 音译不需要 type="subtitle"
                 if let Some(lang_code) = lang.as_ref().filter(|s| !s.is_empty()) {
                     trans_builder = trans_builder.with_attribute(("xml:lang", lang_code.as_str()));
                 }
 
                 trans_builder.write_inner_content(|writer| {
-                    for (key, parts) in entries {
+                    for (line_num, parts) in entries {
+                        let p_key_str = format!("L{line_num}");
+
                         writer
                             .create_element("text")
-                            .with_attribute(("for", key.as_str()))
+                            .with_attribute(("for", p_key_str.as_str()))
                             .write_inner_content(|writer| {
                                 if let Some(main_text) = &parts.main_text {
                                     writer.write_event(Event::Text(BytesText::new(main_text)))?;
@@ -313,11 +314,11 @@ struct LineTranslationParts {
 /// 从歌词行中收集所有逐行翻译。
 fn collect_line_timed_translations(
     lines: &[LyricLine],
-) -> HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> {
-    let mut translations_by_lang: HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> = // [!MODIFICATION]
+) -> HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>> {
+    let mut translations_by_lang: HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>> =
         HashMap::new();
     for (i, line) in lines.iter().enumerate() {
-        let p_key = format!("L{}", i + 1);
+        let line_num = i + 1;
         for at in &line.tracks {
             for track in &at.translations {
                 if !track.is_timed() {
@@ -329,7 +330,7 @@ fn collect_line_timed_translations(
                         let line_parts = translations_by_lang
                             .entry(lang)
                             .or_default()
-                            .entry(p_key.clone())
+                            .entry(line_num)
                             .or_default();
 
                         match at.content_type {
@@ -365,7 +366,7 @@ fn collect_line_timed_translations(
 /// 写入逐行翻译的 `<translations>` 元素。
 fn write_line_timed_translations<W: std::io::Write>(
     writer: &mut Writer<W>,
-    translations_by_lang: &HashMap<Option<String>, BTreeMap<String, LineTranslationParts>>,
+    translations_by_lang: &HashMap<Option<String>, BTreeMap<usize, LineTranslationParts>>,
 ) -> Result<(), ConvertError> {
     if translations_by_lang.is_empty() {
         return Ok(());
@@ -384,10 +385,11 @@ fn write_line_timed_translations<W: std::io::Write>(
                     trans_builder = trans_builder.with_attribute(("xml:lang", lang_code.as_str()));
                 }
                 trans_builder.write_inner_content(|writer| {
-                    for (key, parts) in entries {
+                    for (line_num, parts) in entries {
+                        let p_key_str = format!("L{line_num}");
                         writer
                             .create_element("text")
-                            .with_attribute(("for", key.as_str()))
+                            .with_attribute(("for", p_key_str.as_str()))
                             .write_inner_content(|writer| {
                                 if let Some(main_text) = &parts.main_text {
                                     writer.write_event(Event::Text(BytesText::new(main_text)))?;
