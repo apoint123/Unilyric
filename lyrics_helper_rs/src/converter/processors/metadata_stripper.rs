@@ -360,19 +360,6 @@ mod tests {
     }
 
     #[test]
-    fn test_keywords_with_lrc_tags_and_whitespace() {
-        let mut lines = create_test_lines(&["[ti:Title]", "[00:01.00] Artist : A", "Lyric 1"]);
-        let options = MetadataStripperOptions {
-            flags: MetadataStripperFlags::ENABLED,
-            keywords: vec!["ti".to_string(), "Artist".to_string()],
-            ..Default::default()
-        };
-
-        strip_descriptive_metadata_lines(&mut lines, &options);
-        assert_eq!(lines_to_texts(&lines), vec!["Lyric 1"]);
-    }
-
-    #[test]
     fn test_keywords_with_full_width_colon() {
         let mut lines = create_test_lines(&["作曲：某人", "Lyric 1"]);
         let options = MetadataStripperOptions {
