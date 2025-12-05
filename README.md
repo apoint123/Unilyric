@@ -1,7 +1,30 @@
-<h1 align="center">UniLyric - 一个全能的歌词转换器</h1>
+# UniLyric
 
-![A Screenshot for UniLyric](https://github.com/user-attachments/assets/3ff25f07-c9cb-4125-90e3-3c409e83ff7b)
+一个全能的歌词转换器，同时支持下载各大平台的歌词
 
-## 许可证信息
+## 特色功能
 
-本项目主要代码根据 [MIT 许可证](LICENSE) 发布。
+* 支持所有主流的歌词转换，包括但不限于：
+    * ASS
+    * TTML
+    * LRC
+    * 增强型 LRC
+    * QRC
+    * KRC
+    * YRC
+    * SPL
+    * Lyricify Syllable
+    * Lyricify Lines
+    * Lyricify Quick Export
+
+* 搜索并下载歌词，支持如下平台：
+    * [QQ 音乐](https://y.qq.com/)
+    * [酷狗音乐](https://www.kugou.com/)
+    * [网易云音乐](https://music.163.com/)
+    * [AMLL-TTML-DB](https://github.com/Steve-xmh/amll-ttml-db)
+
+* 支持与 [AMLL Player](https://github.com/Steve-xmh/applemusic-like-lyrics/blob/full-refractor/packages/player/README.md) 的 WS 功能联动
+
+## 许可
+
+[MIT](LICENSE)
