@@ -195,12 +195,8 @@ bitflags! {
     pub struct MetadataStripperFlags: u8 {
         /// 启用元数据清理功能
         const ENABLED                 = 1 << 0;
-        /// 关键词匹配区分大小写
-        const KEYWORD_CASE_SENSITIVE  = 1 << 1;
         /// 启用基于正则表达式的行移除
-        const ENABLE_REGEX_STRIPPING  = 1 << 2;
-        /// 正则表达式匹配区分大小写
-        const REGEX_CASE_SENSITIVE    = 1 << 3;
+        const ENABLE_REGEX_STRIPPING  = 1 << 1;
     }
 }
 

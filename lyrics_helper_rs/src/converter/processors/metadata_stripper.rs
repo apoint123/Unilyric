@@ -1,19 +1,27 @@
-//! 元数据行清理器。
+//! 元数据行清理器
+//!
+//! 用于清理各大音乐平台歌词中开头和结尾的元数据行，例如：
+//!
+//! (歌曲名) - (歌手名)
+//! 词：...
+//! 曲：...
+//! 编曲：...
+//! 和声编唱：...
+//! 人声编辑：...
+//! 混音：...
+//! 母带：...
+//! 监制：...
+//! 出品：...
+//! 真正的歌词行 1
+//! 真正的歌词行 2
 
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::{Mutex, OnceLock},
-};
+use std::borrow::Cow;
 
 use regex::{Regex, RegexBuilder};
 use tracing::{debug, trace, warn};
 
 use crate::converter::LyricLine;
 use lyrics_helper_core::{MetadataStripperFlags, MetadataStripperOptions};
-
-type RegexCacheKey = (String, bool); // (pattern, case_sensitive)
-type RegexCacheMap = HashMap<RegexCacheKey, Regex>;
 
 mod default_rules {
     use std::sync::OnceLock;
@@ -45,48 +53,17 @@ mod default_rules {
     }
 }
 
-fn get_regex_cache() -> &'static Mutex<RegexCacheMap> {
-    static REGEX_CACHE: OnceLock<Mutex<RegexCacheMap>> = OnceLock::new();
-    REGEX_CACHE.get_or_init(Default::default)
-}
-
-/// 编译或从缓存中获取一个（克隆的）Regex对象
-fn get_cached_regex(pattern: &str, case_sensitive: bool) -> Option<Regex> {
-    let key = (pattern.to_string(), case_sensitive);
-    let cache_mutex = get_regex_cache();
-
-    {
-        let cache = cache_mutex.lock().unwrap();
-        if let Some(regex) = cache.get(&key) {
-            return Some(regex.clone());
-        }
-    }
-
-    let Ok(new_regex) = RegexBuilder::new(pattern)
-        .case_insensitive(!case_sensitive)
-        .multi_line(false)
-        .build()
-    else {
-        warn!("[MetadataStripper] 编译正则表达式 '{}' 失败", pattern);
-        return None;
-    };
-
-    let mut cache = cache_mutex.lock().unwrap();
-    Some(cache.entry(key).or_insert(new_regex).clone())
-}
-
 fn get_text(line: &LyricLine) -> String {
     line.main_text().unwrap_or_default()
 }
 
-struct StrippingRules<'a> {
-    prepared_keywords: Cow<'a, [String]>,
-    keyword_case_sensitive: bool,
+struct StrippingRules {
+    prepared_keywords: Vec<String>,
     compiled_regexes: Vec<Regex>,
 }
 
-impl<'a> StrippingRules<'a> {
-    fn new(options: &'a MetadataStripperOptions) -> Self {
+impl StrippingRules {
+    fn new(options: &MetadataStripperOptions) -> Self {
         let compiled_regexes = if options
             .flags
             .contains(MetadataStripperFlags::ENABLE_REGEX_STRIPPING)
@@ -99,35 +76,34 @@ impl<'a> StrippingRules<'a> {
                     if pattern_str.trim().is_empty() {
                         return None;
                     }
-                    get_cached_regex(
-                        pattern_str,
-                        options
-                            .flags
-                            .contains(MetadataStripperFlags::REGEX_CASE_SENSITIVE),
-                    )
+
+                    match RegexBuilder::new(pattern_str)
+                        .case_insensitive(true)
+                        .multi_line(false)
+                        .build()
+                    {
+                        Ok(re) => Some(re),
+                        Err(e) => {
+                            warn!("[MetadataStripper] 编译正则表达式 '{pattern_str}' 失败: {e}",);
+                            None
+                        }
+                    }
                 })
                 .collect()
         } else {
             Vec::new()
         };
 
-        let keyword_case_sensitive = options
-            .flags
-            .contains(MetadataStripperFlags::KEYWORD_CASE_SENSITIVE);
-        let prepared_keywords: Cow<'a, [String]> = if keyword_case_sensitive {
-            Cow::Borrowed(&options.keywords)
-        } else {
-            Cow::Owned(options.keywords.iter().map(|k| k.to_lowercase()).collect())
-        };
+        let prepared_keywords: Vec<String> =
+            options.keywords.iter().map(|k| k.to_lowercase()).collect();
 
         Self {
             prepared_keywords,
-            keyword_case_sensitive,
             compiled_regexes,
         }
     }
 
-    fn has_rules(&self) -> bool {
+    const fn has_rules(&self) -> bool {
         !self.prepared_keywords.is_empty() || !self.compiled_regexes.is_empty()
     }
 }
@@ -135,34 +111,41 @@ impl<'a> StrippingRules<'a> {
 fn clean_text_for_check(line_to_check: &str) -> &str {
     let mut text = line_to_check.trim();
 
-    // 某些奇怪的歌词可能会在前面加上背景人声或者演唱者标记之类的东西
-    // 通常不太可能又有这些东西又是元数据行
-    if text.starts_with('(') && text.ends_with(')') {
-        text = &text[1..text.len() - 1];
-    } else if text.starts_with('(')
-        && let Some(end_paren_idx) = text.find(')')
-    {
-        text = text[end_paren_idx + 1..].trim_start();
+    let brackets = [('(', ')'), ('（', '）'), ('【', '】')];
+
+    for (open, close) in brackets {
+        if text.starts_with(open) {
+            if text.ends_with(close)
+                && let Some(stripped) = text.strip_prefix(open).and_then(|s| s.strip_suffix(close))
+            {
+                text = stripped.trim();
+                break;
+            }
+
+            if let Some(close_idx) = text.find(close) {
+                let content_start = close_idx + close.len_utf8();
+                if content_start <= text.len() {
+                    text = text[content_start..].trim_start();
+                    break;
+                }
+            }
+        }
     }
+
     text
 }
 
 fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
-    let text_for_keyword_check = clean_text_for_check(line_to_check);
-
     if !rules.prepared_keywords.is_empty() {
-        let prepared_line: Cow<str> = if rules.keyword_case_sensitive {
-            Cow::Borrowed(text_for_keyword_check)
-        } else {
-            Cow::Owned(text_for_keyword_check.to_lowercase())
-        };
+        let text_cleaned = clean_text_for_check(line_to_check);
+        let text_lower = text_cleaned.to_lowercase();
 
-        for keyword in rules.prepared_keywords.iter() {
-            if let Some(stripped) = prepared_line.strip_prefix(keyword)
-                && (stripped.trim_start().starts_with(':')
-                    || stripped.trim_start().starts_with('：'))
-            {
-                return true;
+        for keyword in &rules.prepared_keywords {
+            if let Some(stripped) = text_lower.strip_prefix(keyword) {
+                let remainder = stripped.trim_start();
+                if remainder.starts_with(':') || remainder.starts_with('：') {
+                    return true;
+                }
             }
         }
     }
@@ -195,13 +178,13 @@ fn find_first_lyric_line_index(lines: &[LyricLine], rules: &StrippingRules, limi
         let line_text = get_text(line_item);
 
         let is_strict_match = line_matches_rules(&line_text, rules);
-        let is_weak_match = line_looks_like_metadata(&line_text);
+
+        if !is_strict_match && !line_looks_like_metadata(&line_text) {
+            break;
+        }
 
         if is_strict_match {
             last_valid_metadata_index = Some(i);
-        } else if is_weak_match {
-        } else {
-            break;
         }
     }
 
@@ -228,13 +211,13 @@ fn find_last_lyric_line_exclusive_index(
 
         let line_text = get_text(line_item);
         let is_strict_match = line_matches_rules(&line_text, rules);
-        let is_weak_match = line_looks_like_metadata(&line_text);
+
+        if !is_strict_match && !line_looks_like_metadata(&line_text) {
+            break;
+        }
 
         if is_strict_match {
             first_valid_footer_index = Some(i);
-        } else if is_weak_match {
-        } else {
-            break;
         }
     }
 
@@ -400,24 +383,6 @@ mod tests {
 
         strip_descriptive_metadata_lines(&mut lines, &options);
         assert_eq!(lines_to_texts(&lines), vec!["Lyric 1"]);
-    }
-
-    #[test]
-    fn test_regex_case_sensitivity() {
-        let mut lines = create_test_lines(&["NOTE: important", "note: less important", "Lyric 1"]);
-        let options = MetadataStripperOptions {
-            flags: MetadataStripperFlags::ENABLED
-                | MetadataStripperFlags::ENABLE_REGEX_STRIPPING
-                | MetadataStripperFlags::REGEX_CASE_SENSITIVE,
-            regex_patterns: vec![r"^NOTE:".to_string()],
-            ..Default::default()
-        };
-
-        strip_descriptive_metadata_lines(&mut lines, &options);
-        assert_eq!(
-            lines_to_texts(&lines),
-            vec!["note: less important", "Lyric 1"]
-        );
     }
 
     #[test]
