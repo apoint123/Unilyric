@@ -1,7 +1,6 @@
 //! # LRC 格式解析器
 
 use regex::Regex;
-use std::cell::OnceCell;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
@@ -114,7 +113,6 @@ fn process_timestamp_groups(
 ) -> (Vec<LyricLine>, Vec<String>) {
     let mut final_lyric_lines: Vec<LyricLine> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
-    let primary_language_cache: OnceCell<heuristic_analyzer::PrimaryLanguage> = OnceCell::new();
 
     let mut i = 0;
     while i < temp_entries.len() {
@@ -144,13 +142,8 @@ fn process_timestamp_groups(
             });
 
         // 根据所选策略处理分组
-        let (tracks, mut new_warnings) = handle_strategy_for_group(
-            &group_lines,
-            start_ms,
-            end_ms,
-            options,
-            &primary_language_cache,
-        );
+        let (tracks, mut new_warnings) =
+            handle_strategy_for_group(&group_lines, start_ms, end_ms, options);
         warnings.append(&mut new_warnings);
 
         if !tracks.is_empty() {
@@ -167,27 +160,6 @@ fn process_timestamp_groups(
     }
 
     (final_lyric_lines, warnings)
-}
-
-fn handle_heuristic_strategy(
-    group_lines: &[&TempLrcEntry],
-    start_ms: u64,
-    end_ms: u64,
-    primary_language_cache: &OnceCell<heuristic_analyzer::PrimaryLanguage>,
-) -> (Vec<AnnotatedTrack>, Vec<String>) {
-    let warnings = vec![];
-
-    let lang = *primary_language_cache.get_or_init(|| {
-        let all_text: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
-        heuristic_analyzer::determine_primary_language(&all_text)
-    });
-
-    let line_texts: Vec<&str> = group_lines.iter().map(|e| e.text.as_str()).collect();
-    let assignments = heuristic_analyzer::assign_roles(&line_texts, lang);
-    let tracks = heuristic_analyzer::build_annotated_track(&assignments, start_ms, end_ms)
-        .map_or_else(Vec::new, |track| vec![track]);
-
-    (tracks, warnings)
 }
 
 fn handle_first_is_main_strategy(
@@ -316,12 +288,8 @@ fn handle_strategy_for_group(
     start_ms: u64,
     end_ms: u64,
     options: &LrcParsingOptions,
-    primary_language_cache: &OnceCell<heuristic_analyzer::PrimaryLanguage>,
 ) -> (Vec<AnnotatedTrack>, Vec<String>) {
     match &options.same_timestamp_strategy {
-        LrcSameTimestampStrategy::Heuristic => {
-            handle_heuristic_strategy(group_lines, start_ms, end_ms, primary_language_cache)
-        }
         LrcSameTimestampStrategy::FirstIsMain => (
             handle_first_is_main_strategy(group_lines, start_ms, end_ms),
             vec![],
@@ -351,295 +319,12 @@ fn new_line_timed_track(text: String, start_ms: u64, end_ms: u64) -> LyricTrack 
     }
 }
 
-mod heuristic_analyzer {
-    use fst::Set;
-    use std::collections::{HashMap, HashSet};
-    use std::sync::LazyLock;
-
-    const DICTIONARY_FST_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dictionary.fst"));
-
-    #[derive(Debug)]
-    struct WordChecker {
-        words: Set<&'static [u8]>,
-    }
-
-    impl WordChecker {
-        fn new() -> Self {
-            let words = Set::new(DICTIONARY_FST_DATA)
-                .expect("Embedded FST data is malformed. This indicates a build-time error.");
-            Self { words }
-        }
-
-        fn is_english_word(&self, word: &str) -> bool {
-            self.words.contains(word.to_lowercase())
-        }
-    }
-
-    static WORD_CHECKER: LazyLock<WordChecker> = LazyLock::new(WordChecker::new);
-
-    fn is_hiragana(c: char) -> bool {
-        ('\u{3040}'..='\u{309F}').contains(&c)
-    }
-    fn is_katakana(c: char) -> bool {
-        ('\u{30A0}'..='\u{30FF}').contains(&c)
-    }
-    fn is_japanese_kana(c: char) -> bool {
-        is_hiragana(c) || is_katakana(c)
-    }
-    fn is_hangul(c: char) -> bool {
-        ('\u{AC00}'..='\u{D7A3}').contains(&c)
-    }
-    fn is_cjk_ideograph(c: char) -> bool {
-        ('\u{4E00}'..='\u{9FFF}').contains(&c)
-    }
-    const fn is_latin(c: char) -> bool {
-        c.is_ascii_alphabetic()
-    }
-
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub enum PrimaryLanguage {
-        Japanese,
-        Korean,
-        Chinese,
-        LatinBased,
-    }
-
-    pub fn determine_primary_language(all_lines: &[&str]) -> PrimaryLanguage {
-        let mut kana_count = 0;
-        let mut hangul_count = 0;
-        let mut cjk_count = 0;
-        let mut latin_count = 0;
-
-        for line in all_lines {
-            for c in line.chars() {
-                if is_japanese_kana(c) {
-                    kana_count += 1;
-                } else if is_hangul(c) {
-                    hangul_count += 1;
-                } else if is_cjk_ideograph(c) {
-                    cjk_count += 1;
-                } else if is_latin(c) {
-                    latin_count += 1;
-                }
-            }
-        }
-
-        if kana_count > 0 {
-            PrimaryLanguage::Japanese
-        } else if hangul_count > 0 {
-            PrimaryLanguage::Korean
-        } else if latin_count > cjk_count && cjk_count < 10 {
-            PrimaryLanguage::LatinBased
-        } else {
-            PrimaryLanguage::Chinese
-        }
-    }
-
-    #[derive(Debug, Default, Clone)]
-    struct LineScores {
-        primary: f64,
-        translation: f64,
-        romanization: f64,
-    }
-
-    static ROMAJI_PARTICLES: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-        HashSet::from(["no", "ga", "wa", "de", "wo", "ni", "to", "mo", "he", "ka"])
-    });
-
-    #[allow(clippy::cast_precision_loss)]
-    fn calculate_scores(line: &str, lang: PrimaryLanguage, index: usize) -> LineScores {
-        let mut scores = LineScores::default();
-        if line.is_empty() {
-            return scores;
-        }
-
-        let mut kana_count = 0;
-        let mut hangul_count = 0;
-        let mut cjk_count = 0;
-        let mut latin_count = 0;
-
-        for c in line.chars() {
-            if is_japanese_kana(c) {
-                kana_count += 1;
-            } else if is_hangul(c) {
-                hangul_count += 1;
-            } else if is_cjk_ideograph(c) {
-                cjk_count += 1;
-            } else if is_latin(c) {
-                latin_count += 1;
-            }
-        }
-
-        let is_latin_dominant = latin_count > 0 && (cjk_count + hangul_count + kana_count == 0);
-
-        if kana_count > 0 {
-            scores.primary += 10.0;
-        }
-        if hangul_count > 0 {
-            scores.primary += 10.0;
-        }
-        if cjk_count > 0 && kana_count == 0 && hangul_count == 0 {
-            match lang {
-                PrimaryLanguage::Japanese | PrimaryLanguage::Korean => scores.translation += 10.0,
-                PrimaryLanguage::Chinese => scores.primary += 10.0,
-                PrimaryLanguage::LatinBased => scores.translation += 7.0,
-            }
-        }
-
-        if is_latin_dominant {
-            let words: Vec<&str> = line
-                .split_whitespace()
-                .map(|w| w.trim_matches(|p: char| !p.is_alphanumeric()))
-                .filter(|w| !w.is_empty())
-                .collect();
-            if !words.is_empty() {
-                let matched_words = words
-                    .iter()
-                    .filter(|w| WORD_CHECKER.is_english_word(w))
-                    .count();
-                let match_rate = matched_words as f64 / words.len() as f64;
-
-                if lang == PrimaryLanguage::LatinBased {
-                    scores.primary += 10.0 * match_rate.max(0.1);
-                } else {
-                    scores.translation += 5.0;
-                    scores.romanization += 5.0;
-
-                    if match_rate > 0.5 {
-                        scores.translation += 10.0 * match_rate;
-                    }
-
-                    let avg_word_len = words.iter().map(|w| w.chars().count()).sum::<usize>()
-                        as f32
-                        / words.len() as f32;
-                    if avg_word_len < 4.5 {
-                        scores.romanization += 5.0;
-                    }
-                    scores.romanization += words
-                        .iter()
-                        .filter(|w| ROMAJI_PARTICLES.contains(w.to_lowercase().as_str()))
-                        .count() as f64;
-
-                    let pinyin_tone_word_count = words
-                        .iter()
-                        .filter(|w| {
-                            w.chars().last().is_some_and(|last_char| {
-                                last_char.is_ascii_digit()
-                                    && w.chars().any(|c| c.is_ascii_alphabetic())
-                            })
-                        })
-                        .count();
-                    if pinyin_tone_word_count > 0 {
-                        scores.romanization += pinyin_tone_word_count as f64 * 4.0;
-                    }
-                }
-            }
-        }
-
-        match index {
-            0 => scores.primary += 1.0,
-            1 => scores.translation += 1.0,
-            2 => scores.romanization += 1.0,
-            _ => {}
-        }
-
-        scores
-    }
-
-    #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-    pub enum Role {
-        Primary,
-        Translation,
-        Romanization,
-    }
-
-    pub fn assign_roles<'a>(
-        group_lines: &[&'a str],
-        lang: PrimaryLanguage,
-    ) -> HashMap<Role, &'a str> {
-        if group_lines.is_empty() {
-            return HashMap::new();
-        }
-
-        let mut potential_assignments = Vec::new();
-        for (line_idx, &line_text) in group_lines.iter().enumerate() {
-            if line_text.is_empty() {
-                continue;
-            }
-            let scores = calculate_scores(line_text, lang, line_idx);
-            potential_assignments.push((scores.primary, Role::Primary, line_idx));
-            potential_assignments.push((scores.translation, Role::Translation, line_idx));
-            potential_assignments.push((scores.romanization, Role::Romanization, line_idx));
-        }
-
-        potential_assignments
-            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut final_assignments: HashMap<Role, &'a str> = HashMap::new();
-        let mut assigned_indices: HashSet<usize> = HashSet::new();
-        let mut assigned_roles: HashSet<Role> = HashSet::new();
-
-        for (score, role, line_idx) in potential_assignments {
-            if score > 0.0
-                && !assigned_indices.contains(&line_idx)
-                && !assigned_roles.contains(&role)
-            {
-                final_assignments.insert(role, group_lines[line_idx]);
-                assigned_indices.insert(line_idx);
-                assigned_roles.insert(role);
-            }
-        }
-        final_assignments
-    }
-
-    pub fn build_annotated_track(
-        assignments: &HashMap<Role, &str>,
-        start_ms: u64,
-        end_ms: u64,
-    ) -> Option<super::AnnotatedTrack> {
-        let main_text = assignments.get(&Role::Primary)?;
-
-        let main_track = super::new_line_timed_track((*main_text).to_string(), start_ms, end_ms);
-
-        let translations = assignments
-            .get(&Role::Translation)
-            .map_or_else(Vec::new, |text| {
-                vec![super::new_line_timed_track(
-                    (*text).to_string(),
-                    start_ms,
-                    end_ms,
-                )]
-            });
-
-        let romanizations = assignments
-            .get(&Role::Romanization)
-            .map_or_else(Vec::new, |text| {
-                vec![super::new_line_timed_track(
-                    (*text).to_string(),
-                    start_ms,
-                    end_ms,
-                )]
-            });
-
-        Some(super::AnnotatedTrack {
-            content_type: super::ContentType::Main,
-            content: main_track,
-            translations,
-            romanizations,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn get_track_text(track: &LyricTrack) -> String {
         track.text()
-    }
-
-    fn get_optional_track_text(tracks: &[LyricTrack]) -> Option<String> {
-        tracks.first().map(LyricTrack::text)
     }
 
     #[test]
@@ -667,131 +352,5 @@ mod tests {
         assert_eq!(get_track_text(&track.content), "Hello world");
         assert_eq!(get_track_text(&track.romanizations[0]), "こんにちは");
         assert_eq!(get_track_text(&track.translations[0]), "你好世界");
-    }
-
-    #[test]
-    fn test_heuristic_japanese_song() {
-        let content = "[00:15.50]君が好きだと叫びたい\n[00:15.50]想大声说我爱你\n[00:15.50]Kimi ga suki da to sakebitai";
-        let options = LrcParsingOptions {
-            same_timestamp_strategy: LrcSameTimestampStrategy::Heuristic,
-        };
-        let parsed_data = parse_lrc(content, &options).unwrap();
-        assert_eq!(parsed_data.lines.len(), 1);
-
-        let track = &parsed_data.lines[0].tracks[0];
-        assert_eq!(
-            get_optional_track_text(std::slice::from_ref(&track.content)),
-            Some("君が好きだと叫びたい".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.translations),
-            Some("想大声说我爱你".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.romanizations),
-            Some("Kimi ga suki da to sakebitai".to_string())
-        );
-    }
-
-    #[test]
-    fn test_heuristic_chinese_song() {
-        let content = "[01:05.10]能不能给我一首歌的时间\n[01:05.10]Can you give me the time of a song\n[01:05.10]Neng bu neng gei wo yi shou ge de shi jian";
-        let options = LrcParsingOptions {
-            same_timestamp_strategy: LrcSameTimestampStrategy::Heuristic,
-        };
-        let parsed_data = parse_lrc(content, &options).unwrap();
-        assert_eq!(parsed_data.lines.len(), 1);
-
-        let track = &parsed_data.lines[0].tracks[0];
-        assert_eq!(
-            get_optional_track_text(std::slice::from_ref(&track.content)),
-            Some("能不能给我一首歌的时间".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.translations),
-            Some("Can you give me the time of a song".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.romanizations),
-            Some("Neng bu neng gei wo yi shou ge de shi jian".to_string())
-        );
-    }
-
-    #[test]
-    fn test_heuristic_korean_song() {
-        let content = "[00:40.00]사랑해요\n[00:40.00]I love you\n[00:40.00]Saranghaeyo";
-        let options = LrcParsingOptions {
-            same_timestamp_strategy: LrcSameTimestampStrategy::Heuristic,
-        };
-        let parsed_data = parse_lrc(content, &options).unwrap();
-        assert!(
-            !parsed_data.lines.is_empty(),
-            "Parsing should produce at least one line"
-        );
-
-        let track = &parsed_data.lines[0].tracks[0];
-        assert_eq!(
-            get_optional_track_text(std::slice::from_ref(&track.content)),
-            Some("사랑해요".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.translations),
-            Some("I love you".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.romanizations),
-            Some("Saranghaeyo".to_string())
-        );
-    }
-
-    #[test]
-    fn test_heuristic_english_song() {
-        let content = "[00:33.00]Never gonna give you up\n[00:33.00]绝不放弃你";
-        let options = LrcParsingOptions {
-            same_timestamp_strategy: LrcSameTimestampStrategy::Heuristic,
-        };
-        let parsed_data = parse_lrc(content, &options).unwrap();
-        assert!(
-            !parsed_data.lines.is_empty(),
-            "Parsing should produce at least one line"
-        );
-
-        let track = &parsed_data.lines[0].tracks[0];
-        assert_eq!(
-            get_optional_track_text(std::slice::from_ref(&track.content)),
-            Some("Never gonna give you up".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.translations),
-            Some("绝不放弃你".to_string())
-        );
-        assert_eq!(get_optional_track_text(&track.romanizations), None);
-    }
-
-    #[test]
-    fn test_heuristic_distinguishes_romaji_from_english() {
-        let content = "[00:21.00]ありがとう\n[00:21.00]Thank you\n[00:21.00]Arigatou";
-        let options = LrcParsingOptions {
-            same_timestamp_strategy: LrcSameTimestampStrategy::Heuristic,
-        };
-        let parsed_data = parse_lrc(content, &options).unwrap();
-        assert!(
-            !parsed_data.lines.is_empty(),
-            "Parsing should produce at least one line"
-        );
-
-        let track = &parsed_data.lines[0].tracks[0];
-        assert_eq!(
-            get_optional_track_text(std::slice::from_ref(&track.content)),
-            Some("ありがとう".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.translations),
-            Some("Thank you".to_string())
-        );
-        assert_eq!(
-            get_optional_track_text(&track.romanizations),
-            Some("Arigatou".to_string())
-        );
     }
 }

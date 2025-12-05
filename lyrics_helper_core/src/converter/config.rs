@@ -133,8 +133,6 @@ pub enum LrcSameTimestampStrategy {
     /// [默认] 将文件顺序中的第一行视为主歌词，其余的都视为翻译。
     #[default]
     FirstIsMain,
-    /// 使用启发式算法自动判断主歌词、翻译和罗马音。
-    Heuristic,
     /// 将每一行都视为一个独立的、并列的主歌词轨道。
     AllAreMain,
     /// 根据用户提供的角色列表，按顺序为每一行分配角色。
