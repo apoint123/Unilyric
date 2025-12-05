@@ -535,4 +535,12 @@ mod tests {
 
         assert_eq!(lines_to_texts(&lines), vec!["123", "Artist: B"]);
     }
+    #[test]
+    fn test_default_config_parsing() {
+        let keywords = default_rules::keywords();
+        let regex_patterns = default_rules::regex_patterns();
+
+        assert!(!keywords.is_empty(), "默认关键词不应为空");
+        assert!(!regex_patterns.is_empty(), "默认正则表达式不应为空");
+    }
 }
