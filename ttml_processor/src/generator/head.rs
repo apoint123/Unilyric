@@ -131,26 +131,24 @@ fn write_itunes_metadata<W: std::io::Write>(
         .map(|vec| vec.iter().filter(|s| !s.trim().is_empty()).collect())
         .unwrap_or_default();
 
-    let has_timed_translations = lines.iter().any(|l| {
-        l.tracks
-            .iter()
-            .any(|at| at.translations.iter().any(LyricTrack::is_timed))
-    });
-
     let has_any_translations = lines
         .iter()
         .any(|l| l.tracks.iter().any(|at| !at.translations.is_empty()));
-
-    let has_timed_romanizations = lines.iter().any(|l| {
-        l.tracks
-            .iter()
-            .any(|at| at.romanizations.iter().any(LyricTrack::is_timed))
-    });
+    let has_any_romanizations = lines
+        .iter()
+        .any(|l| l.tracks.iter().any(|at| !at.romanizations.is_empty()));
+    let has_any_aux_tracks = has_any_translations || has_any_romanizations;
 
     let should_write_metadata = !valid_songwriters.is_empty()
-        || has_timed_translations
-        || has_timed_romanizations
-        || (options.use_apple_format_rules && has_any_translations);
+        || (has_any_aux_tracks
+            && (options.use_apple_format_rules || {
+                lines.iter().any(|l| {
+                    l.tracks.iter().any(|at| {
+                        at.translations.iter().any(LyricTrack::is_timed)
+                            || at.romanizations.iter().any(LyricTrack::is_timed)
+                    })
+                })
+            }));
 
     if should_write_metadata {
         writer
@@ -160,8 +158,14 @@ fn write_itunes_metadata<W: std::io::Write>(
                 write_songwriters(writer, &valid_songwriters)?;
 
                 if options.use_apple_format_rules {
-                    let line_timed_translations = collect_line_timed_translations(lines);
-                    write_line_timed_translations(writer, &line_timed_translations)?;
+                    if has_any_translations {
+                        let line_timed = collect_line_timed_translations(lines);
+                        write_line_timed_translations(writer, &line_timed)?;
+                    }
+                    if has_any_romanizations {
+                        let line_roman = collect_line_timed_romanizations(lines);
+                        write_line_timed_romanizations(writer, &line_roman)?;
+                    }
                 }
 
                 write_timed_tracks_to_head(writer, lines, 1, TimedTrackKind::Translation, options)?;
@@ -176,6 +180,106 @@ fn write_itunes_metadata<W: std::io::Write>(
             })?;
     }
 
+    Ok(())
+}
+
+/// 从歌词行中收集所有逐行音译
+fn collect_line_timed_romanizations(
+    lines: &[LyricLine],
+) -> HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> {
+    let mut romanizations_by_lang: HashMap<Option<String>, BTreeMap<String, LineTranslationParts>> =
+        HashMap::new();
+    for (i, line) in lines.iter().enumerate() {
+        let p_key = format!("L{}", i + 1);
+        for at in &line.tracks {
+            for track in &at.romanizations {
+                if !track.is_timed() {
+                    let lang = track.metadata.get(&TrackMetadataKey::Language).cloned();
+                    let full_text = track.text();
+                    let normalized_text = normalize_text_whitespace(&full_text);
+
+                    if !normalized_text.is_empty() {
+                        let line_parts = romanizations_by_lang
+                            .entry(lang)
+                            .or_default()
+                            .entry(p_key.clone())
+                            .or_default();
+
+                        match at.content_type {
+                            ContentType::Main => {
+                                if let Some(existing_text) = &mut line_parts.main_text {
+                                    if !existing_text.is_empty() {
+                                        existing_text.push(' ');
+                                    }
+                                    existing_text.push_str(&normalized_text);
+                                } else {
+                                    line_parts.main_text = Some(normalized_text);
+                                }
+                            }
+                            ContentType::Background => {
+                                if let Some(existing_text) = &mut line_parts.bg_text {
+                                    if !existing_text.is_empty() {
+                                        existing_text.push(' ');
+                                    }
+                                    existing_text.push_str(&normalized_text);
+                                } else {
+                                    line_parts.bg_text = Some(normalized_text);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    romanizations_by_lang
+}
+
+/// 写入逐行音译的 `<transliterations>` 元素
+fn write_line_timed_romanizations<W: std::io::Write>(
+    writer: &mut Writer<W>,
+    romanizations_by_lang: &HashMap<Option<String>, BTreeMap<String, LineTranslationParts>>,
+) -> Result<(), ConvertError> {
+    if romanizations_by_lang.is_empty() {
+        return Ok(());
+    }
+    writer
+        .create_element("transliterations")
+        .write_inner_content(|writer| {
+            let mut sorted_groups: Vec<_> = romanizations_by_lang.iter().collect();
+            sorted_groups.sort_by_key(|&(lang, _)| lang.clone());
+
+            for (lang, entries) in sorted_groups {
+                let mut trans_builder = writer.create_element("transliteration");
+
+                if let Some(lang_code) = lang.as_ref().filter(|s| !s.is_empty()) {
+                    trans_builder = trans_builder.with_attribute(("xml:lang", lang_code.as_str()));
+                }
+
+                trans_builder.write_inner_content(|writer| {
+                    for (key, parts) in entries {
+                        writer
+                            .create_element("text")
+                            .with_attribute(("for", key.as_str()))
+                            .write_inner_content(|writer| {
+                                if let Some(main_text) = &parts.main_text {
+                                    writer.write_event(Event::Text(BytesText::new(main_text)))?;
+                                }
+
+                                if let Some(bg_text) = &parts.bg_text {
+                                    writer
+                                        .create_element("span")
+                                        .with_attribute(("ttm:role", "x-bg"))
+                                        .write_text_content(BytesText::new(bg_text))?;
+                                }
+                                Ok(())
+                            })?;
+                    }
+                    Ok(())
+                })?;
+            }
+            Ok(())
+        })?;
     Ok(())
 }
 

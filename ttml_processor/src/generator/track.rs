@@ -30,7 +30,7 @@ pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
         for track in &at.romanizations {
             let is_timed = track.is_timed();
 
-            if !is_timed {
+            if !is_timed && !options.use_apple_format_rules {
                 write_inline_auxiliary_track(writer, track, "x-roman", options)?;
             }
         }
