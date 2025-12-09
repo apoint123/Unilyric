@@ -125,8 +125,8 @@ impl Provider for AmllTtmlDatabase {
                 "https://amll.mirror.dimeta.top/api/db/raw-lyrics/{song_id}".to_string(),
             ),
             AmllMirror::Bikonoo => (
-                "https://amll.bikonoo.com/metadata/raw-lyrics-index.jsonl".to_string(),
-                "https://amll.bikonoo.com/raw-lyrics/{song_id}".to_string(),
+                "https://amlldb.bikonoo.com/metadata/raw-lyrics-index.jsonl".to_string(),
+                "https://amlldb.bikonoo.com/raw-lyrics/{song_id}".to_string(),
             ),
             AmllMirror::Custom {
                 index_url,
