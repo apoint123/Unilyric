@@ -35,10 +35,8 @@ pub struct ActorSettings {}
 pub enum ConnectorCommand {
     UpdateConfig(AMLLConnectorConfig),
     UpdateActorSettings(ActorSettings),
-    SetProgress(u64),
     SendLyric(ParsedSourceData),
     SendCover(Vec<u8>),
-    FlickerPlayPause,
     Shutdown,
     DisconnectWebsocket,
 }

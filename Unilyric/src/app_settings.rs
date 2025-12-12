@@ -1,9 +1,7 @@
-use crate::types::AutoSearchSource;
 use directories::ProjectDirs;
 use log::LevelFilter;
 use lyrics_helper_core::{LyricFormat, MetadataStripperOptions, SyllableSmoothingOptions};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -24,21 +22,6 @@ impl Default for LogSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebsocketServerSettings {
-    pub enabled: bool,
-    pub port: u16,
-}
-
-impl Default for WebsocketServerSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            port: 10086,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum AppAmllMirror {
@@ -55,11 +38,9 @@ pub enum AppAmllMirror {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub log_settings: LogSettings,
-    pub pinned_metadata: HashMap<String, Vec<String>>,
     pub smtc_time_offset_ms: i64,
     pub amll_connector_enabled: bool,
     pub amll_connector_websocket_url: String,
-    pub auto_search_source_order: Vec<AutoSearchSource>,
     pub always_search_all_sources: bool,
     pub last_selected_smtc_session_id: Option<String>,
     pub selected_font_family: Option<String>,
@@ -68,23 +49,12 @@ pub struct AppSettings {
     pub auto_search_provider_subset: Vec<String>,
     pub prioritize_amll_db: bool,
 
-    pub enable_online_lyric_stripping: bool,
     pub enable_t2s_for_auto_search: bool,
 
-    pub websocket_server_settings: WebsocketServerSettings,
-
-    pub last_known_amll_index_head: Option<String>,
-    pub checked_amll_update_since_last_success: bool,
-    pub auto_check_amll_index_update_on_startup: bool,
     pub last_source_format: LyricFormat,
     pub last_target_format: LyricFormat,
     pub send_audio_data_to_player: bool,
 
-    pub batch_output_directory: Option<PathBuf>,
-    pub batch_default_target_format: Option<LyricFormat>,
-    pub batch_auto_pair_enabled: bool,
-    pub batch_translation_suffixes: Vec<String>,
-    pub batch_romanization_suffixes: Vec<String>,
     pub metadata_stripper: MetadataStripperOptions,
     pub syllable_smoothing: SyllableSmoothingOptions,
     pub auto_apply_metadata_stripper: bool,
@@ -92,8 +62,6 @@ pub struct AppSettings {
     pub amll_mirror: AppAmllMirror,
     pub auto_cache: bool,
     pub auto_cache_max_count: usize,
-    pub calibrate_timeline_on_song_change: bool,
-    pub flicker_play_pause_on_song_change: bool,
     pub enable_cover_cache_cleanup: bool,
     pub max_cover_cache_files: usize,
 }
@@ -102,44 +70,20 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             log_settings: LogSettings::default(),
-            pinned_metadata: HashMap::new(),
             smtc_time_offset_ms: 0,
             amll_connector_enabled: false,
             amll_connector_websocket_url: "ws://localhost:11444".to_string(),
-            auto_search_source_order: AutoSearchSource::default_order(),
             always_search_all_sources: true,
             last_selected_smtc_session_id: None,
             selected_font_family: None,
-            enable_online_lyric_stripping: true,
             enable_t2s_for_auto_search: true,
-            last_known_amll_index_head: None,
-            checked_amll_update_since_last_success: false,
-            auto_check_amll_index_update_on_startup: true,
             send_audio_data_to_player: true,
             use_provider_subset: false,
             auto_search_provider_subset: vec![],
             prioritize_amll_db: true,
 
-            websocket_server_settings: WebsocketServerSettings::default(),
             last_source_format: LyricFormat::Ass,
             last_target_format: LyricFormat::Ttml,
-            batch_output_directory: None,
-            batch_default_target_format: None,
-            batch_auto_pair_enabled: true,
-            batch_translation_suffixes: vec![
-                "_tr".to_string(),
-                "_translation".to_string(),
-                "_trans".to_string(),
-                ".tr".to_string(),
-                ".translation".to_string(),
-            ],
-            batch_romanization_suffixes: vec![
-                "_romaji".to_string(),
-                "_romanization".to_string(),
-                "_roma".to_string(),
-                ".romaji".to_string(),
-                ".romanization".to_string(),
-            ],
             metadata_stripper: Default::default(),
             syllable_smoothing: Default::default(),
             auto_apply_metadata_stripper: true,
@@ -147,8 +91,6 @@ impl Default for AppSettings {
             amll_mirror: AppAmllMirror::default(),
             auto_cache: false,
             auto_cache_max_count: 500,
-            calibrate_timeline_on_song_change: false,
-            flicker_play_pause_on_song_change: false,
             enable_cover_cache_cleanup: true,
             max_cover_cache_files: 500,
         }

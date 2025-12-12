@@ -358,7 +358,6 @@ async fn handle_app_command(
     status_tx: &TokioSender<WebsocketStatus>,
     media_cmd_tx: &TokioSender<SmtcControlCommand>,
     update_tx: &StdSender<UiUpdate>,
-    smtc_command_tx: &TokioSender<MediaCommand>,
 ) {
     match command {
         ConnectorCommand::Shutdown => {}
@@ -426,30 +425,6 @@ async fn handle_app_command(
                     repaint_needed: true,
                 });
             }
-        }
-        ConnectorCommand::SetProgress(progress) => {
-            if let ConnectionState::Running { tx, .. } = &state.connection {
-                let payload = Payload::State(StateUpdate::Progress { progress });
-                let msg = OutgoingMessage::Json(MessageV2 { payload });
-                handle_websocket_send_error(tx.try_send(msg), "SetProgress");
-            }
-        }
-        ConnectorCommand::FlickerPlayPause => {
-            handle_smtc_send_error(
-                smtc_command_tx
-                    .send(MediaCommand::Control(SmtcControlCommand::Pause))
-                    .await,
-                "FlickerPause",
-            )
-            .await;
-            tokio::time::sleep(Duration::from_millis(250)).await;
-            handle_smtc_send_error(
-                smtc_command_tx
-                    .send(MediaCommand::Control(SmtcControlCommand::Play))
-                    .await,
-                "FlickerPlay",
-            )
-            .await;
         }
         ConnectorCommand::SendLyric(parsed_data) => {
             let protocol_lyrics: Vec<LyricLine> = convert_to_protocol_lyrics(&parsed_data);
@@ -648,7 +623,7 @@ pub async fn amll_connector_actor(
                     }
                     break;
                 }
-                handle_app_command(command, &mut state, &ws_status_tx, &media_cmd_tx, &update_tx, &smtc_command_tx).await;
+                handle_app_command(command, &mut state, &ws_status_tx, &media_cmd_tx, &update_tx).await;
             },
 
             Some(media_cmd) = media_cmd_rx.recv() => {

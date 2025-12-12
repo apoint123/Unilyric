@@ -80,76 +80,11 @@ pub fn process_connector_updates(app: &mut UniLyricApp) {
                         if let Some(token) = app.fetcher.current_fetch_cancellation_token.take() {
                             token.cancel();
                         }
-
-                        {
-                            // let settings = app.app_settings.lock().unwrap();
-                            // if settings.calibrate_timeline_on_song_change
-                            //     && let Some(tx) = &app.amll_connector.command_tx
-                            //     && tx
-                            //         .try_send(crate::amll_connector::ConnectorCommand::SetProgress(
-                            //             0,
-                            //         ))
-                            //         .is_err()
-                            // {
-                            //     warn!("[TimelineCalibrate] 发送时间轴校准命令失败。");
-                            // }
-
-                            // if app.player.is_first_song_processed {
-                            //     if settings.flicker_play_pause_on_song_change
-                            //         && let Some(tx) = &app.amll_connector.command_tx
-                            //         && tx
-                            //                 .try_send(
-                            //                     crate::amll_connector::ConnectorCommand::FlickerPlayPause,
-                            //                 )
-                            //                 .is_err()
-                            //             {
-                            //                 warn!("[TimelineCalibrate] 发送暂停/播放命令失败。");
-                            //             }
-                            // } else {
-                            //     app.player.is_first_song_processed = true;
-                            // }
-                        }
                         app.player.current_now_playing = *new_info.clone();
                         crate::app_fetch_core::clear_last_fetch_results(app);
                         app.auto_fetch_trigger_time =
                             Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
                     } else {
-                        const LOOP_RESET_POSITION_THRESHOLD_MS: u64 = 1000;
-                        const MINIMUM_LOOP_JUMP_MS: u64 = 20000;
-
-                        let old_pos = app.player.current_now_playing.position_ms.unwrap_or(0);
-                        let new_pos = new_info.position_ms.unwrap_or(0);
-
-                        let is_loop_detected = new_pos < LOOP_RESET_POSITION_THRESHOLD_MS
-                            && old_pos > new_pos
-                            && (old_pos - new_pos) > MINIMUM_LOOP_JUMP_MS;
-
-                        if is_loop_detected {
-                            {
-                                let settings = app.app_settings.lock().unwrap();
-                                if settings.calibrate_timeline_on_song_change
-                                    && let Some(tx) = &app.amll_connector.command_tx
-                                    && tx
-                                        .try_send(
-                                            crate::amll_connector::ConnectorCommand::SetProgress(0),
-                                        )
-                                        .is_err()
-                                {
-                                    warn!("[TimelineCalibrate] 单曲循环时发送时间轴校准命令失败。");
-                                }
-                                if settings.flicker_play_pause_on_song_change
-                                    && let Some(tx) = &app.amll_connector.command_tx
-                                    && tx
-                                                .try_send(
-                                                    crate::amll_connector::ConnectorCommand::FlickerPlayPause,
-                                                )
-                                                .is_err()
-                                            {
-                                                warn!("[TimelineCalibrate] 单曲循环时发送暂停/播放命令失败。");
-                                            }
-                            }
-                        }
-
                         let current_info = &mut app.player.current_now_playing;
 
                         if let Some(pos) = new_info.position_ms {
