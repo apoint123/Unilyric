@@ -17,7 +17,7 @@ use crate::error::{AppError, AppResult};
 use crate::types::{AutoSearchStatus, LrcContentType, ProviderState};
 use lyrics_helper_core::{
     ChineseConversionConfig, ChineseConversionMode, ChineseConversionOptions, ContentType,
-    ConversionInput, ConversionOptions, InputFile, LyricFormat, LyricTrack, Track,
+    ConversionInput, ConversionOptions, InputFile, LyricFormat, Track,
 };
 use smtc_suite::{MediaCommand, TextConversionMode};
 use tracing::warn;
@@ -1239,24 +1239,15 @@ impl UniLyricApp {
         let mut lrc_output = String::new();
 
         for line in &parsed_data.lines {
-            if let Some(main_track) = line
-                .tracks
-                .iter()
-                .find(|t| t.content_type == ContentType::Main)
-            {
-                let aux_tracks: &Vec<LyricTrack> = if is_translation {
+            if let Some(main_track) = line.main_track() {
+                let aux_tracks = if is_translation {
                     &main_track.translations
                 } else {
                     &main_track.romanizations
                 };
 
                 if let Some(first_aux_track) = aux_tracks.first() {
-                    let text: String = first_aux_track
-                        .words
-                        .iter()
-                        .flat_map(|w| &w.syllables)
-                        .map(|s| s.text.as_str())
-                        .collect();
+                    let text = first_aux_track.text();
 
                     if !text.is_empty() {
                         let minutes = line.start_ms / 60000;
