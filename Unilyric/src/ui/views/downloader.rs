@@ -1,6 +1,7 @@
 use crate::app_actions::{DownloaderAction, UserAction};
 use crate::app_definition::{PreviewState, SearchState, UniLyricApp};
 use crate::types::ProviderState;
+use crate::ui::constants::TITLE_ALIGNMENT_OFFSET;
 use eframe::egui::{self, Align, Button, Color32, Layout, ScrollArea, Spinner, TextEdit};
 
 pub fn draw_downloader_view(app: &mut UniLyricApp, ctx: &egui::Context) {
@@ -18,6 +19,8 @@ pub fn draw_downloader_view(app: &mut UniLyricApp, ctx: &egui::Context) {
         .default_width(300.0)
         .width_range(250.0..=500.0)
         .show(ctx, |left_ui| {
+            left_ui.add_space(TITLE_ALIGNMENT_OFFSET);
+
             left_ui.horizontal(|header_ui| {
                 header_ui.heading("搜索");
                 header_ui.with_layout(Layout::right_to_left(Align::Center), |btn_ui| {
