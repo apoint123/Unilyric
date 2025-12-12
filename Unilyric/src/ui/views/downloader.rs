@@ -200,6 +200,30 @@ pub fn draw_downloader_view(app: &mut UniLyricApp, ctx: &egui::Context) {
                                     DownloaderAction::ApplyAndClose,
                                 )));
                             }
+                            if let Some(result) = &app.downloader.selected_result_for_preview {
+                                let url_opt = match result.provider_name.as_str() {
+                                    "qq" => Some(format!("https://y.qq.com/n/ryqq_v2/songDetail/{}", result.provider_id)),
+                                    "netease" => Some(format!("https://music.163.com/#/song?id={}", result.provider_id)),
+                                    "kugou" => {
+                                        let mut url = format!("https://www.kugou.com/song/#hash={}", result.provider_id);
+                                        if let Some(aid) = &result.album_id {
+                                            url.push_str(&format!("&album_id={aid}"));
+                                        }
+                                        Some(url)
+                                    },
+                                    "amll-ttml-database" => Some(format!("https://github.com/Steve-xmh/amll-ttml-db/blob/main/raw-lyrics/{}", result.provider_id)),
+                                    _ => None,
+                                };
+
+                                if let Some(url) = url_opt
+                                    && btn_ui.button("打开源网页").clicked() {
+                                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                                }
+
+                                btn_ui.separator();
+
+                                btn_ui.label(format!("ID: {}", result.provider_id.as_str()));
+                            }
                         });
                     },
                 );
