@@ -106,7 +106,7 @@ pub struct Song {
     /// 歌曲的媒体 ID (mid)，是获取歌词和播放链接的关键标识。
     pub mid: String,
     /// 歌曲名。
-    pub name: String,
+    pub title: String,
     /// 演唱者列表。
     pub singer: Vec<Singer>,
     /// 所属专辑信息。
@@ -115,7 +115,7 @@ pub struct Song {
     pub interval: u64,
     /// 同版本的其他曲目（例如，不同混音或版本）。
     #[serde(rename = "grp")]
-    pub group: Option<Vec<Song>>,
+    pub group: Option<Vec<Self>>,
     /// 语言代码，9 用来指示纯音乐
     pub language: Option<i64>,
 }

@@ -2006,7 +2006,7 @@ impl From<&models::Song> for SearchResult {
         };
 
         Self {
-            title: s.name.clone(),
+            title: s.title.clone(),
             artists: s
                 .singer
                 .iter()
