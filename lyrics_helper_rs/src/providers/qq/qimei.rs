@@ -46,6 +46,7 @@ pub enum QimeiError {
 /// Qimei 服务器成功响应后返回的数据结构。
 #[derive(serde::Deserialize, Debug)]
 pub struct QimeiResult {
+    #[allow(dead_code)]
     /// 16位的 Qimei。
     pub q16: String,
     /// 36位的 Qimei，API 主要使用它。

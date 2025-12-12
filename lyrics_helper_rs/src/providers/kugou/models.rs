@@ -39,8 +39,6 @@ pub struct SearchSongResponse {
 /// 歌曲搜索结果的数据部分。
 #[derive(Debug, Deserialize)]
 pub struct SearchSongData {
-    /// 搜索到的歌曲总数。
-    pub total: u32,
     /// 包含歌曲详细信息的列表。
     #[serde(rename = "lists")]
     pub info: Vec<SongInfo>,
@@ -111,9 +109,6 @@ pub struct TransParam {
 pub struct SearchLyricsResponse {
     /// API 状态码，`200` 通常表示成功。
     pub status: i32,
-    /// API 错误码。
-    #[serde(rename = "errcode")]
-    pub err_code: Option<i32>,
     /// 候选歌词列表。通常只关心第一个匹配项。
     pub candidates: Vec<Candidate>,
 }
@@ -125,15 +120,6 @@ pub struct Candidate {
     pub id: String,
     /// 下载歌词所需的访问密钥 (access key)。
     pub accesskey: String,
-    /// 演唱者姓名。
-    pub singer: String,
-    /// 歌曲名。
-    pub song: String,
-    /// 歌词对应的歌曲时长，单位为毫秒 (ms)。
-    pub duration: u64,
-    /// KRC 歌词类型。
-    #[serde(rename = "krctype")]
-    pub krc_type: i32,
 }
 
 // =================================================================
@@ -203,15 +189,6 @@ pub struct AlbumDetailData {
     #[serde(default)]
     #[serde(rename = "author_name")]
     pub singer_name: Option<String>,
-
-    /// 专辑语言。
-    #[serde(default)]
-    pub language: Option<String>,
-
-    /// 发行公司。
-    #[serde(default)]
-    #[serde(rename = "publish_company")]
-    pub publish_company: Option<String>,
 }
 
 // =================================================================
@@ -251,8 +228,6 @@ pub struct AlbumSongsResponse {
 pub struct AlbumSongsData {
     /// 包含歌曲详细信息的列表。
     pub songs: Vec<AlbumSongInfo>,
-    /// 专辑中的总歌曲数量。
-    pub total: u32,
 }
 
 /// 为专辑歌曲列表接口设计的歌曲信息模型。
@@ -277,6 +252,7 @@ pub struct AlbumSongBaseInfo {
 
 /// `AlbumSongInfo` 的音频信息部分。
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct AlbumSongAudioInfo {
     /// 标准音质的歌曲文件 hash，是获取播放链接的关键。
     #[serde(default)]
@@ -338,8 +314,6 @@ pub struct KmrSingerSongsResponse {
     pub status: i32,
     /// API 错误码, 0 表示成功。
     pub error_code: i32,
-    /// 歌曲总数。
-    pub total: u32,
     /// 包含歌曲详细信息的列表。
     #[serde(default)]
     pub data: Vec<KmrSongInfo>,
@@ -388,10 +362,6 @@ pub struct PlaylistIdObject<'a> {
 /// 歌单详情元数据 API 的顶层响应结构。
 #[derive(Debug, Deserialize)]
 pub struct PlaylistDetailResponse {
-    /// API 状态码, 1 表示成功。
-    pub status: i32,
-    /// API 错误码, 0 表示成功。
-    pub error_code: i32,
     /// 包含歌单详情的数据数组。
     #[serde(default)]
     pub data: Vec<PlaylistDetailData>,
@@ -410,8 +380,6 @@ pub struct PlaylistDetailData {
     /// 包含 `{size}` 占位符的封面 URL。
     /// 留空可以获取最大尺寸的图片。
     pub pic: String,
-    /// 歌曲数量。
-    pub count: u32,
     /// 歌单创建者用户名。
     pub list_create_username: String,
 }
@@ -423,10 +391,6 @@ pub struct PlaylistDetailData {
 /// 歌单歌曲列表 API 的顶层响应结构。
 #[derive(Debug, Deserialize)]
 pub struct PlaylistSongsResponse {
-    /// API 状态码, 1 表示成功。
-    pub status: i32,
-    /// API 错误码, 0 表示成功。
-    pub error_code: i32,
     /// 包含歌曲列表的数据容器。
     pub data: Option<PlaylistSongsData>,
 }
@@ -460,28 +424,6 @@ pub struct PlaylistSongAuthor {
     pub name: String,
     /// 歌手 ID。
     pub id: u64,
-}
-
-// =================================================================
-// 搜索歌单接口 (`/v1/search/special`) 的模型
-// =================================================================
-
-/// 搜索歌单 API 的顶层响应结构。
-#[derive(Debug, Deserialize)]
-pub struct SearchPlaylistResponse {
-    /// API 状态码, 1 表示成功。
-    pub status: i32,
-    /// API 错误码, 0 表示成功。
-    pub error_code: i32,
-    /// 包含搜索结果的数据容器。
-    pub data: Option<SearchPlaylistData>,
-}
-
-/// 搜索歌单结果的数据部分。
-#[derive(Debug, Deserialize)]
-pub struct SearchPlaylistData {
-    /// 搜索到的歌单总数。
-    pub total: u32,
 }
 
 // =================================================================
@@ -529,6 +471,7 @@ pub struct Resource<'a> {
     pub page_id: u32,
     /// 资源类型，固定为 "audio"。
     #[serde(rename = "type")]
+    #[allow(clippy::struct_field_names)]
     pub resource_type: &'a str,
 }
 
@@ -679,10 +622,6 @@ pub struct SongDetailData {
     pub name: String,
     /// 单独的歌手名字段。
     pub singername: String,
-    /// 专辑名。
-    pub albumname: String,
-    /// 专辑 ID。
-    pub album_id: String,
     /// 包含时长和封面等信息的嵌套对象。
     pub info: SongDetailInfo,
 }

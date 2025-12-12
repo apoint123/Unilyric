@@ -210,6 +210,7 @@ fn process_kana_content(text: &str) -> Vec<FuriganaSyllable> {
             });
         }
     } else {
+        #[allow(clippy::literal_string_with_formatting_args)]
         let clean = LYRIC_TOKEN_REGEX.replace_all(text.trim(), "${text}");
         syllables.push(FuriganaSyllable {
             text: clean.to_string(),

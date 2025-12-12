@@ -332,6 +332,7 @@ impl NeteaseClient {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 #[async_trait]
 impl Provider for NeteaseClient {
     fn name(&self) -> &'static str {

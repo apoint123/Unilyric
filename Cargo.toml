@@ -3,7 +3,6 @@ members = [
     "lyrics_helper_core",
     "lyrics_helper_rs",
     "ttml_processor",
-    "lyrics_helper_lite",
     "Unilyric",
 ]
 

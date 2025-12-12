@@ -17,8 +17,6 @@ pub struct BusinessCode {
 /// 包含响应代码和实际数据。
 #[derive(Debug, Deserialize)]
 pub struct Req1 {
-    /// API 返回码，0 表示成功。
-    pub code: i32,
     /// 包含响应主体的容器。
     pub data: Option<Req1Data>,
 }
@@ -69,7 +67,7 @@ pub enum SearchType {
 impl SearchType {
     /// 获取该搜索类型对应的整数值
     #[must_use]
-    pub const fn as_u32(&self) -> u32 {
+    pub const fn as_u32(self) -> u32 {
         match self {
             Self::Song => 0,
             Self::Singer => 1,
@@ -152,6 +150,7 @@ pub struct Album {
 ///
 /// 并非所有专辑都支持所有尺寸。
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum QQMusicCoverSize {
     /// 90x90 像素，适用于缩略图。
     Size90,
@@ -168,7 +167,7 @@ pub enum QQMusicCoverSize {
 impl QQMusicCoverSize {
     /// 将给定封面尺寸变体的像素大小以 `u32` 形式返回。
     #[must_use]
-    pub const fn as_u32(&self) -> u32 {
+    pub const fn as_u32(self) -> u32 {
         match self {
             Self::Size90 => 90,
             Self::Size150 => 150,
@@ -261,9 +260,6 @@ pub struct DataInfo {
     /// 歌曲项目列表。
     #[serde(rename = "songList")]
     pub song_list: Vec<SongItem>,
-    /// 专辑内歌曲总数。
-    #[serde(rename = "totalNum")]
-    pub total_num: u32,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -303,28 +299,6 @@ pub struct SongInfo {
     pub language: Option<i64>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-/// MV (音乐视频) 的基本信息。
-pub struct Mv {
-    /// MV 的数字 ID。
-    pub id: u64,
-    /// MV 的视频 ID (vid)。
-    pub vid: String,
-}
-
-/// 包含不同音质文件大小的信息。
-#[derive(Debug, Deserialize, Clone)]
-pub struct FileInfo {
-    /// 媒体资源的字符串 ID。
-    pub media_mid: String,
-    /// 128kbps MP3 文件大小 (字节)。
-    pub size_128mp3: u64,
-    /// 320kbps MP3 文件大小 (字节)。
-    pub size_320mp3: u64,
-    /// FLAC 无损文件大小 (字节)。
-    pub size_flac: u64,
-}
-
 // =================================================================
 // 歌手歌曲列表接口 ( `musichall.song_list_server.GetSingerSongList` ) 的模型
 // =================================================================
@@ -342,8 +316,6 @@ pub struct SingerSongListApiResult {
 pub struct SingerSongListResult {
     /// 歌曲列表，每一项都包含了详细的 songInfo。
     pub song_list: Vec<SongItem>,
-    /// 该歌手的歌曲总数。
-    pub total_num: u32,
 }
 
 // =================================================================
@@ -496,6 +468,7 @@ pub struct MidUrlInfo {
 
 /// 歌曲文件类型枚举
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub enum SongFileType {
     /// 128kbps MP3，只有这个音质可以免登录获取。
     Mp3_128,

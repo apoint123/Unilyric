@@ -35,8 +35,8 @@ use lyrics_helper_core::{
 };
 
 pub mod decrypter;
-pub mod models;
-pub mod signature;
+mod models;
+mod signature;
 
 const KUGOU_ANDROID_USER_AGENT: &str = "Android15-1070-11083-46-0-DiscoveryDRADProtocol-wifi";
 const APP_ID: &str = "1005";

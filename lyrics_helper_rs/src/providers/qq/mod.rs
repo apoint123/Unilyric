@@ -44,11 +44,10 @@ use crate::{
     },
 };
 
-pub mod device;
-pub mod models;
-pub mod qimei;
+mod device;
+mod models;
+mod qimei;
 pub mod qrc_codec;
-pub mod sign;
 
 const MUSIC_U_FCG_URL: &str = "https://u.y.qq.com/cgi-bin/musicu.fcg";
 

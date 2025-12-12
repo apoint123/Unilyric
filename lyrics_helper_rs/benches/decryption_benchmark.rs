@@ -170,9 +170,7 @@ mod original {
                 c = ((c << shift as usize) | (c >> (28 - shift as usize))) & 0xfffffff0;
                 d = ((d << shift as usize) | (d >> (28 - shift as usize))) & 0xfffffff0;
                 let to_gen = if mode == DECRYPT { 15 - i } else { i };
-                for j in 0..6 {
-                    schedule[to_gen][j] = 0;
-                }
+                schedule[to_gen][0..6].fill(0);
                 for (j, &comp) in key_compression.iter().enumerate().take(24) {
                     schedule[to_gen][j / 8] |=
                         extract_and_position_bit_in_byte(c, comp, 7 - (j % 8));

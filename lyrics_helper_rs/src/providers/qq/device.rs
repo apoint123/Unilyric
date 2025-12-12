@@ -27,6 +27,7 @@ pub struct OsVersion {
 pub struct Device {
     pub display: String,
     pub product: String,
+    #[allow(clippy::struct_field_names)]
     pub device: String,
     pub board: String,
     pub model: String,

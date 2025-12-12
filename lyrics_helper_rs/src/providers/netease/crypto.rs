@@ -3,6 +3,8 @@
 //!
 //! 加密逻辑来源于 <https://github.com/Binaryify/NeteaseCloudMusicApi>
 
+#![allow(deprecated)]
+
 use aes::{
     Aes128,
     cipher::{BlockSizeUser, KeyIvInit, generic_array::GenericArray},

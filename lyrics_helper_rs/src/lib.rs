@@ -1128,26 +1128,32 @@ mod integration_tests {
             let translation_text = line
                 .main_track()
                 .and_then(|track| track.translations.first())
-                .map_or("N/A".to_string(), |t| {
-                    t.words
-                        .iter()
-                        .flat_map(|w| &w.syllables)
-                        .map(|s| s.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("")
-                });
+                .map_or_else(
+                    || "N/A".to_string(),
+                    |t| {
+                        t.words
+                            .iter()
+                            .flat_map(|w| &w.syllables)
+                            .map(|s| s.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("")
+                    },
+                );
 
             let romanization_text = line
                 .main_track()
                 .and_then(|track| track.romanizations.first())
-                .map_or("N/A".to_string(), |t| {
-                    t.words
-                        .iter()
-                        .flat_map(|w| &w.syllables)
-                        .map(|s| s.text.as_str())
-                        .collect::<Vec<_>>()
-                        .join("")
-                });
+                .map_or_else(
+                    || "N/A".to_string(),
+                    |t| {
+                        t.words
+                            .iter()
+                            .flat_map(|w| &w.syllables)
+                            .map(|s| s.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("")
+                    },
+                );
 
             println!(
                 "  - 主歌词: {main_text}\n    翻译: {translation_text}\n    罗马音: {romanization_text}"
