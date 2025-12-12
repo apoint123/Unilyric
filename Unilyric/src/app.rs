@@ -5,7 +5,6 @@ use std::time::Duration;
 
 impl eframe::App for UniLyricApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 仅供调试，不要开启！
         // ctx.set_debug_on_hover(true);
 
         app_update::handle_conversion_results(self);
@@ -29,12 +28,6 @@ impl eframe::App for UniLyricApp {
                 ctx.request_repaint_after(trigger_time - std::time::Instant::now());
             }
         }
-
-        // let mut desired_repaint_delay = Duration::from_millis(1000);
-        // if self.amll_connector.config.lock().unwrap().enabled {
-        //     desired_repaint_delay = desired_repaint_delay.min(Duration::from_millis(100));
-        // }
-        // ctx.request_repaint_after(desired_repaint_delay);
 
         ctx.request_repaint_after(Duration::from_millis(1000));
 

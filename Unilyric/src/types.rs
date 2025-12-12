@@ -1,5 +1,5 @@
 use chrono::{DateTime, Local};
-use lyrics_helper_core::{CanonicalMetadataKey, LyricFormat, LyricLine, LyricsAndMetadata};
+use lyrics_helper_core::{CanonicalMetadataKey, LyricFormat, LyricsAndMetadata};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -30,8 +30,7 @@ pub enum LrcContentType {
 
 #[derive(Debug, Clone)]
 pub enum DisplayLrcLine {
-    Parsed(Box<LyricLine>),
-    Raw { original_text: String },
+    Parsed,
 }
 
 #[derive(Debug, Clone)]
@@ -116,19 +115,14 @@ impl From<AutoSearchSource> for &'static str {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum AutoSearchStatus {
+    #[default]
     NotAttempted,
     Searching,
     Success(LyricFormat),
     NotFound,
     Error(String),
-}
-
-impl Default for AutoSearchStatus {
-    fn default() -> Self {
-        Self::NotAttempted
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -192,4 +186,26 @@ pub enum ProviderState {
     Ready,
     /// 加载失败
     Failed(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsCategory {
+    #[default]
+    General,
+    Interface,
+    AutoSearch,
+    Connector,
+    Postprocessors,
+}
+
+impl SettingsCategory {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            SettingsCategory::General => "通用",
+            SettingsCategory::Interface => "界面",
+            SettingsCategory::AutoSearch => "自动搜索",
+            SettingsCategory::Connector => "AMLL Connector",
+            SettingsCategory::Postprocessors => "后处理器",
+        }
+    }
 }

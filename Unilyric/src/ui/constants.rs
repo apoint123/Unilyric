@@ -1,0 +1,2 @@
+pub const TITLE_ALIGNMENT_OFFSET: f32 = 6.0;
+pub const BUTTON_STRIP_SPACING: f32 = 4.0;

@@ -4,14 +4,14 @@ mod amll_connector;
 mod app;
 mod app_actions;
 mod app_definition;
-pub mod app_fetch_core;
+mod app_fetch_core;
 mod app_handlers;
 mod app_settings;
-mod app_ui;
 mod app_update;
 mod error;
 mod io;
 mod types;
+mod ui;
 mod utils;
 
 use app_settings::AppSettings;

@@ -45,9 +45,9 @@ pub enum LyricsAction {
     TargetFormatChanged(LyricFormat),
     AddMetadata(CanonicalMetadataKey),
     DeleteMetadata(usize),
-    UpdateMetadataKey(usize, CanonicalMetadataKey),
-    UpdateMetadataValue(usize, String),
-    ToggleMetadataPinned(usize),
+    UpdateMetadataKey,
+    UpdateMetadataValue,
+    ToggleMetadataPinned,
     LrcInputChanged(String, LrcContentType),
     MainInputChanged(String),
     ClearAllData,
@@ -58,8 +58,6 @@ pub enum LyricsAction {
 
 #[derive(Debug, Clone)]
 pub enum DownloaderAction {
-    SetTitle(String),
-    SetArtist(String),
     FillFromSmtc,
     PerformSearch,
     SearchCompleted(AppResult<Vec<SearchResult>>),
@@ -152,7 +150,6 @@ pub enum ProcessorType {
 pub enum BatchConverterAction {
     SelectInputDir,
     SelectOutputDir,
-    SetTargetFormat(LyricFormat),
     ScanTasks,
     StartConversion,
     TaskUpdate(BatchTaskUpdate),

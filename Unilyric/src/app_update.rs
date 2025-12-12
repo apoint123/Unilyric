@@ -6,10 +6,21 @@ use crate::app_actions::{PlayerAction, UIAction, UserAction};
 use crate::app_definition::{AppView, UniLyricApp};
 use crate::error::AppError;
 use crate::types::{AutoFetchResult, AutoSearchSource, AutoSearchStatus, LogLevel, ProviderState};
+use crate::ui::panels::{
+    draw_input_panel_contents, draw_output_panel_contents, draw_romanization_lrc_panel_contents,
+    draw_translation_lrc_panel_contents,
+};
+use crate::ui::settings::draw_settings_window;
+use crate::ui::sidebar::draw_amll_connector_sidebar;
+use crate::ui::status::{draw_log_panel, draw_status_bar, draw_warnings_panel};
+use crate::ui::toolbar::draw_toolbar;
+use crate::ui::views::batch_converter::draw_batch_converter_view;
+use crate::ui::views::downloader::draw_downloader_view;
+use crate::ui::windows::draw_metadata_editor_window_contents;
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use smtc_suite::MediaUpdate;
 
-pub(super) fn process_log_messages(app: &mut UniLyricApp) {
+pub fn process_log_messages(app: &mut UniLyricApp) {
     let mut has_warn_or_higher_this_frame = false;
     let mut first_warn_or_higher_message: Option<String> = None;
 
@@ -44,7 +55,7 @@ pub(super) fn process_log_messages(app: &mut UniLyricApp) {
     }
 }
 
-pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
+pub fn process_connector_updates(app: &mut UniLyricApp) {
     while let Ok(ui_update) = app.amll_connector.update_rx.try_recv() {
         match ui_update.payload {
             ConnectorUpdate::WebsocketStatusChanged(status) => {
@@ -202,7 +213,7 @@ pub(super) fn process_connector_updates(app: &mut UniLyricApp) {
     }
 }
 
-pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
+pub fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     while let Ok(auto_fetch_result) = app.fetcher.result_rx.try_recv() {
         match auto_fetch_result {
             AutoFetchResult::LyricsReady {
@@ -386,30 +397,30 @@ pub(super) fn handle_auto_fetch_results(app: &mut UniLyricApp) {
     }
 }
 
-pub(super) fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
+pub fn draw_ui_elements(app: &mut UniLyricApp, ctx: &egui::Context) {
     egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-        app.draw_toolbar(ui);
+        draw_toolbar(app, ui);
     });
-    app.draw_log_panel(ctx);
+    draw_log_panel(app, ctx);
 
     match app.ui.current_view {
         AppView::Editor => {
-            app.draw_warnings_panel(ctx);
+            draw_warnings_panel(app, ctx);
 
-            app.draw_status_bar(ctx);
+            draw_status_bar(app, ctx);
 
             draw_editor_view(app, ctx);
         }
         AppView::Downloader => {
-            app.draw_downloader_view(ctx);
+            draw_downloader_view(app, ctx);
         }
         AppView::BatchConverter => {
-            app.draw_batch_converter_view(ctx);
+            draw_batch_converter_view(app, ctx);
         }
     }
 
     if app.ui.show_settings_window {
-        app.draw_settings_window(ctx);
+        draw_settings_window(app, ctx);
     }
 }
 
@@ -420,7 +431,7 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
     egui::SidePanel::left("input_panel")
         .default_width(input_panel_width)
         .show(ctx, |ui| {
-            app.draw_input_panel_contents(ui);
+            draw_input_panel_contents(app, ui);
         });
 
     let amll_connector_feature_is_enabled = app.amll_connector.config.lock().unwrap().enabled;
@@ -434,7 +445,7 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
             .resizable(false)
             .exact_width(300.0)
             .show(ctx, |ui| {
-                app.draw_amll_connector_sidebar(ui);
+                draw_amll_connector_sidebar(app, ui);
             });
     }
 
@@ -444,19 +455,19 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
         egui::SidePanel::right("translation_lrc_panel")
             .default_width(lrc_panel_width)
             .show(ctx, |ui| {
-                app.draw_translation_lrc_panel_contents(ui);
+                draw_translation_lrc_panel_contents(app, ui);
             });
     }
     if app.ui.show_romanization_lrc_panel {
         egui::SidePanel::right("romanization_lrc_panel")
             .default_width(lrc_panel_width)
             .show(ctx, |ui| {
-                app.draw_romanization_lrc_panel_contents(ui);
+                draw_romanization_lrc_panel_contents(app, ui);
             });
     }
 
     egui::CentralPanel::default().show(ctx, |ui| {
-        app.draw_output_panel_contents(ui);
+        draw_output_panel_contents(app, ui);
     });
 
     if app.ui.show_metadata_panel {
@@ -470,7 +481,8 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
             .resizable(true)
             .collapsible(true)
             .show(ctx, |ui| {
-                app.draw_metadata_editor_window_contents(
+                draw_metadata_editor_window_contents(
+                    app,
                     ui,
                     &mut should_keep_panel_open_from_internal_logic,
                 );
@@ -482,7 +494,7 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
     }
 }
 
-pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
+pub fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
     if !ctx.input(|i| i.raw.dropped_files.is_empty()) {
         let files = ctx.input(|i| i.raw.dropped_files.clone());
         if let Some(file) = files.first() {
@@ -532,7 +544,7 @@ pub(super) fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {
 }
 
 /// 处理来自歌词转换任务的结果。
-pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
+pub fn handle_conversion_results(app: &mut UniLyricApp) {
     if let Some(rx) = &app.lyrics.conversion_result_rx
         && let Ok(result) = rx.try_recv()
     {
@@ -546,7 +558,7 @@ pub(super) fn handle_conversion_results(app: &mut UniLyricApp) {
 }
 
 /// 并处理来自提供商加载任务的结果。
-pub(super) fn handle_provider_load_results(app: &mut UniLyricApp) {
+pub fn handle_provider_load_results(app: &mut UniLyricApp) {
     if let Some(rx) = &app.lyrics_helper_state.provider_load_result_rx
         && let Ok(result) = rx.try_recv()
     {

@@ -190,12 +190,10 @@ impl UniLyricApp {
         });
     }
 
-    // 用于发送事件的辅助函数
     pub fn send_action(&mut self, action: UserAction) {
         self.actions_this_frame.push(action);
     }
 
-    // 主事件处理函数
     pub fn handle_actions(&mut self, actions: Vec<UserAction>) {
         let mut results = Vec::new();
 
@@ -204,7 +202,6 @@ impl UniLyricApp {
             results.push(self.handle_single_action(action));
         }
 
-        // 统一处理结果
         for result in results {
             match result {
                 ActionResult::Error(msg) => {
@@ -223,14 +220,11 @@ impl UniLyricApp {
                         style: Default::default(),
                     });
                 }
-                ActionResult::Success => {
-                    // 成功时通常不需要显示通知
-                }
+                ActionResult::Success => {}
             }
         }
     }
 
-    /// 单个事件处理逻辑
     fn handle_single_action(&mut self, action: UserAction) -> ActionResult {
         match action {
             UserAction::Lyrics(lyrics_action) => self.handle_lyrics_action(*lyrics_action),
@@ -382,7 +376,6 @@ impl UniLyricApp {
         ActionResult::Success
     }
 
-    /// 子事件处理器
     fn handle_lyrics_action(&mut self, action: LyricsAction) -> ActionResult {
         match action {
             LyricsAction::LoadFileContent(content, path) => {
@@ -457,7 +450,6 @@ impl UniLyricApp {
                 info!("源格式改变为: {format:?}");
                 self.lyrics.source_format = format;
 
-                // 保存到设置
                 if let Ok(mut settings) = self.app_settings.lock() {
                     settings.last_source_format = format;
                     if let Err(e) = settings.save() {
@@ -465,7 +457,6 @@ impl UniLyricApp {
                     }
                 }
 
-                // 源格式变化时，如果有输入内容且不在转换中，则触发转换
                 if !self.lyrics.input_text.trim().is_empty() && !self.lyrics.conversion_in_progress
                 {
                     self.trigger_convert();
@@ -477,7 +468,6 @@ impl UniLyricApp {
                 info!("目标格式改变为: {format:?}");
                 self.lyrics.target_format = format;
 
-                // 保存到设置
                 if let Ok(mut settings) = self.app_settings.lock() {
                     settings.last_target_format = format;
                     if let Err(e) = settings.save() {
@@ -485,7 +475,6 @@ impl UniLyricApp {
                     }
                 }
 
-                // 目标格式变化时，如果有输入内容且不在转换中，则触发转换
                 if !self.lyrics.input_text.trim().is_empty() && !self.lyrics.conversion_in_progress
                 {
                     self.trigger_convert();
@@ -511,12 +500,12 @@ impl UniLyricApp {
                     ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
                 }
             }
-            LyricsAction::UpdateMetadataKey(..) | LyricsAction::UpdateMetadataValue(..) => {
+            LyricsAction::UpdateMetadataKey | LyricsAction::UpdateMetadataValue => {
                 self.sync_and_regenerate_metadata();
                 self.update_and_save_pinned_metadata();
                 ActionResult::Success
             }
-            LyricsAction::ToggleMetadataPinned(..) => {
+            LyricsAction::ToggleMetadataPinned => {
                 self.update_and_save_pinned_metadata();
                 ActionResult::Success
             }
@@ -529,7 +518,7 @@ impl UniLyricApp {
                         parsed
                             .lines
                             .into_iter()
-                            .map(|line| crate::types::DisplayLrcLine::Parsed(Box::new(line)))
+                            .map(|_| crate::types::DisplayLrcLine::Parsed)
                             .collect(),
                     ),
                     Err(e) => {
@@ -543,7 +532,6 @@ impl UniLyricApp {
                     LrcContentType::Romanization => self.lyrics.loaded_romanization_lrc = lrc_lines,
                 }
 
-                // 触发转换
                 self.trigger_convert();
                 ActionResult::Success
             }
@@ -603,14 +591,6 @@ impl UniLyricApp {
 
     fn handle_downloader_action(&mut self, action: DownloaderAction) -> ActionResult {
         match action {
-            DownloaderAction::SetTitle(title) => {
-                self.downloader.title_input = title;
-                ActionResult::Success
-            }
-            DownloaderAction::SetArtist(artist) => {
-                self.downloader.artist_input = artist;
-                ActionResult::Success
-            }
             DownloaderAction::FillFromSmtc => {
                 let smtc_info = &self.player.current_now_playing;
                 if smtc_info.title.is_none() {
@@ -741,7 +721,7 @@ impl UniLyricApp {
         }
     }
 
-    pub(super) fn clear_lyrics_state_for_new_song_internal(&mut self) {
+    pub fn clear_lyrics_state_for_new_song_internal(&mut self) {
         info!("[State] 正在为新歌曲清理歌词状态。");
         self.lyrics.input_text.clear();
         self.lyrics.output_text.clear();
@@ -796,7 +776,6 @@ impl UniLyricApp {
                     PanelType::Warnings => &mut self.ui.show_warnings_panel,
                 };
 
-                // 用事件携带的值来更新核心状态
                 *panel_state_mut = is_visible;
 
                 if matches!(panel, PanelType::Log) && is_visible {
@@ -955,10 +934,6 @@ impl UniLyricApp {
                 }
                 ActionResult::Success
             }
-            BatchConverterAction::SetTargetFormat(format) => {
-                self.batch_converter.target_format = format;
-                ActionResult::Success
-            }
             BatchConverterAction::ScanTasks => {
                 let Some(input_dir) = self.batch_converter.input_dir.clone() else {
                     return ActionResult::Warning("输入目录未设置".to_string());
@@ -996,7 +971,6 @@ impl UniLyricApp {
                 let action_tx = self.action_tx.clone();
 
                 self.tokio_runtime.spawn(async move {
-                    // Execute the conversion in a background thread.
                     let result = lyrics_helper_rs::converter::processors::batch_processor::execute_batch_conversion(
                         &mut tasks,
                         &file_lookup,
@@ -1282,7 +1256,7 @@ impl UniLyricApp {
         }
     }
 
-    pub(super) fn draw_chinese_conversion_menu_item(
+    pub fn draw_chinese_conversion_menu_item(
         &mut self,
         ui: &mut egui::Ui,
         variant: ChineseConversionConfig,
@@ -1325,7 +1299,7 @@ impl UniLyricApp {
         });
     }
 
-    pub(super) fn set_searching_providers_to_not_found(&mut self) {
+    pub fn set_searching_providers_to_not_found(&mut self) {
         let all_search_status_arcs = [
             &self.fetcher.local_cache_status,
             &self.fetcher.qqmusic_status,
@@ -1342,7 +1316,7 @@ impl UniLyricApp {
         }
     }
 
-    pub(super) fn generate_lrc_from_aux_track(
+    pub fn generate_lrc_from_aux_track(
         &self,
         parsed_data: &lyrics_helper_core::ParsedSourceData,
         is_translation: bool,
@@ -1383,7 +1357,7 @@ impl UniLyricApp {
         lrc_output
     }
 
-    pub(super) fn generate_lrc_from_main_track(
+    pub fn generate_lrc_from_main_track(
         &self,
         parsed_data: &lyrics_helper_core::ParsedSourceData,
     ) -> String {

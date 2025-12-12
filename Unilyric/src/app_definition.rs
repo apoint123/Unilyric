@@ -24,8 +24,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::types::UiUpdate;
-use crate::app_ui::SettingsCategory;
-use crate::types::{EditableMetadataEntry, ProviderState};
+use crate::types::{EditableMetadataEntry, ProviderState, SettingsCategory};
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
     app_actions::UserAction,
@@ -34,10 +33,10 @@ use crate::{
     utils,
 };
 
-pub(super) type ConversionResultRx = StdReceiver<Result<FullConversionResult, LyricsHelperError>>;
+pub type ConversionResultRx = StdReceiver<Result<FullConversionResult, LyricsHelperError>>;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) enum AppView {
+pub enum AppView {
     #[default]
     Editor,
     Downloader,
@@ -45,7 +44,7 @@ pub(super) enum AppView {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) enum SearchState {
+pub enum SearchState {
     #[default]
     Idle,
     Searching,
@@ -54,7 +53,7 @@ pub(super) enum SearchState {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) enum PreviewState {
+pub enum PreviewState {
     #[default]
     Idle,
     Loading,
@@ -63,33 +62,33 @@ pub(super) enum PreviewState {
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct DownloaderState {
-    pub(super) title_input: String,
-    pub(super) artist_input: String,
-    pub(super) album_input: String,
-    pub(super) duration_ms_input: u64,
-    pub(super) search_state: SearchState,
-    pub(super) selected_result_for_preview: Option<SearchResult>,
-    pub(super) preview_state: PreviewState,
-    pub(super) selected_full_lyrics: Option<FullLyricsResult>,
+pub struct DownloaderState {
+    pub title_input: String,
+    pub artist_input: String,
+    pub album_input: String,
+    pub duration_ms_input: u64,
+    pub search_state: SearchState,
+    pub selected_result_for_preview: Option<SearchResult>,
+    pub preview_state: PreviewState,
+    pub selected_full_lyrics: Option<FullLyricsResult>,
 }
 
-pub(super) struct UiState {
-    pub(super) show_bottom_log_panel: bool,
-    pub(super) new_trigger_log_exists: bool,
-    pub(super) show_romanization_lrc_panel: bool,
-    pub(super) show_translation_lrc_panel: bool,
-    pub(super) wrap_text: bool,
-    pub(super) show_settings_window: bool,
-    pub(super) show_amll_connector_sidebar: bool,
-    pub(super) show_metadata_panel: bool,
-    pub(super) show_warnings_panel: bool,
-    pub(super) log_display_buffer: Vec<LogEntry>,
-    pub(super) temp_edit_settings: AppSettings,
-    pub(super) toasts: Toasts,
-    pub(super) available_system_fonts: Vec<String>,
-    pub(super) current_settings_category: SettingsCategory,
-    pub(super) current_view: AppView,
+pub struct UiState {
+    pub show_bottom_log_panel: bool,
+    pub new_trigger_log_exists: bool,
+    pub show_romanization_lrc_panel: bool,
+    pub show_translation_lrc_panel: bool,
+    pub wrap_text: bool,
+    pub show_settings_window: bool,
+    pub show_amll_connector_sidebar: bool,
+    pub show_metadata_panel: bool,
+    pub show_warnings_panel: bool,
+    pub log_display_buffer: Vec<LogEntry>,
+    pub temp_edit_settings: AppSettings,
+    pub toasts: Toasts,
+    pub available_system_fonts: Vec<String>,
+    pub current_settings_category: SettingsCategory,
+    pub current_view: AppView,
 }
 
 impl UiState {
@@ -118,30 +117,30 @@ impl UiState {
     }
 }
 
-pub(super) struct LyricState {
-    pub(super) input_text: String,
-    pub(super) output_text: String,
-    pub(super) display_translation_lrc_output: String,
-    pub(super) display_romanization_lrc_output: String,
-    pub(super) parsed_lyric_data: Option<ParsedSourceData>,
-    pub(super) loaded_translation_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
-    pub(super) loaded_romanization_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
-    pub(super) metadata_manager: UiMetadataManager,
-    pub(super) metadata_source_is_download: bool,
-    pub(super) source_format: LyricFormat,
-    pub(super) target_format: LyricFormat,
-    pub(super) available_formats: Vec<LyricFormat>,
-    pub(super) last_opened_file_path: Option<std::path::PathBuf>,
-    pub(super) last_saved_file_path: Option<std::path::PathBuf>,
-    pub(super) conversion_in_progress: bool,
-    pub(super) conversion_result_rx: Option<ConversionResultRx>,
-    pub(super) current_warnings: Vec<String>,
+pub struct LyricState {
+    pub input_text: String,
+    pub output_text: String,
+    pub display_translation_lrc_output: String,
+    pub display_romanization_lrc_output: String,
+    pub parsed_lyric_data: Option<ParsedSourceData>,
+    pub loaded_translation_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
+    pub loaded_romanization_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
+    pub metadata_manager: UiMetadataManager,
+    pub metadata_source_is_download: bool,
+    pub source_format: LyricFormat,
+    pub target_format: LyricFormat,
+    pub available_formats: Vec<LyricFormat>,
+    pub last_opened_file_path: Option<std::path::PathBuf>,
+    pub last_saved_file_path: Option<std::path::PathBuf>,
+    pub conversion_in_progress: bool,
+    pub conversion_result_rx: Option<ConversionResultRx>,
+    pub current_warnings: Vec<String>,
 }
 
-pub(super) struct LyricsHelperState {
-    pub(super) helper: Arc<TokioMutex<lyrics_helper_rs::LyricsHelper>>,
-    pub(super) provider_state: ProviderState,
-    pub(super) provider_load_result_rx: Option<StdReceiver<Result<(), String>>>,
+pub struct LyricsHelperState {
+    pub helper: Arc<TokioMutex<lyrics_helper_rs::LyricsHelper>>,
+    pub provider_state: ProviderState,
+    pub provider_load_result_rx: Option<StdReceiver<Result<(), String>>>,
 }
 
 impl LyricState {
@@ -204,12 +203,12 @@ impl LyricState {
     }
 }
 
-pub(super) struct PlayerState {
-    pub(super) command_tx: Option<TokioSender<MediaCommand>>,
-    pub(super) current_now_playing: NowPlayingInfo,
-    pub(super) available_sessions: Vec<SmtcSessionInfo>,
-    pub(super) smtc_time_offset_ms: i64,
-    pub(super) last_requested_session_id: Option<String>,
+pub struct PlayerState {
+    pub command_tx: Option<TokioSender<MediaCommand>>,
+    pub current_now_playing: NowPlayingInfo,
+    pub available_sessions: Vec<SmtcSessionInfo>,
+    pub smtc_time_offset_ms: i64,
+    pub last_requested_session_id: Option<String>,
 }
 
 impl PlayerState {
@@ -224,7 +223,7 @@ impl PlayerState {
     }
 }
 
-pub(super) struct AmllConnectorState {
+pub struct AmllConnectorState {
     pub command_tx: Option<TokioSender<ConnectorCommand>>,
     pub actor_handle: Option<JoinHandle<()>>,
     pub status: Arc<StdMutex<WebsocketStatus>>,
@@ -262,22 +261,22 @@ impl AmllConnectorState {
     }
 }
 
-pub(super) struct AutoFetchState {
-    pub(super) result_rx: StdReceiver<AutoFetchResult>,
-    pub(super) result_tx: StdSender<AutoFetchResult>,
+pub struct AutoFetchState {
+    pub result_rx: StdReceiver<AutoFetchResult>,
+    pub result_tx: StdSender<AutoFetchResult>,
 
     pub current_fetch_cancellation_token: Option<CancellationToken>,
-    pub(super) current_ui_populated: bool,
-    pub(super) last_source_format: Option<LyricFormat>,
-    pub(super) local_cache_status: Arc<StdMutex<AutoSearchStatus>>,
-    pub(super) qqmusic_status: Arc<StdMutex<AutoSearchStatus>>,
-    pub(super) kugou_status: Arc<StdMutex<AutoSearchStatus>>,
-    pub(super) netease_status: Arc<StdMutex<AutoSearchStatus>>,
-    pub(super) amll_db_status: Arc<StdMutex<AutoSearchStatus>>,
-    pub(super) last_qq_result: Arc<StdMutex<Option<FullLyricsResult>>>,
-    pub(super) last_kugou_result: Arc<StdMutex<Option<FullLyricsResult>>>,
-    pub(super) last_netease_result: Arc<StdMutex<Option<FullLyricsResult>>>,
-    pub(super) last_amll_db_result: Arc<StdMutex<Option<FullLyricsResult>>>,
+    pub current_ui_populated: bool,
+    pub last_source_format: Option<LyricFormat>,
+    pub local_cache_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub qqmusic_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub kugou_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub netease_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub amll_db_status: Arc<StdMutex<AutoSearchStatus>>,
+    pub last_qq_result: Arc<StdMutex<Option<FullLyricsResult>>>,
+    pub last_kugou_result: Arc<StdMutex<Option<FullLyricsResult>>>,
+    pub last_netease_result: Arc<StdMutex<Option<FullLyricsResult>>>,
+    pub last_amll_db_result: Arc<StdMutex<Option<FullLyricsResult>>>,
 }
 
 impl AutoFetchState {
@@ -302,45 +301,45 @@ impl AutoFetchState {
 }
 
 #[derive(Default)]
-pub(super) struct LocalCacheState {
-    pub(super) index: Arc<StdMutex<Vec<LocalLyricCacheEntry>>>,
-    pub(super) index_path: Option<std::path::PathBuf>,
-    pub(super) dir_path: Option<std::path::PathBuf>,
-    pub(super) cover_cache_dir: Option<std::path::PathBuf>,
+pub struct LocalCacheState {
+    pub index: Arc<StdMutex<Vec<LocalLyricCacheEntry>>>,
+    pub index_path: Option<std::path::PathBuf>,
+    pub dir_path: Option<std::path::PathBuf>,
+    pub cover_cache_dir: Option<std::path::PathBuf>,
 }
 
-pub(super) struct UniLyricApp {
+pub struct UniLyricApp {
     // --- 状态模块 ---
-    pub(super) ui: UiState,
-    pub(super) lyrics: LyricState,
-    pub(super) player: PlayerState,
-    pub(super) fetcher: AutoFetchState,
-    pub(super) local_cache: LocalCacheState,
-    pub(super) amll_connector: AmllConnectorState,
-    pub(super) downloader: DownloaderState,
-    pub(super) batch_converter: BatchConverterState,
+    pub ui: UiState,
+    pub lyrics: LyricState,
+    pub player: PlayerState,
+    pub fetcher: AutoFetchState,
+    pub local_cache: LocalCacheState,
+    pub amll_connector: AmllConnectorState,
+    pub downloader: DownloaderState,
+    pub batch_converter: BatchConverterState,
 
     // --- 核心依赖与配置 ---
-    pub(super) lyrics_helper_state: LyricsHelperState,
-    pub(super) app_settings: Arc<StdMutex<AppSettings>>,
-    pub(super) tokio_runtime: Arc<tokio::runtime::Runtime>,
-    pub(super) ui_log_receiver: StdReceiver<LogEntry>,
+    pub lyrics_helper_state: LyricsHelperState,
+    pub app_settings: Arc<StdMutex<AppSettings>>,
+    pub tokio_runtime: Arc<tokio::runtime::Runtime>,
+    pub ui_log_receiver: StdReceiver<LogEntry>,
 
     // --- 事件系统 ---
-    pub(super) action_tx: StdSender<UserAction>,
-    pub(super) action_rx: StdReceiver<UserAction>,
-    pub(super) egui_ctx: egui::Context,
-    pub(super) actions_this_frame: Vec<UserAction>,
+    pub action_tx: StdSender<UserAction>,
+    pub action_rx: StdReceiver<UserAction>,
+    pub egui_ctx: egui::Context,
+    pub actions_this_frame: Vec<UserAction>,
 
     // --- 标记 ---
-    pub(super) shutdown_initiated: bool,
-    pub(super) auto_fetch_trigger_time: Option<std::time::Instant>,
+    pub shutdown_initiated: bool,
+    pub auto_fetch_trigger_time: Option<std::time::Instant>,
 }
 
 #[derive(Debug, Clone, Default)]
-pub(super) struct UiMetadataManager {
-    pub(super) store: MetadataStore,
-    pub(super) ui_entries: Vec<EditableMetadataEntry>,
+pub struct UiMetadataManager {
+    pub store: MetadataStore,
+    pub ui_entries: Vec<EditableMetadataEntry>,
 }
 
 impl UiMetadataManager {
@@ -466,7 +465,7 @@ impl UiMetadataManager {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(super) enum BatchConverterStatus {
+pub enum BatchConverterStatus {
     #[default]
     Idle,
     Ready,
@@ -476,17 +475,17 @@ pub(super) enum BatchConverterStatus {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct BatchConverterState {
-    pub(super) input_dir: Option<std::path::PathBuf>,
-    pub(super) output_dir: Option<std::path::PathBuf>,
-    pub(super) target_format: LyricFormat,
-    pub(super) tasks: Vec<BatchConversionConfig>,
-    pub(super) file_lookup: HashMap<BatchFileId, BatchLoadedFile>,
-    pub(super) status: BatchConverterStatus,
+pub struct BatchConverterState {
+    pub input_dir: Option<std::path::PathBuf>,
+    pub output_dir: Option<std::path::PathBuf>,
+    pub target_format: LyricFormat,
+    pub tasks: Vec<BatchConversionConfig>,
+    pub file_lookup: HashMap<BatchFileId, BatchLoadedFile>,
+    pub status: BatchConverterStatus,
 }
 
 impl UniLyricApp {
-    pub(super) fn new(
+    pub fn new(
         cc: &eframe::CreationContext,
         settings: AppSettings,
         ui_log_receiver: StdReceiver<LogEntry>,
@@ -724,7 +723,7 @@ impl UniLyricApp {
         }
     }
 
-    pub(super) fn send_shutdown_signals(&mut self) {
+    pub fn send_shutdown_signals(&mut self) {
         if let Some(tx) = &self.player.command_tx {
             debug!("[Shutdown] 正在发送 Shutdown 命令到 smtc-suite ...");
             let _ = tx.try_send(MediaCommand::Shutdown);

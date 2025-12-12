@@ -58,10 +58,7 @@ fn is_track_match(
     false
 }
 
-pub(super) fn initial_auto_fetch_and_send_lyrics(
-    app: &mut UniLyricApp,
-    track_info: NowPlayingInfo,
-) {
+pub fn initial_auto_fetch_and_send_lyrics(app: &mut UniLyricApp, track_info: NowPlayingInfo) {
     info!(
         "[initial_auto_fetch_and_send_lyrics] 封面哈希: {:?}",
         track_info.cover_data_hash
@@ -438,7 +435,7 @@ pub(super) fn initial_auto_fetch_and_send_lyrics(
 }
 
 /// 触发对特定源的手动重新搜索。
-pub(super) fn trigger_manual_refetch_for_source(
+pub fn trigger_manual_refetch_for_source(
     app: &mut UniLyricApp,
     source_to_refetch: AutoSearchSource,
 ) {
@@ -594,7 +591,7 @@ pub(super) fn trigger_manual_refetch_for_source(
     });
 }
 
-pub(super) fn clear_last_fetch_results(app: &mut UniLyricApp) {
+pub fn clear_last_fetch_results(app: &mut UniLyricApp) {
     *app.fetcher.last_qq_result.lock().unwrap() = None;
     *app.fetcher.last_kugou_result.lock().unwrap() = None;
     *app.fetcher.last_netease_result.lock().unwrap() = None;
