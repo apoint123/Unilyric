@@ -121,17 +121,10 @@ impl UniLyricApp {
 
         let target_format = self.lyrics.target_format;
 
-        let metadata_overrides = Some(self.lyrics.metadata_manager.get_metadata_for_backend());
-
         self.tokio_runtime.spawn(async move {
             let result = lyrics_helper_rs::LyricsHelper::generate_lyrics_from_parsed::<
                 std::hash::RandomState,
-            >(
-                parsed_data,
-                target_format,
-                Default::default(),
-                metadata_overrides,
-            )
+            >(parsed_data, target_format, Default::default(), None)
             .await;
 
             if tx.send(result).is_err() {
@@ -159,19 +152,7 @@ impl UniLyricApp {
             None,
         );
 
-        self.lyrics.metadata_manager.sync_store_from_ui_entries();
-        let store_data = self.lyrics.metadata_manager.store.get_all_data();
-
-        let additional_metadata = if !store_data.is_empty() {
-            Some(
-                store_data
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.clone()))
-                    .collect(),
-            )
-        } else {
-            None
-        };
+        let additional_metadata = None;
 
         let input = ConversionInput {
             main_lyric,
@@ -312,48 +293,17 @@ impl UniLyricApp {
         }
     }
 
-    fn sync_and_regenerate_metadata(&mut self) {
-        self.lyrics.metadata_manager.sync_store_from_ui_entries();
-        if let Some(parsed_data) = &mut self.lyrics.parsed_lyric_data {
-            let new_raw_metadata = self
-                .lyrics
-                .metadata_manager
-                .store
-                .get_all_data()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect();
-            parsed_data.raw_metadata = new_raw_metadata;
-        }
-        self.dispatch_regeneration_task();
-    }
-
-    fn update_and_save_pinned_metadata(&mut self) {
-        let pinned_data_to_save = self.lyrics.metadata_manager.get_pinned_entries_for_saving();
-        if let Ok(mut settings) = self.app_settings.lock() {
-            settings.pinned_metadata = pinned_data_to_save;
-            if let Err(e) = settings.save() {
-                warn!("[Settings] 保存固定的元数据失败: {}", e);
-            }
-        }
-    }
-
     fn handle_load_full_lyrics_result(
         &mut self,
         result: lyrics_helper_core::model::track::FullLyricsResult,
     ) -> ActionResult {
         self.clear_lyrics_state_for_new_song_internal();
         self.fetcher.current_ui_populated = true;
-        self.lyrics.metadata_source_is_download = true;
         self.lyrics.input_text = result.raw.content;
         self.lyrics.source_format = result.parsed.source_format;
         self.lyrics.current_warnings = result.parsed.warnings.clone();
-        self.lyrics
-            .metadata_manager
-            .load_from_parsed_data(&result.parsed);
+
         let mut final_parsed_data = result.parsed;
-        let merged_raw_metadata = self.lyrics.metadata_manager.get_metadata_for_backend();
-        final_parsed_data.raw_metadata = merged_raw_metadata;
 
         {
             let settings = self.app_settings.lock().unwrap();
@@ -402,10 +352,6 @@ impl UniLyricApp {
                         self.lyrics.output_text = full_result.output_lyrics;
                         self.lyrics.parsed_lyric_data = Some(full_result.source_data.clone());
                         self.lyrics.current_warnings = full_result.source_data.warnings.clone();
-
-                        self.lyrics
-                            .metadata_manager
-                            .load_from_parsed_data(&full_result.source_data);
 
                         self.lyrics.display_translation_lrc_output =
                             self.generate_lrc_from_aux_track(&full_result.source_data, true);
@@ -484,29 +430,6 @@ impl UniLyricApp {
             }
             LyricsAction::ClearAllData => {
                 self.clear_lyrics_state_for_new_song_internal();
-                ActionResult::Success
-            }
-            LyricsAction::AddMetadata(key_to_add) => {
-                self.lyrics.metadata_manager.add_new_ui_entry(key_to_add);
-                self.sync_and_regenerate_metadata();
-                ActionResult::Success
-            }
-            LyricsAction::DeleteMetadata(index) => {
-                if self.lyrics.metadata_manager.remove_ui_entry(index) {
-                    self.sync_and_regenerate_metadata();
-                    self.update_and_save_pinned_metadata();
-                    ActionResult::Success
-                } else {
-                    ActionResult::Error(AppError::Custom("无效的元数据索引".to_string()))
-                }
-            }
-            LyricsAction::UpdateMetadataKey | LyricsAction::UpdateMetadataValue => {
-                self.sync_and_regenerate_metadata();
-                self.update_and_save_pinned_metadata();
-                ActionResult::Success
-            }
-            LyricsAction::ToggleMetadataPinned => {
-                self.update_and_save_pinned_metadata();
                 ActionResult::Success
             }
             LyricsAction::LrcInputChanged(text, content_type) => {
@@ -721,7 +644,7 @@ impl UniLyricApp {
         }
     }
 
-    pub fn clear_lyrics_state_for_new_song_internal(&mut self) {
+    pub(super) fn clear_lyrics_state_for_new_song_internal(&mut self) {
         info!("[State] 正在为新歌曲清理歌词状态。");
         self.lyrics.input_text.clear();
         self.lyrics.output_text.clear();
@@ -730,11 +653,6 @@ impl UniLyricApp {
         self.lyrics.parsed_lyric_data = None;
         self.lyrics.loaded_translation_lrc = None;
         self.lyrics.loaded_romanization_lrc = None;
-        self.lyrics
-            .metadata_manager
-            .ui_entries
-            .retain(|entry| entry.is_pinned);
-        self.lyrics.metadata_manager.store.clear();
         self.lyrics.current_warnings.clear();
     }
 
@@ -771,7 +689,6 @@ impl UniLyricApp {
                     PanelType::Translation => &mut self.ui.show_translation_lrc_panel,
                     PanelType::Romanization => &mut self.ui.show_romanization_lrc_panel,
                     PanelType::Settings => &mut self.ui.show_settings_window,
-                    PanelType::Metadata => &mut self.ui.show_metadata_panel,
                     PanelType::AmllConnector => &mut self.ui.show_amll_connector_sidebar,
                     PanelType::Warnings => &mut self.ui.show_warnings_panel,
                 };
@@ -797,7 +714,6 @@ impl UniLyricApp {
                         self.ui.temp_edit_settings = self.app_settings.lock().unwrap().clone();
                         self.ui.show_settings_window = true;
                     }
-                    PanelType::Metadata => self.ui.show_metadata_panel = true,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = true,
                     PanelType::Warnings => self.ui.show_warnings_panel = true,
                 }
@@ -812,7 +728,6 @@ impl UniLyricApp {
                     PanelType::Translation => self.ui.show_translation_lrc_panel = false,
                     PanelType::Romanization => self.ui.show_romanization_lrc_panel = false,
                     PanelType::Settings => self.ui.show_settings_window = false,
-                    PanelType::Metadata => self.ui.show_metadata_panel = false,
                     PanelType::AmllConnector => self.ui.show_amll_connector_sidebar = false,
                     PanelType::Warnings => self.ui.show_warnings_panel = false,
                 }

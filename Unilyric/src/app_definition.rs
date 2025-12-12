@@ -8,12 +8,11 @@ use std::sync::{
 
 use egui_toast::Toasts;
 use lyrics_helper_core::{
-    BatchConversionConfig, BatchFileId, BatchLoadedFile, CanonicalMetadataKey,
-    FullConversionResult, LyricFormat, MetadataStore, ParsedSourceData,
+    BatchConversionConfig, BatchFileId, BatchLoadedFile, FullConversionResult, LyricFormat,
+    ParsedSourceData,
 };
 use lyrics_helper_core::{SearchResult, model::track::FullLyricsResult};
 use lyrics_helper_rs::LyricsHelperError;
-use rand::Rng;
 use smtc_suite::{MediaCommand, NowPlayingInfo, SmtcSessionInfo, TextConversionMode};
 use tokio::{
     sync::Mutex as TokioMutex,
@@ -24,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::types::UiUpdate;
-use crate::types::{EditableMetadataEntry, ProviderState, SettingsCategory};
+use crate::types::{ProviderState, SettingsCategory};
 use crate::{
     amll_connector::{AMLLConnectorConfig, ConnectorCommand, WebsocketStatus},
     app_actions::UserAction,
@@ -81,7 +80,6 @@ pub struct UiState {
     pub wrap_text: bool,
     pub show_settings_window: bool,
     pub show_amll_connector_sidebar: bool,
-    pub show_metadata_panel: bool,
     pub show_warnings_panel: bool,
     pub log_display_buffer: Vec<LogEntry>,
     pub temp_edit_settings: AppSettings,
@@ -107,7 +105,6 @@ impl UiState {
             show_translation_lrc_panel: false,
             wrap_text: true,
             show_settings_window: false,
-            show_metadata_panel: false,
             show_warnings_panel: false,
             log_display_buffer: Vec::with_capacity(200),
             available_system_fonts: Vec::new(),
@@ -125,7 +122,6 @@ pub struct LyricState {
     pub parsed_lyric_data: Option<ParsedSourceData>,
     pub loaded_translation_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
     pub loaded_romanization_lrc: Option<Vec<crate::types::DisplayLrcLine>>,
-    pub metadata_manager: UiMetadataManager,
     pub metadata_source_is_download: bool,
     pub source_format: LyricFormat,
     pub target_format: LyricFormat,
@@ -144,30 +140,7 @@ pub struct LyricsHelperState {
 }
 
 impl LyricState {
-    fn new(settings: &AppSettings) -> Self {
-        let mut metadata_manager = UiMetadataManager::default();
-
-        // 从设置中加载固定的元数据
-        for (key_str, values) in &settings.pinned_metadata {
-            if let Ok(key) = key_str.parse::<lyrics_helper_core::CanonicalMetadataKey>() {
-                for value in values {
-                    let new_entry_id_num =
-                        metadata_manager.ui_entries.len() as u32 + rand::rng().random::<u32>();
-                    let new_id =
-                        egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
-
-                    metadata_manager.ui_entries.push(EditableMetadataEntry {
-                        key: key.clone(),
-                        value: value.clone(),
-                        is_pinned: true,
-                        is_from_file: false,
-                        id: new_id,
-                    });
-                }
-            }
-        }
-        metadata_manager.sync_store_from_ui_entries();
-
+    fn new() -> Self {
         Self {
             input_text: String::new(),
             output_text: String::new(),
@@ -176,7 +149,6 @@ impl LyricState {
             parsed_lyric_data: None,
             loaded_translation_lrc: None,
             loaded_romanization_lrc: None,
-            metadata_manager,
             metadata_source_is_download: false,
             source_format: LyricFormat::Lrc,
             target_format: LyricFormat::Ttml,
@@ -336,134 +308,6 @@ pub struct UniLyricApp {
     pub auto_fetch_trigger_time: Option<std::time::Instant>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct UiMetadataManager {
-    pub store: MetadataStore,
-    pub ui_entries: Vec<EditableMetadataEntry>,
-}
-
-impl UiMetadataManager {
-    pub fn add_new_ui_entry(&mut self, key: CanonicalMetadataKey) {
-        let new_entry_id_num = self.ui_entries.len() as u32 + rand::rng().random::<u32>();
-        let new_id = egui::Id::new(format!("new_editable_meta_entry_{new_entry_id_num}"));
-        self.ui_entries.push(EditableMetadataEntry {
-            key,
-            value: "".to_string(),
-            is_pinned: false,
-            is_from_file: false,
-            id: new_id,
-        });
-    }
-
-    pub fn remove_ui_entry(&mut self, index: usize) -> bool {
-        if index < self.ui_entries.len() {
-            self.ui_entries.remove(index);
-            self.sync_store_from_ui_entries();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn get_metadata_for_backend(&self) -> std::collections::HashMap<String, Vec<String>> {
-        let mut grouped_by_key = std::collections::HashMap::<String, Vec<String>>::new();
-        for entry in &self.ui_entries {
-            let key_string = entry.key.to_string();
-            if !key_string.trim().is_empty() {
-                grouped_by_key
-                    .entry(key_string)
-                    .or_default()
-                    .push(entry.value.clone());
-            }
-        }
-        grouped_by_key
-    }
-
-    pub fn merge_from_backend(&mut self, parsed: &ParsedSourceData) {
-        let old_entries = std::mem::take(&mut self.ui_entries);
-        let pinned_entries: Vec<EditableMetadataEntry> =
-            old_entries.into_iter().filter(|e| e.is_pinned).collect();
-        let pinned_keys: std::collections::HashSet<(CanonicalMetadataKey, String)> = pinned_entries
-            .iter()
-            .map(|e| (e.key.clone(), e.value.clone()))
-            .collect();
-        let mut new_non_conflicting_entries: Vec<EditableMetadataEntry> = Vec::new();
-        for (key_str, values) in &parsed.raw_metadata {
-            if let Ok(canonical_key) = key_str.parse::<CanonicalMetadataKey>() {
-                for value in values {
-                    if !pinned_keys.contains(&(canonical_key.clone(), value.clone())) {
-                        new_non_conflicting_entries.push(EditableMetadataEntry {
-                            key: canonical_key.clone(),
-                            value: value.clone(),
-                            is_pinned: false,
-                            is_from_file: true,
-                            id: egui::Id::new(format!(
-                                "meta_entry_{}",
-                                rand::rng().random::<u64>()
-                            )),
-                        });
-                    }
-                }
-            } else {
-                warn!("无法从源解析元数据键 '{}'，已跳过。", key_str);
-            }
-        }
-        let mut final_entries = pinned_entries;
-        final_entries.extend(new_non_conflicting_entries);
-
-        final_entries.sort_unstable_by(|a, b| {
-            let rank_a = a.key.get_order_rank();
-            let rank_b = b.key.get_order_rank();
-            if rank_a != rank_b {
-                rank_a.cmp(&rank_b)
-            } else if let (
-                CanonicalMetadataKey::Custom(key_a),
-                CanonicalMetadataKey::Custom(key_b),
-            ) = (&a.key, &b.key)
-            {
-                key_a.cmp(key_b)
-            } else {
-                std::cmp::Ordering::Equal
-            }
-        });
-        self.ui_entries = final_entries;
-        self.sync_store_from_ui_entries();
-    }
-
-    pub fn sync_store_from_ui_entries(&mut self) {
-        self.store.clear();
-        let mut grouped_by_key = HashMap::<String, Vec<String>>::new();
-        for entry in &self.ui_entries {
-            let key_string = entry.key.to_string();
-            grouped_by_key
-                .entry(key_string)
-                .or_default()
-                .push(entry.value.clone());
-        }
-
-        for (key, values) in grouped_by_key {
-            self.store.set_multiple(&key, values);
-        }
-    }
-
-    pub fn load_from_parsed_data(&mut self, parsed: &ParsedSourceData) {
-        self.store.clear();
-        self.store.load_from_raw(&parsed.raw_metadata);
-        self.merge_from_backend(parsed);
-    }
-
-    pub fn get_pinned_entries_for_saving(&self) -> HashMap<String, Vec<String>> {
-        let mut result = HashMap::<String, Vec<String>>::new();
-        for entry in self.ui_entries.iter().filter(|e| e.is_pinned) {
-            result
-                .entry(entry.key.to_string())
-                .or_default()
-                .push(entry.value.clone());
-        }
-        result
-    }
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum BatchConverterStatus {
     #[default]
@@ -499,7 +343,7 @@ impl UniLyricApp {
         let auto_fetch_state = AutoFetchState::new(auto_fetch_tx, auto_fetch_rx);
         let local_cache = LocalCacheState::default();
 
-        let lyric_state = LyricState::new(&settings);
+        let lyric_state = LyricState::new();
         let player_state;
         let amll_connector_state;
 

@@ -351,15 +351,6 @@ pub fn draw_toolbar(app: &mut UniLyricApp, ui: &mut egui::Ui) {
                     ));
                 }
             });
-            ui_right.add_space(BUTTON_STRIP_SPACING);
-            if ui_right.button("元数据").clicked() {
-                app.send_action(crate::app_actions::UserAction::UI(
-                    crate::app_actions::UIAction::ShowPanel(
-                        crate::app_actions::PanelType::Metadata,
-                    ),
-                ));
-            }
-            ui_right.add_space(BUTTON_STRIP_SPACING);
             let mut wrap_text_copy = app.ui.wrap_text;
             if ui_right.checkbox(&mut wrap_text_copy, "自动换行").changed() {
                 app.send_action(crate::app_actions::UserAction::UI(

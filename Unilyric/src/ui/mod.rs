@@ -5,4 +5,3 @@ pub mod sidebar;
 pub mod status;
 pub mod toolbar;
 pub mod views;
-pub mod windows;

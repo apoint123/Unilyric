@@ -1,17 +1,8 @@
 use chrono::{DateTime, Local};
-use lyrics_helper_core::{CanonicalMetadataKey, LyricFormat, LyricsAndMetadata};
+use lyrics_helper_core::{LyricFormat, LyricsAndMetadata};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditableMetadataEntry {
-    pub key: CanonicalMetadataKey,
-    pub value: String,
-    pub is_pinned: bool,
-    pub is_from_file: bool,
-    pub id: egui::Id,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalLyricCacheEntry {

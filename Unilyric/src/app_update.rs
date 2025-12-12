@@ -16,7 +16,6 @@ use crate::ui::status::{draw_log_panel, draw_status_bar, draw_warnings_panel};
 use crate::ui::toolbar::draw_toolbar;
 use crate::ui::views::batch_converter::draw_batch_converter_view;
 use crate::ui::views::downloader::draw_downloader_view;
-use crate::ui::windows::draw_metadata_editor_window_contents;
 use egui_toast::{Toast, ToastKind, ToastOptions};
 use smtc_suite::MediaUpdate;
 
@@ -469,29 +468,6 @@ fn draw_editor_view(app: &mut UniLyricApp, ctx: &egui::Context) {
     egui::CentralPanel::default().show(ctx, |ui| {
         draw_output_panel_contents(app, ui);
     });
-
-    if app.ui.show_metadata_panel {
-        let mut window_is_actually_open = true;
-        let mut should_keep_panel_open_from_internal_logic = app.ui.show_metadata_panel;
-
-        egui::Window::new("编辑元数据")
-            .open(&mut window_is_actually_open)
-            .default_width(450.0)
-            .default_height(400.0)
-            .resizable(true)
-            .collapsible(true)
-            .show(ctx, |ui| {
-                draw_metadata_editor_window_contents(
-                    app,
-                    ui,
-                    &mut should_keep_panel_open_from_internal_logic,
-                );
-            });
-
-        if !window_is_actually_open || !should_keep_panel_open_from_internal_logic {
-            app.ui.show_metadata_panel = false;
-        }
-    }
 }
 
 pub fn handle_file_drops(app: &mut UniLyricApp, ctx: &egui::Context) {

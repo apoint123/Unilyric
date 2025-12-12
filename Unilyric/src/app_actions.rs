@@ -6,7 +6,6 @@ use crate::error::AppResult;
 use crate::types::LrcContentType;
 use egui_toast::Toast;
 use lyrics_helper_core::BatchTaskUpdate;
-use lyrics_helper_core::CanonicalMetadataKey;
 use lyrics_helper_core::ChineseConversionConfig;
 use lyrics_helper_core::FullConversionResult;
 use lyrics_helper_core::LyricFormat;
@@ -43,11 +42,6 @@ pub enum LyricsAction {
     ConvertChinese(ChineseConversionConfig),
     SourceFormatChanged(LyricFormat),
     TargetFormatChanged(LyricFormat),
-    AddMetadata(CanonicalMetadataKey),
-    DeleteMetadata(usize),
-    UpdateMetadataKey,
-    UpdateMetadataValue,
-    ToggleMetadataPinned,
     LrcInputChanged(String, LrcContentType),
     MainInputChanged(String),
     ClearAllData,
@@ -84,7 +78,6 @@ pub enum PlayerAction {
 #[derive(Debug, Clone)]
 pub enum PanelType {
     Settings,
-    Metadata,
     Log,
     Translation,
     Romanization,
