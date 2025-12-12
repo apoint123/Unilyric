@@ -78,19 +78,24 @@ pub fn generate_spl(
         }
         writeln!(spl_output)?;
 
-        // 为了简单和兼容，也为翻译行也生成相同的时间戳
+        // 为了简单和兼容，也为翻译和音译行也生成相同的时间戳
         if let Some(main_track) = line.main_track() {
             for track in &main_track.translations {
-                for word in &track.words {
-                    for syllable in &word.syllables {
-                        writeln!(
-                            spl_output,
-                            "{}{}",
-                            format_spl_timestamp(line.start_ms, false),
-                            syllable.text
-                        )?;
-                    }
-                }
+                writeln!(
+                    spl_output,
+                    "{}{}",
+                    format_spl_timestamp(line.start_ms, false),
+                    track.text()
+                )?;
+            }
+
+            for track in &main_track.romanizations {
+                writeln!(
+                    spl_output,
+                    "{}{}",
+                    format_spl_timestamp(line.start_ms, false),
+                    track.text()
+                )?;
             }
         }
     }
