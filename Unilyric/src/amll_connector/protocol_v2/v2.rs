@@ -6,9 +6,6 @@ use serde_with::serde_as;
 
 use super::common::{Artist, LyricLine};
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
-
 /// 顶层消息
 #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
 #[serde(rename_all = "camelCase")]

@@ -1,111 +1,100 @@
 //! 负责处理应用的持久化配置。
 
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native {
-    use serde::{Deserialize, Serialize};
-    use std::fs;
-    use std::path::PathBuf;
-    use tracing::info;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+use tracing::info;
 
-    /// 获取应用配置目录下指定文件的完整路径。
-    ///
-    /// # 参数
-    /// * `filename` - 目标配置文件的名称，例如 "`kugou_config.json`"。
-    pub fn get_config_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
-        if let Some(mut config_dir) = dirs::config_dir() {
-            config_dir.push("lyrics-helper");
-            fs::create_dir_all(&config_dir)?;
-            config_dir.push(filename);
-            Ok(config_dir)
-        } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "无法找到用户配置目录",
-            ))
-        }
-    }
-
-    pub fn load_amll_config() -> Result<super::AmllConfig, Box<dyn std::error::Error>> {
-        let config_path = get_config_file_path("amll_config.json")?;
-        match fs::read_to_string(config_path) {
-            Ok(content) => {
-                let config: super::AmllConfig = serde_json::from_str(&content)?;
-                info!("已加载 AMLL 镜像配置。");
-                Ok(config)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                info!("未找到 AMLL 配置文件，使用默认源。");
-                Ok(super::AmllConfig::default())
-            }
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn load_cached_config<T: for<'de> Deserialize<'de>>(
-        filename: &str,
-    ) -> Result<super::CachedConfig<T>, Box<dyn std::error::Error + Send + Sync>> {
-        let config_path = get_config_file_path(filename)?;
-        let content = fs::read_to_string(config_path)?;
-        let config: super::CachedConfig<T> = serde_json::from_str(&content)?;
-        Ok(config)
-    }
-
-    pub fn save_cached_config<T: Serialize>(
-        filename: &str,
-        data: &T,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let config_path = get_config_file_path(filename)?;
-        let cached_config = super::CachedConfig {
-            data,
-            last_updated: chrono::Utc::now(),
-        };
-        let content = serde_json::to_string_pretty(&cached_config)?;
-        fs::write(config_path, content)?;
-        Ok(())
-    }
-
-    pub fn read_from_cache(
-        filename: &str,
-    ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-        let cache_path = get_cache_file_path(filename)?;
-        Ok(fs::read_to_string(cache_path)?)
-    }
-
-    pub fn write_to_cache(
-        filename: &str,
-        content: &str,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let cache_path = get_cache_file_path(filename)?;
-        if let Some(parent) = cache_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(cache_path, content)?;
-        Ok(())
-    }
-
-    fn get_cache_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
-        dirs::cache_dir().map_or_else(
-            || {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "无法找到用户缓存目录",
-                ))
-            },
-            |mut cache_dir| {
-                cache_dir.push("lyrics-helper-rs");
-                cache_dir.push(filename);
-                Ok(cache_dir)
-            },
-        )
+/// 获取应用配置目录下指定文件的完整路径。
+///
+/// # 参数
+/// * `filename` - 目标配置文件的名称，例如 "`kugou_config.json`"。
+pub fn get_config_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
+    if let Some(mut config_dir) = dirs::config_dir() {
+        config_dir.push("lyrics-helper");
+        fs::create_dir_all(&config_dir)?;
+        config_dir.push(filename);
+        Ok(config_dir)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "无法找到用户配置目录",
+        ))
     }
 }
 
-pub use native::{
-    load_amll_config, load_cached_config, read_from_cache, save_cached_config, write_to_cache,
-};
+pub fn load_amll_config() -> Result<AmllConfig, Box<dyn std::error::Error>> {
+    let config_path = get_config_file_path("amll_config.json")?;
+    match fs::read_to_string(config_path) {
+        Ok(content) => {
+            let config: AmllConfig = serde_json::from_str(&content)?;
+            info!("已加载 AMLL 镜像配置。");
+            Ok(config)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            info!("未找到 AMLL 配置文件，使用默认源。");
+            Ok(AmllConfig::default())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
 
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+pub fn load_cached_config<T: for<'de> Deserialize<'de>>(
+    filename: &str,
+) -> Result<CachedConfig<T>, Box<dyn std::error::Error + Send + Sync>> {
+    let config_path = get_config_file_path(filename)?;
+    let content = fs::read_to_string(config_path)?;
+    let config: CachedConfig<T> = serde_json::from_str(&content)?;
+    Ok(config)
+}
+
+pub fn save_cached_config<T: Serialize>(
+    filename: &str,
+    data: &T,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let config_path = get_config_file_path(filename)?;
+    let cached_config = CachedConfig {
+        data,
+        last_updated: chrono::Utc::now(),
+    };
+    let content = serde_json::to_string_pretty(&cached_config)?;
+    fs::write(config_path, content)?;
+    Ok(())
+}
+
+pub fn read_from_cache(filename: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let cache_path = get_cache_file_path(filename)?;
+    Ok(fs::read_to_string(cache_path)?)
+}
+
+pub fn write_to_cache(
+    filename: &str,
+    content: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let cache_path = get_cache_file_path(filename)?;
+    if let Some(parent) = cache_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(cache_path, content)?;
+    Ok(())
+}
+
+fn get_cache_file_path(filename: &str) -> Result<PathBuf, std::io::Error> {
+    dirs::cache_dir().map_or_else(
+        || {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "无法找到用户缓存目录",
+            ))
+        },
+        |mut cache_dir| {
+            cache_dir.push("lyrics-helper-rs");
+            cache_dir.push(filename);
+            Ok(cache_dir)
+        },
+    )
+}
 
 /// AMLL 数据库的镜像源配置。
 #[derive(Serialize, Deserialize, Debug, Clone)]

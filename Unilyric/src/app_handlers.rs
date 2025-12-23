@@ -1033,7 +1033,7 @@ impl UniLyricApp {
                             match serde_json::to_string_pretty(&core_config) {
                                 Ok(json_string) => {
                                     if let Ok(config_path) =
-                                        lyrics_helper_rs::config::native::get_config_file_path(
+                                        lyrics_helper_rs::config::get_config_file_path(
                                             "amll_config.json",
                                         )
                                     {

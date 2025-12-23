@@ -140,8 +140,7 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::native::get_config_file_path;
-    use crate::config::{load_cached_config, save_cached_config};
+    use crate::config::{get_config_file_path, load_cached_config, save_cached_config};
 
     use super::*;
     use std::fs;

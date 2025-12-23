@@ -1,10 +1,8 @@
 #![allow(clippy::pedantic)]
 #![allow(clippy::nursery)]
 
-#[cfg(not(target_arch = "wasm32"))]
 use std::hint::black_box;
 
-#[cfg(not(target_arch = "wasm32"))]
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use lyrics_helper_rs::providers::qq::qrc_codec::decrypt_qrc;

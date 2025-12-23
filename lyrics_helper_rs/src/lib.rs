@@ -537,7 +537,6 @@ impl LyricsHelper {
     ///
     /// # 返回
     /// `Result<ParsedSourceData>` - 成功时返回已解析和合并好的歌词数据。
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_full_lyrics<'a>(
         &self,
         provider_name: &'a str,
@@ -552,30 +551,6 @@ impl LyricsHelper {
             .iter()
             .find(|p| p.name() == provider_name)
             .cloned() // 克隆 Arc
-            .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
-
-        let song_id = song_id.to_string();
-
-        Ok(Box::pin(
-            async move { provider.get_full_lyrics(&song_id).await },
-        ))
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    pub fn get_full_lyrics<'a>(
-        &self,
-        provider_name: &'a str,
-        song_id: &'a str,
-    ) -> Result<Pin<Box<dyn Future<Output = Result<FullLyricsResult>> + 'a>>> {
-        if self.providers.is_empty() {
-            return Err(LyricsHelperError::ProvidersNotInitialized);
-        }
-
-        let provider = self
-            .providers
-            .iter()
-            .find(|p| p.name() == provider_name)
-            .cloned()
             .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
 
         let song_id = song_id.to_string();
@@ -715,7 +690,6 @@ impl LyricsHelper {
     /// * `Some(Vec<u8>)` - 成功获取到的封面数据
     /// * `None` - 所有候选项都无法提供封面
     #[must_use]
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_best_cover<'a>(
         &'a self,
         candidates: &'a [SearchResult],
@@ -745,50 +719,6 @@ impl LyricsHelper {
                 {
                     tracing::info!("从 '{}' 成功获取到封面", provider.name());
                     return Some(response.body);
-                }
-            }
-            tracing::info!("遍历完所有候选项都无法获取到封面");
-            None
-        })
-    }
-
-    #[must_use]
-    #[cfg(target_arch = "wasm32")]
-    pub fn get_best_cover<'a>(
-        &'a self,
-        candidates: &'a [SearchResult],
-    ) -> Pin<Box<dyn Future<Output = Option<Vec<u8>>> + 'a>> {
-        let providers_map: HashMap<_, _> = self
-            .providers
-            .iter()
-            .map(|p| (p.name(), p.clone()))
-            .collect();
-
-        let candidates = candidates.to_vec();
-
-        Box::pin(async move {
-            let candidates_to_try = candidates.iter().take(5);
-
-            for candidate in candidates_to_try {
-                if let Some(album_id) = &candidate.album_id
-                    && let Some(provider) = providers_map.get(candidate.provider_name.as_str())
-                {
-                    if let Ok(url) = provider
-                        .get_album_cover_url(album_id, CoverSize::Large)
-                        .await
-                    {
-                        if let Some(provider_name_enum) =
-                            ProviderName::try_from_str(&candidate.provider_name)
-                            && let Some(client) = self.http_clients.get(&provider_name_enum)
-                        {
-                            if let Ok(response) = client.get(&url).await {
-                                if response.status < 300 {
-                                    tracing::info!("从 '{}' 成功获取到封面", provider.name());
-                                    return Some(response.body);
-                                }
-                            }
-                        }
-                    }
                 }
             }
             tracing::info!("遍历完所有候选项都无法获取到封面");
