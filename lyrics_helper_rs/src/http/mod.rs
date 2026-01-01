@@ -96,7 +96,4 @@ pub trait HttpClient: Send + Sync + Debug {
 
     /// 从 JSON 字符串中导入 Cookies，覆盖现有状态
     fn set_cookies(&self, cookies_json: &str) -> Result<()>;
-
-    /// 发送POST表单请求，但不遵循重定向，而是返回 Location 头
-    async fn post_form_for_redirect(&self, url: &str, form: &[(&str, &str)]) -> Result<String>;
 }

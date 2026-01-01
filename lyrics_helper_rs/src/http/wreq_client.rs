@@ -8,6 +8,7 @@ use std::sync::Arc;
 use url::Url;
 use wreq::{
     Uri,
+    cookie::Cookies,
     header::{CONTENT_TYPE, HeaderMap, HeaderValue},
 };
 
@@ -45,9 +46,9 @@ impl wreq::cookie::CookieStore for SharedCookieStore {
         store.store_response_cookies(cookies, &url_as_url);
     }
 
-    fn cookies(&self, url: &Uri) -> Vec<HeaderValue> {
+    fn cookies(&self, url: &Uri) -> Cookies {
         let Ok(url_as_url) = Url::parse(&url.to_string()) else {
-            return vec![];
+            return Cookies::Empty;
         };
 
         let cookie_string = self
@@ -59,11 +60,13 @@ impl wreq::cookie::CookieStore for SharedCookieStore {
             .join("; ");
 
         if cookie_string.is_empty() {
-            vec![]
+            Cookies::Empty
         } else {
-            HeaderValue::from_str(&cookie_string)
-                .map(|h| vec![h])
-                .unwrap_or_default()
+            Cookies::Uncompressed(
+                HeaderValue::from_str(&cookie_string)
+                    .map(|h| vec![h])
+                    .unwrap_or_default(),
+            )
         }
     }
 }
@@ -212,36 +215,6 @@ impl HttpClient for WreqClient {
             .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
 
         convert_response(response).await
-    }
-
-    async fn post_form_for_redirect(&self, url: &str, form: &[(&str, &str)]) -> Result<String> {
-        let no_redirect_client = wreq::Client::builder()
-            .emulation(Emulation::Chrome140)
-            .cookie_provider(Arc::clone(&self.cookie_store))
-            .redirect(wreq::redirect::Policy::none())
-            .build()
-            .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
-
-        let response = no_redirect_client
-            .post(url)
-            .form(form)
-            .send()
-            .await
-            .map_err(|e| LyricsHelperError::Http(e.to_string()))?;
-
-        if response.status().is_redirection() {
-            response
-                .headers()
-                .get(wreq::header::LOCATION)
-                .and_then(|loc| loc.to_str().ok())
-                .map(String::from)
-                .ok_or_else(|| LyricsHelperError::Http("重定向响应中未找到Location头".to_string()))
-        } else {
-            Err(LyricsHelperError::Http(format!(
-                "预期一个重定向，但收到了状态码: {}",
-                response.status()
-            )))
-        }
     }
 }
 

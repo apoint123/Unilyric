@@ -4,11 +4,12 @@
 
 use std::{
     sync::{Arc, LazyLock},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
+use rand::Rng;
 use regex::Regex;
 
 use lyrics_helper_core::{
@@ -142,12 +143,13 @@ impl Provider for QQMusic {
         tracing::Span::current().record("keyword", tracing::field::display(&keyword));
 
         let param = json!({
-            "num_per_page": 20,
-            "page_num": 1,
+            "searchid": get_search_id(),
             "query": keyword,
             "search_type": 0,
+            "num_per_page": 20,
+            "page_num": 1,
+            "highlight": 1,
             "grp": 1,
-            "highlight": 1
         });
 
         let response_val = self
@@ -465,10 +467,12 @@ impl QQMusic {
     fn build_comm(&self) -> serde_json::Value {
         let comm_map = serde_json::Map::from_iter(vec![
             ("cv".to_string(), json!(13_020_508)),
-            ("ct".to_string(), json!(11)),
+            ("ct".to_string(), json!("11")),
             ("v".to_string(), json!(13_020_508)),
+            ("uid".to_string(), json!("3931641530")),
             ("QIMEI36".to_string(), json!(&self.qimei)),
             ("tmeAppID".to_string(), json!("qqmusic")),
+            ("format".to_string(), json!("json")),
             ("inCharset".to_string(), json!("utf-8")),
             ("outCharset".to_string(), json!("utf-8")),
         ]);
@@ -1013,6 +1017,26 @@ impl QQMusic {
             self.name(),
         )
     }
+}
+
+#[must_use]
+pub fn get_search_id() -> String {
+    let mut rng = rand::thread_rng();
+
+    let e: u64 = rng.gen_range(1..=20);
+
+    let t = e * 18_014_398_509_481_984;
+
+    let n = rng.gen_range(0..=4_194_304) * 4_294_967_296;
+
+    const MILLIS_IN_DAY: u64 = 24 * 60 * 60 * 1000;
+    let r = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+        % MILLIS_IN_DAY;
+
+    (t + n + r).to_string()
 }
 
 /// 根据 QQ 音乐专辑的 MID 构造指定尺寸的封面图片 URL。
