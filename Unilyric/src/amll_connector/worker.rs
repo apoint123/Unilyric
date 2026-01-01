@@ -1,14 +1,14 @@
-use anyhow::anyhow;
 use std::{
-    pin::Pin,
     sync::mpsc::Sender as StdSender,
     time::{Duration, Instant},
 };
-use tracing::{debug, error, info, warn};
 
+use anyhow::anyhow;
+use futures_util::FutureExt;
 use smtc_suite::{MediaCommand, MediaUpdate, RepeatMode as SmtcRepeatMode, SmtcControlCommand};
 use tokio::{
     sync::{
+        broadcast,
         mpsc::{
             Receiver as TokioReceiver, Sender as TokioSender, channel as tokio_channel,
             error::TrySendError,
@@ -16,12 +16,13 @@ use tokio::{
         oneshot,
     },
     task::{JoinError, JoinHandle},
-    time::Sleep,
 };
+use tracing::{debug, error, info, warn};
 
 use crate::amll_connector::{
     protocol_v2::*,
-    types::{ActorSettings, UiUpdate},
+    types::{ActorSettings, ConnectorMode, UiUpdate},
+    websocket_server,
 };
 
 use super::{
@@ -36,9 +37,15 @@ type ClientTaskComponents = (
     JoinHandle<anyhow::Result<()>>,
 );
 
+type ServerTaskComponents = (
+    broadcast::Sender<OutgoingMessage>,
+    TokioReceiver<()>,
+    oneshot::Sender<()>,
+    JoinHandle<anyhow::Result<()>>,
+);
+
 enum StateFutureResult {
     TaskFinished(Result<anyhow::Result<()>, JoinError>),
-    RetryTimerFinished,
 }
 
 const CHANNEL_BUFFER_SIZE: usize = 32;
@@ -48,11 +55,19 @@ enum PostShutdownAction {
     Restart,
 }
 
+enum RunningConnection {
+    Client {
+        tx: TokioSender<OutgoingMessage>,
+    },
+    Server {
+        broadcast_tx: broadcast::Sender<OutgoingMessage>,
+    },
+}
+
 enum ConnectionState {
     Disconnected,
-    WaitingToRetry(Pin<Box<Sleep>>),
     Running {
-        tx: TokioSender<OutgoingMessage>,
+        conn_type: RunningConnection,
         shutdown_tx: oneshot::Sender<()>,
         handle: JoinHandle<anyhow::Result<()>>,
     },
@@ -66,27 +81,28 @@ struct ActorState {
     config: AMLLConnectorConfig,
     actor_settings: ActorSettings,
     connection: ConnectionState,
+    server_new_conn_rx: Option<TokioReceiver<()>>,
     session_ready: bool,
-    retry_attempts: u32,
     last_track_info: Option<smtc_suite::NowPlayingInfo>,
     last_audio_sent_time: Option<Instant>,
     last_lyric_sent: Option<LyricContent>,
 }
 
-fn handle_websocket_send_error<T>(result: Result<(), TrySendError<T>>, message_type: &str) {
-    match result {
-        Ok(_) => {}
-        Err(TrySendError::Full(_)) => {
-            warn!(
-                "[AMLL Actor] WebSocket 发送队列已满，丢弃 {} 消息",
-                message_type
-            );
-        }
-        Err(TrySendError::Closed(_)) => {
-            debug!(
-                "[AMLL Actor] WebSocket 客户端通道已关闭，无法发送 {} 消息",
-                message_type
-            );
+fn send_outgoing_message(state: &mut ActorState, msg: OutgoingMessage, msg_type_log: &str) {
+    if let ConnectionState::Running { conn_type, .. } = &mut state.connection {
+        match conn_type {
+            RunningConnection::Client { tx } => match tx.try_send(msg) {
+                Ok(_) => {}
+                Err(TrySendError::Full(_)) => {
+                    warn!("[AMLL Actor] 客户端发送队列已满，丢弃 {msg_type_log}",)
+                }
+                Err(TrySendError::Closed(_)) => debug!("[AMLL Actor] 客户端通道已关闭"),
+            },
+            RunningConnection::Server { broadcast_tx, .. } => {
+                if let Err(_e) = broadcast_tx.send(msg) {
+                    // trace!("[AMLL Actor] 广播消息无人接收: {}", _e);
+                }
+            }
         }
     }
 }
@@ -100,7 +116,7 @@ async fn handle_smtc_send_error<T>(
     }
 }
 
-fn send_music_info_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_music_info_to_ws(state: &mut ActorState, info: &smtc_suite::NowPlayingInfo) {
     let artists_vec = info.artist.as_ref().map_or_else(Vec::new, |name| {
         vec![Artist {
             id: Default::default(),
@@ -118,21 +134,20 @@ fn send_music_info_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::N
 
     let payload = Payload::State(StateUpdate::SetMusic(music_info));
     let msg = OutgoingMessage::Json(MessageV2 { payload });
-    handle_websocket_send_error(tx.try_send(msg), "SetMusic");
+    send_outgoing_message(state, msg, "SetMusic");
 }
 
-fn send_cover_to_ws(tx: &TokioSender<OutgoingMessage>, cover_data: &[u8]) {
+fn send_cover_to_ws(state: &mut ActorState, cover_data: &[u8]) {
     if !cover_data.is_empty() {
         let bin_body = BinaryV2::SetCoverData {
             data: cover_data.to_vec(),
         };
         let msg = OutgoingMessage::Binary(bin_body);
-
-        handle_websocket_send_error(tx.try_send(msg), "SetCoverData");
+        send_outgoing_message(state, msg, "SetCoverData");
     }
 }
 
-fn send_play_state_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_play_state_to_ws(state: &mut ActorState, info: &smtc_suite::NowPlayingInfo) {
     if let Some(status) = info.playback_status {
         let state_update = match status {
             smtc_suite::PlaybackStatus::Playing => StateUpdate::Resumed,
@@ -142,15 +157,15 @@ fn send_play_state_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::N
         };
         let payload = Payload::State(state_update);
         let msg = OutgoingMessage::Json(MessageV2 { payload });
-        handle_websocket_send_error(tx.try_send(msg), "播放状态");
+        send_outgoing_message(state, msg, "播放状态");
     }
 }
 
-fn send_progress_to_ws(tx: &TokioSender<OutgoingMessage>, info: &smtc_suite::NowPlayingInfo) {
+fn send_progress_to_ws(state: &mut ActorState, info: &smtc_suite::NowPlayingInfo) {
     if let Some(progress) = info.position_ms {
         let payload = Payload::State(StateUpdate::Progress { progress });
         let msg = OutgoingMessage::Json(MessageV2 { payload });
-        handle_websocket_send_error(tx.try_send(msg), "Progress");
+        send_outgoing_message(state, msg, "Progress");
     }
 }
 
@@ -187,6 +202,33 @@ fn start_websocket_client_task(
     Ok((ws_outgoing_tx, shutdown_tx, handle))
 }
 
+fn start_websocket_server_task(
+    config: &AMLLConnectorConfig,
+    media_cmd_tx: TokioSender<SmtcControlCommand>,
+) -> Result<ServerTaskComponents, anyhow::Error> {
+    let port = config.server_port;
+    if port == 0 {
+        return Err(anyhow!("无效的服务端端口"));
+    }
+
+    let (broadcast_tx, broadcast_rx) = broadcast::channel(64);
+    let (new_conn_tx, new_conn_rx) = tokio_channel(16);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+
+    let handle = tokio::spawn(async move {
+        websocket_server::run_websocket_server(
+            port,
+            broadcast_rx,
+            media_cmd_tx,
+            new_conn_tx,
+            shutdown_rx,
+        )
+        .await
+    });
+
+    Ok((broadcast_tx, new_conn_rx, shutdown_tx, handle))
+}
+
 fn try_start_connection(
     state: &mut ActorState,
     status_tx: &TokioSender<WebsocketStatus>,
@@ -200,28 +242,84 @@ fn try_start_connection(
         return;
     }
 
-    match start_websocket_client_task(&state.config, status_tx.clone(), media_cmd_tx.clone()) {
-        Ok((tx, shutdown_tx, handle)) => {
-            state.connection = ConnectionState::Running {
-                tx,
-                shutdown_tx,
-                handle,
-            };
-            let _ = update_tx.send(UiUpdate {
-                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Connecting),
-                repaint_needed: true,
-            });
+    match state.config.mode {
+        ConnectorMode::Client => {
+            match start_websocket_client_task(
+                &state.config,
+                status_tx.clone(),
+                media_cmd_tx.clone(),
+            ) {
+                Ok((tx, shutdown_tx, handle)) => {
+                    state.connection = ConnectionState::Running {
+                        conn_type: RunningConnection::Client { tx },
+                        shutdown_tx,
+                        handle,
+                    };
+                    let _ = update_tx.send(UiUpdate {
+                        payload: ConnectorUpdate::WebsocketStatusChanged(
+                            WebsocketStatus::Connecting,
+                        ),
+                        repaint_needed: true,
+                    });
+                }
+                Err(e) => {
+                    handle_start_error(e, state, update_tx);
+                }
+            }
         }
-        Err(e) => {
-            error!("[AMLL Actor] 启动 WebSocket 客户端失败: {}", e);
-            state.connection = ConnectionState::Disconnected;
-            let _ = update_tx.send(UiUpdate {
-                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(format!(
-                    "启动失败: {}",
-                    e
-                ))),
-                repaint_needed: true,
-            });
+        ConnectorMode::Server => {
+            match start_websocket_server_task(&state.config, media_cmd_tx.clone()) {
+                Ok((broadcast_tx, new_conn_rx, shutdown_tx, handle)) => {
+                    state.server_new_conn_rx = Some(new_conn_rx);
+
+                    state.connection = ConnectionState::Running {
+                        conn_type: RunningConnection::Server { broadcast_tx },
+                        shutdown_tx,
+                        handle,
+                    };
+                    state.session_ready = true;
+                    let _ = update_tx.send(UiUpdate {
+                        payload: ConnectorUpdate::WebsocketStatusChanged(
+                            WebsocketStatus::Connected,
+                        ),
+                        repaint_needed: true,
+                    });
+                }
+                Err(e) => {
+                    handle_start_error(e, state, update_tx);
+                }
+            }
+        }
+    }
+}
+
+fn handle_start_error(e: anyhow::Error, state: &mut ActorState, update_tx: &StdSender<UiUpdate>) {
+    error!("[AMLL Actor] 启动连接任务失败: {e}");
+    state.connection = ConnectionState::Disconnected;
+    let _ = update_tx.send(UiUpdate {
+        payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(format!(
+            "启动失败: {}",
+            e
+        ))),
+        repaint_needed: true,
+    });
+}
+
+fn push_full_state_to_current_connection(state: &mut ActorState) {
+    if let Some(track_info) = &state.last_track_info {
+        let info = track_info.clone();
+
+        send_music_info_to_ws(state, &info);
+        if let Some(ref cover_data) = info.cover_data {
+            send_cover_to_ws(state, cover_data);
+        }
+        send_play_state_to_ws(state, &info);
+        send_progress_to_ws(state, &info);
+
+        if let Some(ref lyric_content) = state.last_lyric_sent {
+            let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
+            let msg = OutgoingMessage::Json(MessageV2 { payload });
+            send_outgoing_message(state, msg, "SetLyric (全量更新)");
         }
     }
 }
@@ -239,14 +337,12 @@ fn handle_smtc_update(
             return;
         }
 
-        if let (ConnectionState::Running { tx, .. }, true) =
-            (&state.connection, state.session_ready)
-        {
+        if let (ConnectionState::Running { .. }, true) = (&state.connection, state.session_ready) {
             let i16_byte_data = convert_f32_bytes_to_i16_bytes(&bytes);
             let msg = OutgoingMessage::Binary(BinaryV2::OnAudioData {
                 data: i16_byte_data,
             });
-            handle_websocket_send_error(tx.try_send(msg), "OnAudioData");
+            send_outgoing_message(state, msg, "OnAudioData");
             state.last_audio_sent_time = Some(Instant::now());
         }
         return;
@@ -256,22 +352,17 @@ fn handle_smtc_update(
     let payload = match update {
         MediaUpdate::TrackChanged(new_info) => {
             let is_new_song = state.last_track_info.as_ref().is_none_or(|cached| {
-                cached.title != new_info.title
-                    || cached.artist != new_info.artist
-                    || cached.duration_ms != new_info.duration_ms
+                cached.title != new_info.title || cached.artist != new_info.artist
             });
 
-            if let (ConnectionState::Running { tx, .. }, true) =
+            if let (ConnectionState::Running { .. }, true) =
                 (&state.connection, state.session_ready)
             {
                 if is_new_song {
-                    debug!("[AMLL Actor] 检测到新歌曲，发送元数据。");
-                    send_music_info_to_ws(tx, &new_info);
+                    send_music_info_to_ws(state, &new_info);
                 }
-
                 if let Some(ref cover_data) = new_info.cover_data {
-                    debug!("[AMLL Actor] 检测到封面更新，发送封面数据。");
-                    send_cover_to_ws(tx, cover_data);
+                    send_cover_to_ws(state, cover_data);
                 }
 
                 let modes_changed = state.last_track_info.as_ref().is_none_or(|cached| {
@@ -280,10 +371,8 @@ fn handle_smtc_update(
                 });
 
                 if modes_changed {
-                    debug!("[AMLL Actor] 检测到播放模式更新，发送更新。");
                     let shuffle_state = new_info.is_shuffle_active.unwrap_or(false);
                     let smtc_repeat_mode = new_info.repeat_mode.unwrap_or_default();
-
                     let protocol_repeat_mode = match smtc_repeat_mode {
                         SmtcRepeatMode::Off => RepeatMode::Off,
                         SmtcRepeatMode::One => RepeatMode::One,
@@ -294,14 +383,22 @@ fn handle_smtc_update(
                         repeat: protocol_repeat_mode,
                         shuffle: shuffle_state,
                     };
-
-                    let payload = Payload::State(state_update);
-                    let msg = OutgoingMessage::Json(MessageV2 { payload });
-                    handle_websocket_send_error(tx.try_send(msg), "ModeChanged");
+                    let msg = OutgoingMessage::Json(MessageV2 {
+                        payload: Payload::State(state_update),
+                    });
+                    send_outgoing_message(state, msg, "ModeChanged");
                 }
 
-                send_play_state_to_ws(tx, &new_info);
-                send_progress_to_ws(tx, &new_info);
+                let status_changed = state
+                    .last_track_info
+                    .as_ref()
+                    .is_none_or(|cached| cached.playback_status != new_info.playback_status);
+
+                if status_changed {
+                    send_play_state_to_ws(state, &new_info);
+                }
+
+                send_progress_to_ws(state, &new_info);
             }
             let final_info = if let Some(cached_info) = state.last_track_info.take() {
                 if is_new_song {
@@ -321,16 +418,16 @@ fn handle_smtc_update(
             ConnectorUpdate::SmtcUpdate(MediaUpdate::TrackChanged(new_info))
         }
         MediaUpdate::VolumeChanged { volume, .. } => {
-            if let (ConnectionState::Running { tx, .. }, true) =
+            if let (ConnectionState::Running { .. }, true) =
                 (&state.connection, state.session_ready)
             {
-                debug!("[AMLL Actor] 检测到音量更新，发送更新。音量值: {volume:.2}",);
                 let state_update = StateUpdate::Volume {
                     volume: volume as f64,
                 };
-                let payload = Payload::State(state_update);
-                let msg = OutgoingMessage::Json(MessageV2 { payload });
-                handle_websocket_send_error(tx.try_send(msg), "VolumeChanged");
+                let msg = OutgoingMessage::Json(MessageV2 {
+                    payload: Payload::State(state_update),
+                });
+                send_outgoing_message(state, msg, "VolumeChanged");
             }
             ConnectorUpdate::SmtcUpdate(update)
         }
@@ -339,7 +436,6 @@ fn handle_smtc_update(
                 other_update,
                 MediaUpdate::SessionsChanged(_) | MediaUpdate::SelectedSessionVanished(_)
             ) {
-                state.last_track_info = None;
                 repaint_needed = true;
             }
             ConnectorUpdate::SmtcUpdate(other_update)
@@ -361,16 +457,28 @@ async fn handle_app_command(
 ) {
     match command {
         ConnectorCommand::Shutdown => {}
+        ConnectorCommand::StartConnection => {
+            if matches!(state.connection, ConnectionState::Disconnected) {
+                try_start_connection(state, status_tx, media_cmd_tx, update_tx);
+            } else {
+                warn!("[AMLL Actor] 收到连接指令，但当前已在运行中");
+            }
+        }
         ConnectorCommand::UpdateConfig(new_config) => {
-            let should_be_running = new_config.enabled;
+            let mode_changed = state.config.mode != new_config.mode;
             let url_changed = state.config.websocket_url != new_config.websocket_url;
+            let port_changed = state.config.server_port != new_config.server_port;
+
             state.config = new_config;
 
             let is_running = matches!(state.connection, ConnectionState::Running { .. });
-            let is_waiting_to_retry =
-                matches!(state.connection, ConnectionState::WaitingToRetry(_));
 
-            if should_be_running && (!is_running || url_changed || is_waiting_to_retry) {
+            if is_running
+                && (mode_changed
+                    || (state.config.mode == ConnectorMode::Client && url_changed)
+                    || (state.config.mode == ConnectorMode::Server && port_changed))
+            {
+                info!("[AMLL Actor] 配置变更，正在重启...");
                 if let ConnectionState::Running {
                     shutdown_tx,
                     handle,
@@ -382,11 +490,8 @@ async fn handle_app_command(
                         handle,
                         next_action: PostShutdownAction::Restart,
                     };
-                } else {
-                    state.retry_attempts = 0;
-                    try_start_connection(state, status_tx, media_cmd_tx, update_tx);
                 }
-            } else if !should_be_running
+            } else if !state.config.enabled
                 && is_running
                 && let ConnectionState::Running {
                     shutdown_tx,
@@ -406,7 +511,6 @@ async fn handle_app_command(
             state.actor_settings = new_settings;
         }
         ConnectorCommand::DisconnectWebsocket => {
-            state.retry_attempts = 0;
             if let ConnectionState::Running {
                 shutdown_tx,
                 handle,
@@ -418,7 +522,7 @@ async fn handle_app_command(
                     handle,
                     next_action: PostShutdownAction::DoNothing,
                 };
-            } else if matches!(state.connection, ConnectionState::WaitingToRetry(_)) {
+            } else {
                 state.connection = ConnectionState::Disconnected;
                 let _ = update_tx.send(UiUpdate {
                     payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
@@ -432,18 +536,14 @@ async fn handle_app_command(
                 lines: protocol_lyrics,
             };
 
-            if let ConnectionState::Running { tx, .. } = &state.connection {
-                let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
-                let msg = OutgoingMessage::Json(MessageV2 { payload });
-                handle_websocket_send_error(tx.try_send(msg), "SetLyric");
-            }
+            let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
+            let msg = OutgoingMessage::Json(MessageV2 { payload });
+            send_outgoing_message(state, msg, "SetLyric");
 
             state.last_lyric_sent = Some(lyric_content);
         }
         ConnectorCommand::SendCover(cover_data) => {
-            if let ConnectionState::Running { tx, .. } = &state.connection {
-                send_cover_to_ws(tx, &cover_data);
-            }
+            send_cover_to_ws(state, &cover_data);
         }
     }
 }
@@ -475,18 +575,20 @@ pub async fn amll_connector_actor(
         config: initial_config,
         actor_settings: ActorSettings {},
         connection: ConnectionState::Disconnected,
+        server_new_conn_rx: None,
         session_ready: false,
-        retry_attempts: 0,
         last_track_info: None,
         last_audio_sent_time: None,
         last_lyric_sent: None,
     };
 
-    if state.config.enabled {
-        try_start_connection(&mut state, &ws_status_tx, &media_cmd_tx, &update_tx);
-    }
-
     loop {
+        let mut server_new_conn_future = std::future::pending::<Option<()>>().left_future();
+
+        if let Some(rx) = &mut state.server_new_conn_rx {
+            server_new_conn_future = rx.recv().right_future();
+        }
+
         tokio::select! {
             biased;
 
@@ -494,10 +596,6 @@ pub async fn amll_connector_actor(
                 match &mut state.connection {
                     ConnectionState::Running { handle, .. } | ConnectionState::ShuttingDown { handle, .. } => {
                         StateFutureResult::TaskFinished(handle.await)
-                    }
-                    ConnectionState::WaitingToRetry(sleep) => {
-                        sleep.await;
-                        StateFutureResult::RetryTimerFinished
                     }
                     ConnectionState::Disconnected => {
                         std::future::pending().await
@@ -507,8 +605,10 @@ pub async fn amll_connector_actor(
                 match state_result {
                     StateFutureResult::TaskFinished(result) => {
                         state.session_ready = false;
-                        let command = MediaCommand::SetHighFrequencyProgressUpdates(false);
-                        handle_smtc_send_error(smtc_command_tx.send(command).await, "禁用高频更新").await;
+                        state.server_new_conn_rx = None;
+                        if state.config.mode == ConnectorMode::Client {
+                            let _ = smtc_command_tx.send(MediaCommand::SetHighFrequencyProgressUpdates(false)).await;
+                        }
 
                         let previous_state = std::mem::replace(&mut state.connection, ConnectionState::Disconnected);
                         let mut next_action = PostShutdownAction::DoNothing;
@@ -519,94 +619,51 @@ pub async fn amll_connector_actor(
                         let was_successful_close = result.as_ref().is_ok_and(|res| res.is_ok());
 
                         if !matches!(next_action, PostShutdownAction::Restart) && !was_successful_close {
-                            match &result {
-                                Ok(Err(e)) => warn!("[AMLL Actor] WebSocket 客户端异常终止: {}", e),
-                                Err(e) => error!("[AMLL Actor] WebSocket 任务 panicked: {}", e),
+                             match &result {
+                                Ok(Err(e)) => warn!("[AMLL Actor] 连接意外断开: {e}"),
+                                Err(e) => error!("[AMLL Actor] 任务 panic: {e}"),
                                 _ => {}
                             }
+                            let error_msg = if let Ok(Err(e)) = result { format!("连接断开: {e}") } else { "连接意外终止".to_string() };
 
-                            state.retry_attempts += 1;
-                            const MAX_RETRIES: u32 = 1;
-
-                            if state.retry_attempts > MAX_RETRIES {
-                                error!("[AMLL Actor] 已达到最大重连次数 ({})，将停止自动重连。", MAX_RETRIES);
-                                let _ = update_tx.send(UiUpdate {
-                                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error("已达到最大重连次数".to_string())),
-                                    repaint_needed: true,
-                                });
-                            } else {
-                                let base_delay_secs = 5;
-                                let delay_secs = base_delay_secs * 2_u64.pow(state.retry_attempts - 1);
-                                let reconnect_delay = Duration::from_secs(delay_secs);
-
-                                let status_msg = format!("连接失败，正在重试 ({}/{})", state.retry_attempts, MAX_RETRIES);
-                                info!("[AMLL Actor] {}将在 {:?} 后进行...", status_msg, reconnect_delay);
-
-                                let _ = update_tx.send(UiUpdate {
-                                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(status_msg)),
-                                    repaint_needed: true,
-                                });
-
-                                state.connection = ConnectionState::WaitingToRetry(Box::pin(tokio::time::sleep(reconnect_delay)));
-                            }
-                        }else {
-                            state.retry_attempts = 0;
+                            let _ = update_tx.send(UiUpdate {
+                                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Error(error_msg)),
+                                repaint_needed: true,
+                            });
                         }
 
-                        match next_action {
-                            PostShutdownAction::Restart => {
-                                try_start_connection(&mut state, &ws_status_tx, &media_cmd_tx, &update_tx);
-                            }
-                            PostShutdownAction::DoNothing => {
-                                let _ = update_tx.send(UiUpdate {
-                                    payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
-                                    repaint_needed: true,
-                                });
-                            }
-                        }
-                    }
-                    StateFutureResult::RetryTimerFinished => {
-                        state.connection = ConnectionState::Disconnected;
-                        if state.config.enabled {
+                        if let PostShutdownAction::Restart = next_action {
                             try_start_connection(&mut state, &ws_status_tx, &media_cmd_tx, &update_tx);
+                        } else if was_successful_close {
+                             let _ = update_tx.send(UiUpdate {
+                                payload: ConnectorUpdate::WebsocketStatusChanged(WebsocketStatus::Disconnected),
+                                repaint_needed: true,
+                            });
                         }
                     }
                 }
             },
 
+            Some(_) = server_new_conn_future => {
+                push_full_state_to_current_connection(&mut state);
+            },
+
             Some(status) = ws_status_rx.recv() => {
-                debug!("[AMLL Actor] 收到 WebSocket 状态更新: {:?}", status);
+                if state.config.mode == ConnectorMode::Client {
+                    if let (WebsocketStatus::Connected, ConnectionState::Running { conn_type: RunningConnection::Client { tx }, .. }) = (&status, &state.connection) {
+                        let _ = smtc_command_tx.send(MediaCommand::SetHighFrequencyProgressUpdates(true)).await;
 
-                if let (WebsocketStatus::Connected, ConnectionState::Running { tx, .. }) =
-                    (&status, &state.connection)
-                {
-                    let command = MediaCommand::SetHighFrequencyProgressUpdates(true);
-                    handle_smtc_send_error(smtc_command_tx.send(command).await, "启用高频更新").await;
+                        let init_msg = OutgoingMessage::Json(MessageV2 { payload: Payload::Initialize });
+                        let _ = tx.try_send(init_msg);
 
-                    let init_payload = Payload::Initialize;
-                    let init_msg = OutgoingMessage::Json(MessageV2 { payload: init_payload });
-                    handle_websocket_send_error(tx.try_send(init_msg), "Initialize");
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        state.session_ready = true;
 
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    state.session_ready = true;
-
-                    if let Some(track_info) = &state.last_track_info {
-                        send_music_info_to_ws(tx, track_info);
-                        if let Some(ref cover_data) = track_info.cover_data {
-                            send_cover_to_ws(tx, cover_data);
-                        }
-                        send_play_state_to_ws(tx, track_info);
-                        send_progress_to_ws(tx, track_info);
-                        if let Some(ref lyric_content) = state.last_lyric_sent {
-                            let payload = Payload::State(StateUpdate::SetLyric(lyric_content.clone()));
-                            let msg = OutgoingMessage::Json(MessageV2 { payload });
-                            handle_websocket_send_error(tx.try_send(msg), "SetLyric (重连)");
-                        }
+                        push_full_state_to_current_connection(&mut state);
+                    } else {
+                        state.session_ready = false;
+                         let _ = smtc_command_tx.send(MediaCommand::SetHighFrequencyProgressUpdates(false)).await;
                     }
-                } else if matches!(status, WebsocketStatus::Disconnected | WebsocketStatus::Error(_)) {
-                    state.session_ready = false;
-                    let command = MediaCommand::SetHighFrequencyProgressUpdates(false);
-                    handle_smtc_send_error(smtc_command_tx.send(command).await, "禁用高频更新").await;
                 }
 
                 let _ = update_tx.send(UiUpdate {
@@ -617,7 +674,7 @@ pub async fn amll_connector_actor(
 
             Some(command) = command_rx.recv() => {
                 if matches!(command, ConnectorCommand::Shutdown) {
-                    if let ConnectionState::Running { shutdown_tx, handle, .. } = state.connection {
+                     if let ConnectionState::Running { shutdown_tx, handle, .. } = state.connection {
                         let _ = shutdown_tx.send(());
                         handle.await.ok();
                     }

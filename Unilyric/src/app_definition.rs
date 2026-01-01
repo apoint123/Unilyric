@@ -378,6 +378,8 @@ impl UniLyricApp {
             let mc_config = AMLLConnectorConfig {
                 enabled: settings.amll_connector_enabled,
                 websocket_url: settings.amll_connector_websocket_url.clone(),
+                mode: settings.amll_connector_mode,
+                server_port: settings.amll_connector_server_port,
             };
 
             let (amll_update_tx, amll_update_rx) = std_channel::<UiUpdate>();

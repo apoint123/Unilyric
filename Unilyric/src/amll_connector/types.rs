@@ -2,10 +2,23 @@ use lyrics_helper_core::converter::types::ParsedSourceData;
 use serde::{Deserialize, Serialize};
 use smtc_suite::MediaUpdate;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum ConnectorMode {
+    #[default]
+    Client,
+    Server,
+}
+
+fn default_port() -> u16 {
+    11455
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AMLLConnectorConfig {
     pub enabled: bool,
     pub websocket_url: String,
+    pub mode: ConnectorMode,
+    pub server_port: u16,
 }
 
 impl Default for AMLLConnectorConfig {
@@ -13,6 +26,8 @@ impl Default for AMLLConnectorConfig {
         Self {
             enabled: false,
             websocket_url: "ws://localhost:11444".to_string(),
+            mode: ConnectorMode::Client,
+            server_port: default_port(),
         }
     }
 }
@@ -35,6 +50,7 @@ pub struct ActorSettings {}
 pub enum ConnectorCommand {
     UpdateConfig(AMLLConnectorConfig),
     UpdateActorSettings(ActorSettings),
+    StartConnection,
     SendLyric(ParsedSourceData),
     SendCover(Vec<u8>),
     Shutdown,

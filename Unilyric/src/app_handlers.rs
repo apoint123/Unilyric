@@ -229,16 +229,12 @@ impl UniLyricApp {
         if let Some(tx) = &self.amll_connector.command_tx {
             let command = match action {
                 AmllConnectorAction::Connect | AmllConnectorAction::Retry => {
-                    tracing::info!("[AMLL Action] 请求连接...");
                     let mut config = self.amll_connector.config.lock().unwrap();
                     config.enabled = true;
 
-                    Some(ConnectorCommand::UpdateConfig(config.clone()))
+                    Some(ConnectorCommand::StartConnection)
                 }
-                AmllConnectorAction::Disconnect => {
-                    tracing::info!("[AMLL Action] 请求断开...");
-                    Some(ConnectorCommand::DisconnectWebsocket)
-                }
+                AmllConnectorAction::Disconnect => Some(ConnectorCommand::DisconnectWebsocket),
                 AmllConnectorAction::CheckIndexUpdate => None,
                 AmllConnectorAction::ReloadProviders => {
                     info!("[AMLL Action] 重新加载提供商...");
@@ -1083,6 +1079,8 @@ impl UniLyricApp {
                     let new_mc_config_from_settings = AMLLConnectorConfig {
                         enabled: settings.amll_connector_enabled,
                         websocket_url: settings.amll_connector_websocket_url.clone(),
+                        mode: settings.amll_connector_mode,
+                        server_port: settings.amll_connector_server_port,
                     };
 
                     let new_actor_settings = ActorSettings {};

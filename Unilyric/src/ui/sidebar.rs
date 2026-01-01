@@ -1,4 +1,5 @@
 use crate::amll_connector::WebsocketStatus;
+use crate::amll_connector::types::ConnectorMode;
 use crate::app_actions::{AmllConnectorAction, LyricsAction, PlayerAction, UserAction};
 use crate::app_definition::UniLyricApp;
 use crate::types::{AutoSearchSource, AutoSearchStatus};
@@ -16,37 +17,66 @@ pub fn draw_amll_connector_sidebar(app: &mut UniLyricApp, ui: &mut egui::Ui) {
 
     ui.vertical(|ui| {
         let current_status = app.amll_connector.status.lock().unwrap().clone();
-        let websocket_url_display = app
-            .amll_connector
-            .config
-            .lock()
-            .unwrap()
-            .websocket_url
-            .clone();
 
-        ui.label(format!("目标 URL: {websocket_url_display}"));
+        let (mode, url, port) = {
+            let config = app.amll_connector.config.lock().unwrap();
+            (
+                config.mode,
+                config.websocket_url.clone(),
+                config.server_port,
+            )
+        };
+
+        match mode {
+            ConnectorMode::Client => {
+                ui.label("模式: 客户端".to_string());
+                ui.label(format!("目标: {url}"));
+            }
+            ConnectorMode::Server => {
+                ui.label("模式: 服务端".to_string());
+                ui.label(format!("监听端口: {port}"));
+            }
+        }
 
         match current_status {
             WebsocketStatus::Disconnected => {
-                if ui.button("连接到 AMLL Player").clicked() {
+                let btn_text = match mode {
+                    ConnectorMode::Client => "连接到 AMLL Player",
+                    ConnectorMode::Server => "启动 WebSocket 服务器",
+                };
+
+                if ui.button(btn_text).clicked() {
                     app.send_action(UserAction::AmllConnector(AmllConnectorAction::Connect));
                 }
-                ui.weak("状态: 未连接");
+                ui.weak("状态: 未运行");
             }
             WebsocketStatus::Connecting => {
                 ui.horizontal(|h_ui| {
                     h_ui.add(Spinner::new());
-                    h_ui.label("正在连接...");
+                    h_ui.label(match mode {
+                        ConnectorMode::Client => "正在连接...",
+                        ConnectorMode::Server => "正在启动...",
+                    });
                 });
             }
             WebsocketStatus::Connected => {
-                if ui.button("断开连接").clicked() {
+                let btn_text = match mode {
+                    ConnectorMode::Client => "断开连接",
+                    ConnectorMode::Server => "停止服务器",
+                };
+
+                if ui.button(btn_text).clicked() {
                     app.send_action(UserAction::AmllConnector(AmllConnectorAction::Disconnect));
                 }
-                ui.colored_label(Color32::GREEN, "状态: 已连接");
+
+                let status_text = match mode {
+                    ConnectorMode::Client => "已连接",
+                    ConnectorMode::Server => "运行中 (正在监听)",
+                };
+                ui.colored_label(Color32::GREEN, status_text);
             }
             WebsocketStatus::Error(err_msg_ref) => {
-                if ui.button("重试连接").clicked() {
+                if ui.button("重试").clicked() {
                     app.send_action(UserAction::AmllConnector(AmllConnectorAction::Retry));
                 }
                 ui.colored_label(Color32::RED, "状态: 错误");

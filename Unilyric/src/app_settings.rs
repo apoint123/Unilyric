@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+use crate::amll_connector::types::ConnectorMode;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogSettings {
     pub enable_file_log: bool,
@@ -41,6 +43,8 @@ pub struct AppSettings {
     pub smtc_time_offset_ms: i64,
     pub amll_connector_enabled: bool,
     pub amll_connector_websocket_url: String,
+    pub amll_connector_mode: ConnectorMode,
+    pub amll_connector_server_port: u16,
     pub always_search_all_sources: bool,
     pub last_selected_smtc_session_id: Option<String>,
     pub selected_font_family: Option<String>,
@@ -73,6 +77,8 @@ impl Default for AppSettings {
             smtc_time_offset_ms: 0,
             amll_connector_enabled: false,
             amll_connector_websocket_url: "ws://localhost:11444".to_string(),
+            amll_connector_mode: ConnectorMode::Client,
+            amll_connector_server_port: 11455,
             always_search_all_sources: true,
             last_selected_smtc_session_id: None,
             selected_font_family: None,

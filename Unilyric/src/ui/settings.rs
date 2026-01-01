@@ -1,3 +1,4 @@
+use crate::amll_connector::types::ConnectorMode;
 use crate::app_actions::{AmllConnectorAction, SettingsAction, UserAction};
 use crate::app_definition::UniLyricApp;
 use crate::app_settings::AppAmllMirror;
@@ -310,22 +311,58 @@ fn draw_settings_amll_connector(app: &mut UniLyricApp, ui: &mut egui::Ui) {
             grid_ui.label("启用 AMLL Connector 功能:");
             grid_ui
                 .checkbox(&mut app.ui.temp_edit_settings.amll_connector_enabled, "")
-                .on_hover_text("转发 SMTC 信息到 AMLL Player，让 AMLL Player 也支持其他音乐软件");
+                .on_hover_text("转发 SMTC 信息到 AMLL Player，或作为服务器供其他应用连接");
             grid_ui.end_row();
 
-            grid_ui.label("WebSocket URL:");
-            grid_ui
-                .add(
-                    TextEdit::singleline(
-                        &mut app.ui.temp_edit_settings.amll_connector_websocket_url,
-                    )
-                    .hint_text("ws://localhost:11444")
-                    .desired_width(f32::INFINITY),
-                )
-                .on_hover_text("需点击“保存并应用”");
+            grid_ui.label("运行模式:");
+            egui::ComboBox::from_id_salt("amll_mode_selector_settings")
+                .selected_text(match app.ui.temp_edit_settings.amll_connector_mode {
+                    ConnectorMode::Client => "客户端 (连接其他应用)",
+                    ConnectorMode::Server => "服务端 (本机监听)",
+                })
+                .show_ui(grid_ui, |ui_combo| {
+                    ui_combo.selectable_value(
+                        &mut app.ui.temp_edit_settings.amll_connector_mode,
+                        ConnectorMode::Client,
+                        "客户端 (连接其他应用)",
+                    );
+                    ui_combo.selectable_value(
+                        &mut app.ui.temp_edit_settings.amll_connector_mode,
+                        ConnectorMode::Server,
+                        "服务端 (本机监听)",
+                    );
+                });
             grid_ui.end_row();
 
-            grid_ui.label("将音频数据发送到 AMLL Player");
+            match app.ui.temp_edit_settings.amll_connector_mode {
+                ConnectorMode::Client => {
+                    grid_ui.label("目标 WebSocket URL:");
+                    grid_ui
+                        .add(
+                            TextEdit::singleline(
+                                &mut app.ui.temp_edit_settings.amll_connector_websocket_url,
+                            )
+                            .hint_text("ws://localhost:11444")
+                            .desired_width(f32::INFINITY),
+                        )
+                        .on_hover_text("需点击“保存并应用”");
+                }
+                ConnectorMode::Server => {
+                    grid_ui.label("服务端监听端口:");
+                    grid_ui.horizontal(|h_ui| {
+                        h_ui.add(
+                            egui::DragValue::new(
+                                &mut app.ui.temp_edit_settings.amll_connector_server_port,
+                            )
+                            .range(1024..=65535)
+                            .speed(1),
+                        );
+                    });
+                }
+            }
+            grid_ui.end_row();
+
+            grid_ui.label("将音频数据发送到连接端");
             grid_ui.checkbox(&mut app.ui.temp_edit_settings.send_audio_data_to_player, "");
             grid_ui.end_row();
 
@@ -338,25 +375,8 @@ fn draw_settings_amll_connector(app: &mut UniLyricApp, ui: &mut egui::Ui) {
                     .suffix(" ms"),
             );
             grid_ui.end_row();
-
-            // grid_ui
-            //     .label("校准时间轴")
-            //     .on_hover_text("切歌时立刻跳转到0ms，可能对 Spotify 有奇效");
-            // grid_ui.checkbox(
-            //     &mut app.ui.temp_edit_settings.calibrate_timeline_on_song_change,
-            //     "",
-            // );
-            // grid_ui.end_row();
-
-            // grid_ui
-            //     .label("在新曲目开始时快速暂停/播放")
-            //     .on_hover_text("更强力地校准时间轴");
-            // grid_ui.checkbox(
-            //     &mut app.ui.temp_edit_settings.flicker_play_pause_on_song_change,
-            //     "",
-            // );
-            // grid_ui.end_row();
         });
+
     ui.add_space(10.0);
     ui.strong("AMLL DB 镜像");
 
