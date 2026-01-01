@@ -89,10 +89,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{
-    http::{HttpClient, WreqClient},
-    model::auth::{LoginFlow, ProviderSession},
-};
+use crate::http::{HttpClient, WreqClient};
 
 use futures::{Future, StreamExt, future, stream};
 use lyrics_helper_core::{
@@ -103,11 +100,6 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 pub use crate::error::{LyricsHelperError, Result};
-pub use crate::model::auth::{
-    LoginAction, LoginError, LoginEvent, LoginMethod, LoginResult, ProviderAuthState, Session,
-    UserProfile,
-};
-pub use crate::providers::LoginProvider;
 
 /// 支持的歌词提供商枚举
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -283,134 +275,6 @@ impl LyricsHelper {
             providers: Vec::new(),
             http_clients: HashMap::new(),
         }
-    }
-
-    /// 为指定的提供商发起一个登录流程。
-    ///
-    /// # 参数
-    /// * `provider_name` - 要登录的提供商。
-    /// * `method` - 要使用的登录方式，例如二维码或Cookie。
-    ///
-    /// # 返回
-    /// 一个 `LoginFlow`，包含了 `events` 流和 `actions` 接收器。
-    pub fn initiate_login(
-        &self,
-        provider_name: &ProviderName,
-        method: LoginMethod,
-    ) -> Result<LoginFlow> {
-        let provider = self
-            .providers
-            .iter()
-            .find(|p| p.name() == provider_name.as_str())
-            .ok_or_else(|| LyricsHelperError::ProviderNotSupported(provider_name.to_string()))?;
-
-        let login_provider = provider
-            .as_login_provider()
-            .ok_or_else(|| LyricsHelperError::LoginNotSupported(provider_name.to_string()))?;
-
-        Ok(login_provider.initiate_login(method))
-    }
-
-    /// 导出包含所有登录状态的会话。
-    ///
-    /// # 返回
-    /// 一个序列化为 JSON 字符串的 `Session` 对象，可以被保存到本地。
-    pub fn export_session(&self) -> Result<String> {
-        let mut provider_sessions = HashMap::new();
-
-        for (name, client) in &self.http_clients {
-            let cookies = client.get_cookies()?;
-            let cookies_opt = if cookies.is_empty() || cookies == "{}" {
-                None
-            } else {
-                Some(cookies)
-            };
-
-            let auth_state_opt = self
-                .providers
-                .iter()
-                .find(|p| p.name() == name.as_str())
-                .and_then(|p| p.as_login_provider())
-                .and_then(LoginProvider::get_auth_state);
-
-            if cookies_opt.is_some() || auth_state_opt.is_some() {
-                provider_sessions.insert(
-                    name.clone(),
-                    ProviderSession {
-                        cookies: cookies_opt,
-                        auth_state: auth_state_opt,
-                    },
-                );
-            }
-        }
-
-        let session = Session { provider_sessions };
-        serde_json::to_string(&session).map_err(Into::into)
-    }
-
-    /// 从会话数据中恢复所有登录状态。
-    ///
-    /// 应该在执行任何需要登录的操作之前调用。
-    ///
-    /// # 参数
-    /// * `session_json` - `export_session` 方法返回的 JSON 字符串。
-    pub fn import_session(&self, session_json: &str) -> Result<()> {
-        if session_json.is_empty() {
-            return Ok(());
-        }
-
-        let session: Session = serde_json::from_str(session_json)?;
-
-        for (name, provider_session) in session.provider_sessions {
-            if let Some(cookies) = provider_session.cookies
-                && let Some(client) = self.http_clients.get(&name)
-            {
-                client.set_cookies(&cookies)?;
-            }
-
-            if let Some(auth_state) = provider_session.auth_state
-                && let Some(provider) = self.providers.iter().find(|p| p.name() == name.as_str())
-                && let Some(login_provider) = provider.as_login_provider()
-            {
-                login_provider.set_auth_state(&auth_state)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn verify_sessions(&self) -> Result<()> {
-        let mut verification_futures = Vec::new();
-
-        for provider in &self.providers {
-            if let Some(login_provider) = provider.as_login_provider()
-                && login_provider.get_auth_state().is_some()
-            {
-                let provider_name = login_provider.name().to_string();
-                let future = async move {
-                    login_provider
-                        .verify_session()
-                        .await
-                        .map_err(|e| (provider_name, e))
-                };
-                verification_futures.push(future);
-            }
-        }
-
-        if verification_futures.is_empty() {
-            return Ok(());
-        }
-
-        let results = future::join_all(verification_futures).await;
-
-        for result in results {
-            if let Err((provider_name, error)) = result {
-                tracing::warn!("提供商 '{}' 的会话验证失败: {}", provider_name, error);
-                return Err(error);
-            }
-        }
-
-        tracing::info!("所有已恢复的会话均验证成功。");
-        Ok(())
     }
 
     /// 初始化并加载所有歌词提供商。

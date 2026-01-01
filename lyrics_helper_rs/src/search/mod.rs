@@ -332,9 +332,6 @@ mod tests {
         async fn get_song_info(&self, _song_id: &str) -> Result<generic::Song> {
             unimplemented!()
         }
-        async fn get_song_link(&self, _song_id: &str) -> Result<String> {
-            unimplemented!()
-        }
         async fn get_album_cover_url(
             &self,
             _album_id: &str,

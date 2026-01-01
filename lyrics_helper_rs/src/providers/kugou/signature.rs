@@ -57,27 +57,6 @@ pub fn signature_android_params(
     output
 }
 
-const KUGOU_SIGN_KEY_SALT: &str = "57ae12eb6890223e355ccfcb74edf70d";
-const KUGOU_LITE_SIGN_KEY_SALT: &str = "185672dd44712f60bb1736df5a377e82";
-
-/// 为获取歌曲 URL 等接口生成 `key` 参数。
-#[must_use]
-pub fn sign_key(hash: &str, mid: &str, userid: u64, appid: &str, is_lite: bool) -> String {
-    let salt = if is_lite {
-        KUGOU_LITE_SIGN_KEY_SALT
-    } else {
-        KUGOU_SIGN_KEY_SALT
-    };
-    let input = format!("{hash}{salt}{appid}{mid}{userid}");
-    let digest = Md5::digest(input.as_bytes());
-
-    let mut output = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        write!(&mut output, "{byte:02x}").unwrap();
-    }
-    output
-}
-
 /// 为新的 /kmr/ 接口生成 body 中的 `key` 参数。
 #[must_use]
 pub fn sign_params_key(appid: &str, clientver: &str, clienttime: &str) -> String {
@@ -128,20 +107,6 @@ mod tests {
         let signature = signature_android_params(&params, body, false);
 
         assert_eq!(signature, "f02fe39da9cc0f24a97aa5063da7de2f");
-    }
-
-    #[test]
-    fn test_sign_key() {
-        let hash = "HASH_TEST";
-        let mid = "MID_TEST";
-        let userid = 12345;
-        let appid = "1005";
-
-        let actual_key = sign_key(hash, mid, userid, appid, false);
-
-        let expected_key = "e4e63e21332f2c1c28f325b6248531f4";
-
-        assert_eq!(actual_key, expected_key);
     }
 
     #[test]

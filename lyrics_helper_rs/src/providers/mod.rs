@@ -4,8 +4,6 @@
 
 pub mod amll_ttml_database;
 pub mod kugou;
-pub mod login;
-// pub mod musixmatch;
 pub mod netease;
 pub mod qq;
 
@@ -13,7 +11,6 @@ use std::sync::Arc;
 
 use crate::error::Result;
 use crate::http::{HttpClient, WreqClient};
-pub use login::LoginProvider;
 
 use async_trait::async_trait;
 use lyrics_helper_core::{
@@ -43,16 +40,6 @@ pub trait Provider: Send + Sync {
     /// 一个全小写的静态字符串，例如 `"qq"`, `"netease"`。
     ///
     fn name(&self) -> &'static str;
-
-    ///
-    /// 尝试将此 Provider 转换为 `LoginProvider`。
-    ///
-    /// 如果 Provider 不支持登录，则返回 None。
-    /// 默认返回 None，需要登录的 Provider 应重写此方法。
-    ///
-    fn as_login_provider(&self) -> Option<&dyn LoginProvider> {
-        None
-    }
 
     /// 根据歌曲信息（如歌曲标题、艺术家）搜索歌曲。
     ///
@@ -160,21 +147,6 @@ pub trait Provider: Send + Sync {
     /// 一个 `Result`，成功时包含一个通用的 `generic::Song` 结构。
     ///
     async fn get_song_info(&self, song_id: &str) -> Result<generic::Song>;
-
-    ///
-    /// 根据歌曲 ID 获取可播放的音频文件链接。
-    ///
-    /// # 注意
-    /// 大概率因版权、地区限制或 VIP 而失败。
-    /// 建议登陆后再调用此接口。
-    ///
-    /// # 参数
-    /// * `song_id` - 歌曲 ID。
-    ///
-    /// # 返回
-    /// 一个 `Result`，成功时包含一个代表可播放 URL 的 `String`。
-    ///
-    async fn get_song_link(&self, song_id: &str) -> Result<String>;
 
     /// 根据专辑 ID 获取专辑封面的 URL。
     ///

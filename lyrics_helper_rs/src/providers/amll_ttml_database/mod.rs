@@ -11,7 +11,7 @@ use crate::{
     error::{LyricsHelperError, Result},
     http::HttpClient,
     model::match_type::MatchScorable,
-    providers::{Provider, amll_ttml_database::types::SearchField},
+    providers::Provider,
     search::matcher::compare_track,
 };
 
@@ -44,54 +44,6 @@ pub struct AmllTtmlDatabase {
     index: Arc<Vec<IndexEntry>>,
     http_client: Arc<dyn HttpClient>,
     lyrics_url_template: String,
-}
-
-impl AmllTtmlDatabase {
-    /// 根据特定字段进行精确或模糊搜索。
-    ///
-    /// 这是一个此 Provider 特有的高级搜索功能。
-    ///
-    /// # 参数
-    /// * `query` - 要搜索的文本或 ID。
-    /// * `field` - 指定在哪一个字段中进行搜索 (`SearchField` 枚举)。
-    ///
-    /// # 返回
-    /// 返回一个包含所有匹配条目的 `Vec<IndexEntry>`。
-    #[must_use]
-    pub fn search_by_field(&self, query: &str, field: &SearchField) -> Vec<IndexEntry> {
-        if query.trim().is_empty() {
-            return vec![];
-        }
-
-        let lower_query = query.to_lowercase();
-        let metadata_key = field.to_metadata_key();
-
-        self.index
-            .iter()
-            .filter(|entry| {
-                entry
-                    .metadata
-                    .get(metadata_key)
-                    .is_some_and(|values| match field {
-                        SearchField::NcmMusicId
-                        | SearchField::QqMusicId
-                        | SearchField::SpotifyId
-                        | SearchField::AppleMusicId
-                        | SearchField::Isrc
-                        | SearchField::TtmlAuthorGithub
-                        | SearchField::TtmlAuthorGithubLogin => {
-                            values.iter().any(|v| v.to_lowercase() == lower_query)
-                        }
-                        SearchField::MusicName | SearchField::Artists | SearchField::Album => {
-                            values
-                                .iter()
-                                .any(|v| v.to_lowercase().contains(&lower_query))
-                        }
-                    })
-            })
-            .cloned()
-            .collect()
-    }
 }
 
 #[async_trait]
@@ -360,12 +312,6 @@ impl Provider for AmllTtmlDatabase {
         ))
     }
 
-    async fn get_song_link(&self, _song_id: &str) -> Result<String> {
-        Err(LyricsHelperError::ProviderNotSupported(
-            "amll-ttml-database 不支持 get_song_link".to_string(),
-        ))
-    }
-
     async fn get_album_cover_url(&self, _album_id: &str, _size: CoverSize) -> Result<String> {
         Err(LyricsHelperError::ProviderNotSupported(
             "amll-ttml-database 不支持 get_album_cover_url".into(),
@@ -598,26 +544,5 @@ mod tests {
         let first_line = &parsed_data.parsed.lines[0];
         println!("第一行的开始时间: {}ms", first_line.start_ms);
         assert!(first_line.start_ms > 0, "第一行应该有开始时间");
-    }
-
-    #[tokio::test]
-    async fn test_amll_search_by_specific_field() {
-        let (provider, _expected_entry) = create_test_provider();
-
-        let results1 = provider.search_by_field("2642164541", &SearchField::NcmMusicId);
-        assert_eq!(results1.len(), 1, "使用 NcmMusicId 搜索应该找到一个结果");
-        assert_eq!(
-            results1[0].get_meta_vec("ncmMusicId").unwrap(),
-            &vec!["2642164541"]
-        );
-
-        let results2 = provider.search_by_field("apoint123", &SearchField::TtmlAuthorGithubLogin);
-        assert_eq!(results2.len(), 1, "使用 Github 登录名搜索应该找到一个结果");
-
-        let results3 = provider.search_by_field("李宇春", &SearchField::Artists);
-        assert_eq!(results3.len(), 1, "使用艺术家包含搜索应该找到一个结果");
-
-        let results4 = provider.search_by_field("1234567890", &SearchField::NcmMusicId);
-        assert!(results4.is_empty(), "用错误的 ID 搜索应该找不到结果");
     }
 }

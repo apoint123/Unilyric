@@ -1,28 +1,19 @@
 //! 此模块实现了与网易云音乐平台进行交互的 `Provider`。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STD};
 use chrono::Utc;
 use const_format::concatcp;
-use cookie_store::serde::json;
-use futures::Sink;
 use lyrics_helper_core::{
     ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, LyricFormat,
     RawLyrics, SearchResult, Track, model::generic,
 };
 use md5::{Digest, Md5};
-use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::json;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 use tracing::trace;
 use uuid::Uuid;
 use wreq::header::{CONTENT_TYPE, REFERER, USER_AGENT};
@@ -31,11 +22,7 @@ use crate::{
     converter,
     error::{LyricsHelperError, Result},
     http::HttpClient,
-    model::auth::{
-        LoginAction, LoginError, LoginEvent, LoginFlow, LoginMethod, LoginResult,
-        ProviderAuthState, UserProfile,
-    },
-    providers::{LoginProvider, Provider},
+    providers::Provider,
 };
 
 mod crypto;
@@ -47,7 +34,6 @@ const API_BASE_URL: &str = "https://music.163.com";
 const API_INTERFACE_BASE_URL: &str = "https://interface.music.163.com";
 const API_INTERFACE3_BASE_URL: &str = "https://interface3.music.163.com";
 
-const ACCOUNT_GET_URL: &str = concatcp!(API_BASE_URL, "/api/nuser/account/get");
 const REGISTER_ANONIMOUS_URL: &str = concatcp!(API_BASE_URL, "/api/register/anonimous");
 
 const SEARCH_CLOUDSEARCH_PC_PATH: &str = "/api/cloudsearch/pc";
@@ -60,10 +46,6 @@ const ALBUM_GET_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/album/");
 const ARTIST_SONGS_V1_URL: &str = concatcp!(API_BASE_URL, "/weapi/v1/artist/songs");
 const PLAYLIST_DETAIL_V6_URL: &str = concatcp!(API_BASE_URL, "/weapi/v6/playlist/detail");
 const SONG_DETAIL_V3_URL: &str = concatcp!(API_BASE_URL, "/weapi/v3/song/detail");
-
-const SONG_URL_V1_PATH: &str = "/api/song/enhance/player/url/v1";
-const SONG_URL_V1_URL: &str =
-    concatcp!(API_INTERFACE3_BASE_URL, "/eapi/song/enhance/player/url/v1");
 
 // TODO: 允许选择设备类型
 #[allow(dead_code)]
@@ -110,25 +92,9 @@ pub struct NeteaseClient {
     weapi_enc_sec_key: String,
     http_client: Arc<dyn HttpClient>,
     config: ClientConfig,
-    user_profile: Arc<Mutex<Option<UserProfile>>>,
 }
 
 impl NeteaseClient {
-    async fn fetch_user_profile(&self) -> Result<UserProfile> {
-        let payload = json!({});
-        let resp: models::AccountProfileResult = self.post_weapi(ACCOUNT_GET_URL, &payload).await?;
-
-        if let Some(profile) = resp.profile {
-            Ok(UserProfile {
-                user_id: profile.user_id,
-                nickname: profile.nickname,
-                avatar_url: profile.avatar_url,
-            })
-        } else {
-            Err(LoginError::InvalidCredentials("Cookie 无效或已过期".into()).into())
-        }
-    }
-
     async fn register_anonimous(&self) -> Result<()> {
         // 网易云音乐看起来不会验证 deviceId 有多长，如果之后匿名登录失败了，
         // 应该去上游项目把 generateDeviceId 的逻辑再复刻一遍
@@ -286,50 +252,6 @@ impl NeteaseClient {
             "__csrf": "",
         })
     }
-
-    async fn login_with_cookie_internal(
-        &self,
-        music_u: &str,
-    ) -> std::result::Result<LoginResult, LoginError> {
-        let mut temp_store = cookie_store::CookieStore::default();
-        let cookie_str = format!("MUSIC_U={music_u}; Domain=.music.163.com; Path=/");
-        let url = API_BASE_URL
-            .parse()
-            .map_err(|e| LoginError::Internal(format!("无法解析URL: {e}")))?;
-
-        let raw_cookie = cookie_store::RawCookie::parse(cookie_str)
-            .map_err(|e| LoginError::Internal(format!("Cookie解析失败: {e}")))?;
-        temp_store.store_response_cookies(std::iter::once(raw_cookie), &url);
-
-        let mut writer = Vec::new();
-        json::save_incl_expired_and_nonpersistent(&temp_store, &mut writer)
-            .map_err(|e| LoginError::Internal(format!("Cookie序列化失败: {e}")))?;
-
-        let initial_cookie_json = String::from_utf8(writer)
-            .map_err(|e| LoginError::Internal(format!("Cookie JSON转UTF-8失败: {e}")))?;
-
-        self.http_client
-            .set_cookies(&initial_cookie_json)
-            .map_err(|e| LoginError::Internal(e.to_string()))?;
-
-        let user_profile = self
-            .fetch_user_profile()
-            .await
-            .map_err(|e| LoginError::InvalidCredentials(e.to_string()))?;
-        *self.user_profile.lock() = Some(user_profile.clone());
-
-        let session_cookies_json = self
-            .http_client
-            .get_cookies()
-            .map_err(|e| LoginError::Internal(e.to_string()))?;
-
-        Ok(LoginResult {
-            profile: user_profile,
-            auth_state: ProviderAuthState::Netease {
-                cookies_json: session_cookies_json,
-            },
-        })
-    }
 }
 
 #[allow(clippy::too_many_lines)]
@@ -337,10 +259,6 @@ impl NeteaseClient {
 impl Provider for NeteaseClient {
     fn name(&self) -> &'static str {
         "netease"
-    }
-
-    fn as_login_provider(&self) -> Option<&dyn LoginProvider> {
-        Some(self)
     }
 
     async fn with_http_client(http_client: Arc<dyn HttpClient>) -> Result<Self>
@@ -359,7 +277,6 @@ impl Provider for NeteaseClient {
             weapi_enc_sec_key,
             http_client,
             config: ClientConfig::default(),
-            user_profile: Arc::new(Mutex::new(None)),
         };
 
         if let Err(e) = client.register_anonimous().await {
@@ -687,50 +604,6 @@ impl Provider for NeteaseClient {
         Ok(netease_song.into())
     }
 
-    async fn get_song_link(&self, song_id: &str) -> Result<String> {
-        // "standard" 标准音质
-        // "exhigh"   极高音质
-        // "lossless" 无损音质
-        // "hires"    Hi-Res音质
-        // "sky"      沉浸环绕声
-        // "jyeffect" 高清环绕声
-        // "jymaster" 超清母带
-
-        let quality = "lossless";
-        let header = self.build_eapi_header();
-        let song_id_num: u64 = song_id.parse().unwrap_or(0);
-
-        let payload = json!({
-            "ids": [song_id_num],
-            "level": quality,
-            "encodeType": "flac",
-            "header": header
-        });
-
-        let resp: models::SongUrlResultV1 = self
-            .post_eapi(SONG_URL_V1_PATH, SONG_URL_V1_URL, &payload)
-            .await?;
-
-        let song_url_data = resp
-            .data
-            .into_iter()
-            .find(|d| d.id.to_string() == song_id)
-            .ok_or(LyricsHelperError::LyricNotFound)?;
-
-        if song_url_data.code == 200 {
-            song_url_data.url.ok_or_else(|| {
-                LyricsHelperError::ApiError(
-                    "获取播放链接失败，可能因 VIP 或版权问题无链接。".into(),
-                )
-            })
-        } else {
-            Err(LyricsHelperError::ApiError(format!(
-                "获取播放链接失败，接口返回状态码: {}",
-                song_url_data.code
-            )))
-        }
-    }
-
     /// 根据专辑 ID 获取专辑封面的 URL。
     ///
     /// # 参数
@@ -811,149 +684,8 @@ const fn get_user_agent(client_type: ClientType) -> &'static str {
     }
 }
 
-struct ActionSink {
-    tx: mpsc::Sender<LoginAction>,
-}
-
-impl Sink<LoginAction> for ActionSink {
-    type Error = LoginError;
-
-    fn poll_ready(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: LoginAction) -> std::result::Result<(), Self::Error> {
-        self.tx
-            .try_send(item)
-            .map_err(|e| LoginError::Internal(e.to_string()))
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
-#[async_trait]
-impl LoginProvider for NeteaseClient {
-    fn initiate_login(&self, method: LoginMethod) -> LoginFlow {
-        let (events_tx, events_rx) = mpsc::channel(16);
-        let (actions_tx, mut actions_rx) = mpsc::channel::<LoginAction>(1);
-
-        let http_client = Arc::clone(&self.http_client);
-        let weapi_secret_key = self.weapi_secret_key.clone();
-        let weapi_enc_sec_key = self.weapi_enc_sec_key.clone();
-        let config = self.config.clone();
-
-        tokio::spawn(async move {
-            let provider_clone = Self {
-                weapi_secret_key,
-                weapi_enc_sec_key,
-                http_client,
-                config,
-                user_profile: Arc::new(Mutex::new(None)),
-            };
-
-            let events_tx = events_tx;
-
-            let login_logic = async {
-                match method {
-                    LoginMethod::NeteaseByCookie { music_u } => {
-                        let _ = events_tx.send(LoginEvent::Initiating).await;
-                        match provider_clone.login_with_cookie_internal(&music_u).await {
-                            Ok(result) => {
-                                let _ = events_tx.send(LoginEvent::Success(result)).await;
-                            }
-                            Err(e) => {
-                                let _ = events_tx.send(LoginEvent::Failure(e)).await;
-                            }
-                        }
-                    }
-                    _ => {
-                        let _ = events_tx
-                            .send(LoginEvent::Failure(LoginError::ProviderError(
-                                "不支持的登录方法".to_string(),
-                            )))
-                            .await;
-                    }
-                }
-            };
-
-            tokio::select! {
-                () = login_logic => {},
-                Some(LoginAction::Cancel) = actions_rx.recv() => {
-                    tracing::info!("[Netease] 用户取消了登录");
-                }
-            }
-        });
-
-        let stream = ReceiverStream::new(events_rx);
-        let sink = ActionSink { tx: actions_tx };
-
-        LoginFlow {
-            events: Box::pin(stream),
-            actions: Box::pin(sink),
-        }
-    }
-
-    async fn verify_session(&self) -> Result<()> {
-        match self.fetch_user_profile().await {
-            Ok(profile) => {
-                *self.user_profile.lock() = Some(profile);
-                Ok(())
-            }
-            Err(e) => {
-                *self.user_profile.lock() = None;
-                Err(e)
-            }
-        }
-    }
-
-    fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
-        if let ProviderAuthState::Netease { cookies_json } = auth_state {
-            self.http_client.set_cookies(cookies_json)?;
-            *self.user_profile.lock() = None;
-            Ok(())
-        } else {
-            Err(LyricsHelperError::Internal(
-                "向 NeteaseClient 提供了无效的认证状态类型".to_string(),
-            ))
-        }
-    }
-
-    fn get_auth_state(&self) -> Option<ProviderAuthState> {
-        if self.user_profile.lock().is_some() {
-            match self.http_client.get_cookies() {
-                Ok(cookies_json) => Some(ProviderAuthState::Netease { cookies_json }),
-                Err(e) => {
-                    tracing::error!("[Netease] 获取 cookies 失败: {}", e);
-                    None
-                }
-            }
-        } else {
-            None
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use std::env;
-
-    use tokio_stream::StreamExt;
-
     use super::*;
 
     const TEST_SONG_NAME: &str = "明天见";
@@ -1060,31 +792,6 @@ mod tests {
             "✅ 测试 get_song_info 通过: 歌曲为 '{}' - '{}'",
             song.name, song.artists[0].name
         );
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_song_link() {
-        init_tracing();
-
-        let provider = NeteaseClient::new().await.unwrap();
-        let link_result = provider.get_song_link(TEST_SONG_ID).await;
-
-        match link_result {
-            Ok(link) => {
-                assert!(link.starts_with("http"), "返回的链接应以 http/https 开头");
-                println!("✅ 测试 get_song_link 通过: 获取到链接: {link}");
-            }
-            Err(e) => {
-                if let LyricsHelperError::ApiError(msg) = e {
-                    println!(
-                        "✅ 测试 get_song_link 通过: 已正确处理接口错误 (如VIP或版权问题): {msg}"
-                    );
-                } else {
-                    panic!("测试 get_song_link 因意外的非接口错误而失败: {e:?}");
-                }
-            }
-        }
     }
 
     #[tokio::test]
@@ -1216,61 +923,6 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_get_song_link_v1_with_login() {
-        init_tracing();
-
-        let Ok(music_u_cookie) = env::var("NETEASE_MUSIC_U") else {
-            println!("未找到环境变量 NETEASE_MUSIC_U，跳过测试");
-            return;
-        };
-
-        let provider = NeteaseClient::new().await.expect("创建 NeteaseClient 失败");
-
-        let method = LoginMethod::NeteaseByCookie {
-            music_u: music_u_cookie,
-        };
-        let mut flow = provider.initiate_login(method);
-
-        let mut logged_in = false;
-        while let Some(event) = flow.events.next().await {
-            match event {
-                LoginEvent::Success(login_result) => {
-                    println!("✅ 以 '{}' 的身份登录", login_result.profile.nickname);
-
-                    provider
-                        .set_auth_state(&login_result.auth_state)
-                        .expect("设置认证状态失败");
-
-                    logged_in = true;
-                    break;
-                }
-                LoginEvent::Failure(e) => {
-                    panic!("Cookie 登录不应该失败: {e:?}");
-                }
-                LoginEvent::Initiating => {
-                    println!("登录流程已启动...");
-                }
-                _ => {}
-            }
-        }
-
-        assert!(logged_in, "登录流程结束，但未成功登录");
-
-        let link_result = provider.get_song_link(TEST_SONG_ID).await;
-
-        match link_result {
-            Ok(link) => {
-                assert!(link.starts_with("http"), "返回的链接应以 http/https 开头");
-                println!("获取到链接: {link}");
-            }
-            Err(e) => {
-                panic!("获取 EAPI 链接失败: {e:?}");
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_anonymous_login_on_creation() {
         init_tracing();
 
@@ -1288,46 +940,5 @@ mod tests {
         );
 
         assert!(cookies_json.contains("NMTID"), "应该包含游客令牌 'NMTID'");
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_login_by_cookie() {
-        init_tracing();
-        let music_u_cookie = env::var("NETEASE_MUSIC_U");
-        if music_u_cookie.is_err() {
-            println!("未找到环境变量 NETEASE_MUSIC_U。");
-            return;
-        }
-
-        let provider = NeteaseClient::new().await.expect("创建 NeteaseClient 失败");
-
-        let method = LoginMethod::NeteaseByCookie {
-            music_u: music_u_cookie.unwrap(),
-        };
-
-        let mut flow = provider.initiate_login(method);
-
-        while let Some(event) = flow.events.next().await {
-            match event {
-                LoginEvent::Success(login_result) => {
-                    assert!(
-                        !login_result.profile.nickname.is_empty(),
-                        "登录成功后，返回的用户信息里应该有昵称"
-                    );
-
-                    println!("✅ 成功以 '{}' 的身份登录", login_result.profile.nickname);
-                    return;
-                }
-                LoginEvent::Failure(e) => {
-                    panic!("Cookie 登录不应该失败。错误: {e:?}");
-                }
-                LoginEvent::Initiating => {
-                    println!("登录流程已启动...");
-                }
-                _ => {}
-            }
-        }
-        panic!("登录流程结束，但未收到 Success 或 Failure 事件。");
     }
 }

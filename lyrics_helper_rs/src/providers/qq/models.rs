@@ -34,62 +34,6 @@ pub struct Req1Body {
     /// 歌曲搜索结果。
     #[serde(default)]
     pub item_song: Vec<Song>,
-
-    /// 专辑搜索结果。
-    #[serde(default)]
-    pub item_album: Vec<Album>,
-
-    /// 歌手搜索结果。
-    #[serde(default)]
-    pub singer: Vec<Singer>,
-    // TODO: 添加更多类型
-}
-
-/// QQ音乐搜索类型枚举
-#[derive(Debug, Clone, Copy)]
-pub enum SearchType {
-    /// 歌曲
-    Song,
-    /// 歌手
-    Singer,
-    /// 专辑
-    Album,
-    /// 歌单
-    Songlist,
-    /// MV
-    Mv,
-    /// 歌词
-    Lyric,
-    /// 用户
-    User,
-}
-
-impl SearchType {
-    /// 获取该搜索类型对应的整数值
-    #[must_use]
-    pub const fn as_u32(self) -> u32 {
-        match self {
-            Self::Song => 0,
-            Self::Singer => 1,
-            Self::Album => 2,
-            Self::Songlist => 3,
-            Self::Mv => 4,
-            Self::Lyric => 7,
-            Self::User => 8,
-        }
-    }
-}
-
-/// 按类型搜索的统一返回项
-#[derive(Debug)]
-pub enum TypedSearchResult {
-    /// 歌曲
-    Song(Song),
-    /// 专辑
-    Album(Album),
-    /// 歌手
-    Singer(Singer),
-    // TODO: 添加更多类型
 }
 
 // =================================================================
@@ -319,78 +263,6 @@ pub struct SingerSongListResult {
 }
 
 // =================================================================
-// 排行榜接口 ( `musicToplist.ToplistInfoServer.GetDetail` ) 的模型
-// =================================================================
-
-#[derive(Debug, Deserialize, Clone)]
-/// 排行榜数据的容器。
-pub struct DetailData {
-    /// 包含具体榜单信息的实际数据。
-    pub data: ToplistData,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-/// 排行榜的具体数据，包装了榜单信息。
-pub struct ToplistData {
-    /// 排行榜的详细信息。
-    #[serde(rename = "data")]
-    pub info: ToplistInfo,
-}
-
-/// 排行榜的详细元数据和歌曲列表。
-#[derive(Debug, Deserialize, Clone)]
-pub struct ToplistInfo {
-    /// 排行榜的数字 ID。
-    #[serde(rename = "topId")]
-    pub top_id: u32,
-    /// 排行榜标题。
-    pub title: String,
-    /// 榜单周期，例如 "2024-25" (周榜) 或 "2024-06-19" (日榜)。
-    pub period: String,
-    /// 榜单更新时间。
-    #[serde(rename = "updateTime")]
-    pub update_time: String,
-    /// 榜单简介。
-    pub intro: String,
-    /// 榜单播放量。
-    #[serde(rename = "listenNum")]
-    pub listen_num: u64,
-    /// 榜单歌曲总数。
-    #[serde(rename = "totalNum")]
-    pub total_num: u32,
-    /// 榜单头部图片 URL。
-    #[serde(rename = "headPicUrl")]
-    pub head_pic_url: String,
-    /// 榜单内的歌曲列表。
-    #[serde(rename = "song")]
-    pub songs: Vec<ToplistSongData>,
-}
-
-/// 排行榜中的单个歌曲条目。
-#[derive(Debug, Deserialize, Clone)]
-pub struct ToplistSongData {
-    /// 歌曲在榜单中的排名。
-    pub rank: u32,
-    /// 排名变化的文本值。
-    #[serde(rename = "rankValue")]
-    pub rank_value: String,
-    /// 歌曲的数字 ID。
-    #[serde(rename = "songId")]
-    pub song_id: u64,
-    /// 歌曲所属专辑的字符串 ID。
-    #[serde(rename = "albumMid")]
-    pub album_mid: String,
-    /// 歌曲标题。
-    pub title: String,
-    /// 歌手名。
-    #[serde(rename = "singerName")]
-    pub singer_name: String,
-    /// 歌手的字符串 ID。
-    #[serde(rename = "singerMid")]
-    pub singer_mid: String,
-}
-
-// =================================================================
 // 歌单接口 ( `c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg` ) 的模型
 // =================================================================
 
@@ -454,57 +326,6 @@ pub struct SongDetailApiResult {
 }
 
 // =================================================================
-// 歌曲播放链接接口 ( `music.vkey.GetVkey.UrlGetVkey` ) 的模型
-// =================================================================
-
-#[derive(Debug, Deserialize, Clone)]
-/// 包含拼接播放链接所需关键信息。
-pub struct MidUrlInfo {
-    /// 播放链接的关键部分 (文件路径)，需要和 `sip` 拼接成完整 URL。
-    pub purl: String,
-    /// 对应的歌曲字符串 ID (songmid)。
-    pub songmid: String,
-}
-
-/// 歌曲文件类型枚举
-#[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
-pub enum SongFileType {
-    /// 128kbps MP3，只有这个音质可以免登录获取。
-    Mp3_128,
-    /// 320kbps MP3
-    Mp3_320,
-    /// FLAC 无损
-    Flac,
-}
-
-impl SongFileType {
-    /// 获取该文件类型对应的类型码和扩展名
-    #[must_use]
-    pub const fn get_parts(&self) -> (&str, &str) {
-        match self {
-            Self::Mp3_128 => ("M500", ".mp3"),
-            Self::Mp3_320 => ("M800", "mp3"),
-            Self::Flac => ("F000", ".flac"),
-        }
-    }
-}
-
-/// 用于包装 `UrlGetVkey` API 响应的顶层容器结构体。
-#[derive(Debug, serde::Deserialize)]
-pub struct SongUrlApiResult {
-    /// 包含了核心业务数据的对象。
-    pub data: SongUrlResult,
-}
-
-/// 包含 `UrlGetVkey` API 核心响应数据的结构体。
-#[derive(Debug, serde::Deserialize)]
-pub struct SongUrlResult {
-    /// 一个列表，其中每一项都包含了单首歌曲的链接信息。
-    pub midurlinfo: Vec<MidUrlInfo>,
-}
-
-// =================================================================
 // 歌词接口 ( `music.musichallSong.PlayLyricInfo.GetPlayLyricInfo` ) 的模型
 // =================================================================
 
@@ -535,28 +356,4 @@ pub struct LrcApiResponse {
     pub code: i32,
     pub lyric: Option<String>,
     pub trans: Option<String>,
-}
-
-// =================================================================
-// 扫码登录过程中的信息和状态
-// =================================================================
-
-/// 二维码请求返回的信息
-#[derive(Debug, Clone)]
-pub struct QRCodeInfo {
-    /// 二维码图片的原始PNG数据
-    pub image_data: Vec<u8>,
-    /// 用于后续轮询状态的会话ID
-    pub qrsig: String,
-}
-
-/// 二维码登录过程中的状态
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum QRCodeStatus {
-    WaitingForScan,
-    Scanned,
-    Confirmed { url: String },
-    TimedOut,
-    Refused,
-    Error(String),
 }

@@ -3,44 +3,30 @@
 //! API 来源于 <https://github.com/luren-dc/QQMusicApi>
 
 use std::{
-    collections::HashMap,
-    pin::Pin,
-    sync::{Arc, LazyLock, RwLock},
-    task::{Context, Poll},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::{Arc, LazyLock},
+    time::Duration,
 };
 
 use async_trait::async_trait;
 use base64::{Engine, prelude::BASE64_STANDARD};
-use chrono::{Datelike, Local};
-use futures::Sink;
 use regex::Regex;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
 
 use lyrics_helper_core::{
     Artist, ConversionInput, ConversionOptions, CoverSize, FullLyricsResult, InputFile, Language,
     LyricFormat, ParsedSourceData, RawLyrics, SearchResult, Track, model::generic,
 };
 use quick_xml::{Reader, events::Event};
-use rand::random;
-use serde::Deserialize;
 use serde_json::json;
-use tracing::{debug, error, info, instrument, trace, warn};
-use url::Url;
-use uuid::Uuid;
+use tracing::{info, instrument, trace, warn};
 
 use crate::{
-    LoginResult, ProviderAuthState, UserProfile,
     config::{load_cached_config, save_cached_config},
     converter,
     error::{LyricsHelperError, Result},
     http::{HttpClient, HttpMethod},
-    model::auth::{LoginAction, LoginError, LoginEvent, LoginFlow, LoginMethod},
     providers::{
         Provider,
-        login::LoginProvider,
-        qq::models::{LrcApiResponse, QQMusicCoverSize, QRCodeInfo, QRCodeStatus},
+        qq::models::{LrcApiResponse, QQMusicCoverSize},
     },
 };
 
@@ -63,9 +49,6 @@ const GET_SINGER_SONGS_METHOD: &str = "GetSingerSongList";
 const GET_LYRIC_MODULE: &str = "music.musichallSong.PlayLyricInfo";
 const GET_LYRIC_METHOD: &str = "GetPlayLyricInfo";
 
-const GET_SONG_URL_MODULE: &str = "music.vkey.GetVkey";
-const GET_SONG_URL_METHOD: &str = "UrlGetVkey";
-
 const GET_ALBUM_DETAIL_MODULE: &str = "music.musichallAlbum.AlbumInfoServer";
 const GET_ALBUM_DETAIL_METHOD: &str = "GetAlbumDetail";
 
@@ -75,20 +58,14 @@ const GET_SONG_DETAIL_METHOD: &str = "get_song_detail_yqq";
 const GET_PLAYLIST_DETAIL_MODULE: &str = "music.srfDissInfo.DissInfo";
 const GET_PLAYLIST_DETAIL_METHOD: &str = "CgiGetDiss";
 
-const GET_TOPLIST_MODULE: &str = "musicToplist.ToplistInfoServer";
-const GET_TOPLIST_METHOD: &str = "GetDetail";
-
 const APP_VERSION: &str = "14.8.0.8";
 
-const SONG_URL_DOMAIN: &str = "https://isure.stream.qqmusic.qq.com/";
 const QQ_MUSIC_REFERER_URL: &str = "https://y.qq.com";
 const ALBUM_COVER_BASE_URL: &str = "https://y.gtimg.cn/music/photo_new/";
 
 const LRC_LYRIC_URL: &str = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg";
 
 const LYRIC_DOWNLOAD_URL: &str = "https://c.y.qq.com/qqmusic/fcgi-bin/lyric_download.fcg";
-
-static PTUICB_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"ptuiCB\((.*)\)").unwrap());
 
 static QRC_LYRIC_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"LyricContent="([^"]*)""#).unwrap());
@@ -103,7 +80,6 @@ static YUE_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[a-zA-Z]+[1-6]").
 pub struct QQMusic {
     http_client: Arc<dyn HttpClient>,
     qimei: String,
-    auth_state: Arc<RwLock<Option<ProviderAuthState>>>,
 }
 
 #[async_trait]
@@ -141,7 +117,6 @@ impl Provider for QQMusic {
         Ok(Self {
             http_client,
             qimei: qimei_result.q36,
-            auth_state: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -468,44 +443,6 @@ impl Provider for QQMusic {
         Ok(generic_song)
     }
 
-    ///
-    /// 根据歌曲 MID 获取歌曲的播放链接。
-    ///
-    /// # 注意
-    ///
-    /// 无法获取 VIP 歌曲或需要付费的歌曲的链接，会返回错误。
-    ///
-    /// # 参数
-    ///
-    /// * `song_mid` — 歌曲的 `mid`。
-    ///
-    /// # 返回
-    ///
-    /// 一个 `Result`，其中包含一个表示可播放 URL 的 `String`。
-    ///
-    #[instrument(skip(self), fields(song_mid = %song_mid))]
-    async fn get_song_link(&self, song_mid: &str) -> Result<String> {
-        let mids_slice = [song_mid];
-
-        let (success_map, failure_map) = self
-            .get_song_urls_internal(&mids_slice, models::SongFileType::Mp3_128)
-            .await?;
-
-        success_map.get(song_mid).map_or_else(
-            || {
-                failure_map.get(song_mid).map_or_else(
-                    || {
-                        Err(LyricsHelperError::ApiError(format!(
-                            "未在 API 响应中找到 song_mid '{song_mid}' 的播放链接"
-                        )))
-                    },
-                    |reason| Err(LyricsHelperError::ApiError(reason.clone())),
-                )
-            },
-            |url| Ok(url.clone()),
-        )
-    }
-
     #[instrument(skip(self), fields(album_id = %album_id, ?size))]
     async fn get_album_cover_url(&self, album_id: &str, size: CoverSize) -> Result<String> {
         let qq_size = match size {
@@ -524,139 +461,9 @@ impl Provider for QQMusic {
     }
 }
 
-#[async_trait]
-impl LoginProvider for QQMusic {
-    #[instrument(skip(self, method), fields(provider = "qq"))]
-    fn initiate_login(&self, method: LoginMethod) -> LoginFlow {
-        let (events_tx, events_rx) = mpsc::channel(16);
-        let (actions_tx, mut actions_rx) = mpsc::channel::<LoginAction>(1);
-
-        let http_client = Arc::clone(&self.http_client);
-        let qimei = self.qimei.clone();
-
-        tokio::spawn(async move {
-            let provider_clone = Self {
-                http_client,
-                qimei,
-                auth_state: Arc::new(RwLock::new(None)),
-            };
-
-            let login_logic = async {
-                match method {
-                    LoginMethod::QQMusicByCookie { cookies } => {
-                        provider_clone.handle_cookie_login(events_tx, cookies).await;
-                    }
-                    LoginMethod::QQMusicByQRCode => {
-                        provider_clone.handle_qr_code_login(events_tx).await;
-                    }
-                    _ => {
-                        let _ = events_tx
-                            .send(LoginEvent::Failure(LoginError::ProviderError(
-                                "不支持的登录方法".to_string(),
-                            )))
-                            .await;
-                    }
-                }
-            };
-
-            tokio::select! {
-                () = login_logic => {},
-                Some(LoginAction::Cancel) = actions_rx.recv() => {
-                    info!("[QQ] 用户取消了登录");
-                }
-            }
-        });
-
-        let stream = ReceiverStream::new(events_rx);
-        let sink = ActionSink { tx: actions_tx };
-
-        LoginFlow {
-            events: Box::pin(stream),
-            actions: Box::pin(sink),
-        }
-    }
-
-    fn set_auth_state(&self, auth_state: &ProviderAuthState) -> Result<()> {
-        if let ProviderAuthState::QQMusic { .. } = auth_state {
-            self.auth_state.write().map_or_else(
-                |_| Err(LyricsHelperError::Internal("无法获取写锁".into())),
-                |mut state| {
-                    *state = Some(auth_state.clone());
-                    Ok(())
-                },
-            )
-        } else {
-            Err(LyricsHelperError::ApiError("无效的 AuthState 类型".into()))
-        }
-    }
-
-    fn get_auth_state(&self) -> Option<ProviderAuthState> {
-        self.auth_state.read().ok().and_then(|s| s.clone())
-    }
-
-    #[instrument(skip(self), fields(provider = "qq"))]
-    async fn verify_session(&self) -> Result<()> {
-        if self.get_auth_state().is_none() {
-            return Err(LyricsHelperError::LoginFailed(
-                LoginError::InvalidCredentials("未设置登录状态".into()),
-            ));
-        }
-
-        self.execute_api_request(
-            "music.UserInfo.userInfoServer",
-            "GetLoginUserInfo",
-            json!({}),
-            &[0],
-        )
-        .await
-        .map_err(|e| {
-            LyricsHelperError::LoginFailed(LoginError::InvalidCredentials(format!(
-                "会话已失效: {e}"
-            )))
-        })?;
-
-        Ok(())
-    }
-}
-
-struct ActionSink {
-    tx: mpsc::Sender<LoginAction>,
-}
-
-impl Sink<LoginAction> for ActionSink {
-    type Error = LoginError;
-
-    fn poll_ready(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, item: LoginAction) -> std::result::Result<(), Self::Error> {
-        self.tx
-            .try_send(item)
-            .map_err(|e| LoginError::Internal(e.to_string()))
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(
-        self: Pin<&mut Self>,
-        _cx: &mut Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
 impl QQMusic {
     fn build_comm(&self) -> serde_json::Value {
-        let mut comm_map = serde_json::Map::from_iter(vec![
+        let comm_map = serde_json::Map::from_iter(vec![
             ("cv".to_string(), json!(13_020_508)),
             ("ct".to_string(), json!(11)),
             ("v".to_string(), json!(13_020_508)),
@@ -665,16 +472,6 @@ impl QQMusic {
             ("inCharset".to_string(), json!("utf-8")),
             ("outCharset".to_string(), json!("utf-8")),
         ]);
-
-        if let Ok(state_guard) = self.auth_state.read()
-            && let Some(ProviderAuthState::QQMusic {
-                musicid, musickey, ..
-            }) = &*state_guard
-        {
-            comm_map.insert("qq".to_string(), json!(musicid.to_string()));
-            comm_map.insert("authst".to_string(), json!(musickey));
-            comm_map.insert("tmeLoginType".to_string(), json!(2));
-        }
 
         serde_json::Value::Object(comm_map)
     }
@@ -701,27 +498,9 @@ impl QQMusic {
 
         let body = serde_json::to_vec(&payload)?;
 
-        let cookie_header: Option<String> = self.auth_state.read().map_or(None, |state_guard| {
-            if let Some(ProviderAuthState::QQMusic {
-                musicid, musickey, ..
-            }) = &*state_guard
-            {
-                Some(format!(
-                    "uin={musicid}; qqmusic_key={musickey}; qm_keyst={musickey};"
-                ))
-            } else {
-                None
-            }
-        });
-
-        let mut headers: Vec<(&str, &str)> = vec![("Content-Type", "application/json")];
-        if let Some(cookie) = &cookie_header {
-            headers.push(("Cookie", cookie.as_str()));
-        }
-
         let response = self
             .http_client
-            .request_with_headers(HttpMethod::Post, url, &headers, Some(&body))
+            .request_with_headers(HttpMethod::Post, url, &[], Some(&body))
             .await?;
 
         let response_text = response.text()?;
@@ -758,129 +537,6 @@ impl QQMusic {
                 "响应中未找到键: '{request_key}'"
             )))
         }
-    }
-
-    ///
-    /// 获取指定排行榜的歌曲列表。
-    ///
-    /// # 参数
-    ///
-    /// * `top_id` — 排行榜的 ID。
-    /// * `page` — 页码。
-    /// * `page_size` — 每页数量。
-    /// * `period` — 周期，例如 "2023-10-27"。如果为 `None`，会自动生成默认值。
-    ///
-    /// # 返回
-    ///
-    /// 一个元组，包含排行榜信息和歌曲列表。
-    ///
-    #[instrument(skip(self), fields(top_id, page, page_size, ?period))]
-    pub async fn get_toplist(
-        &self,
-        top_id: u32,
-        page: u32,
-        page_size: u32,
-        period: Option<String>,
-    ) -> Result<(models::ToplistInfo, Vec<models::ToplistSongData>)> {
-        // 如果未提供周期，则根据榜单类型生成默认周期
-        let final_period = period.unwrap_or_else(|| {
-            let now = Local::now();
-            match top_id {
-                // 日榜
-                4 | 27 | 62 => now.format("%Y-%m-%d").to_string(),
-                // 周榜
-                _ => {
-                    // 计算 ISO 周数
-                    let week = now.iso_week().week();
-                    format!("{}-{}", now.year(), week)
-                }
-            }
-        });
-
-        let param = json!({
-            "topId": top_id,
-            "offset": (page.saturating_sub(1)) * page_size,
-            "num": page_size,
-            "period": final_period,
-        });
-
-        let response_val = self
-            .execute_api_request(GET_TOPLIST_MODULE, GET_TOPLIST_METHOD, param, &[2000])
-            .await?;
-
-        let detail_data: models::DetailData = serde_json::from_value(response_val)?;
-
-        let info = detail_data.data.info;
-        let songs = info.songs.clone();
-
-        Ok((info, songs))
-    }
-
-    /// 按类型进行搜索。
-    ///
-    /// # 参数
-    ///
-    /// * `keyword` - 要搜索的关键词。
-    /// * `search_type` - 搜索的类型，例如 `models::SearchType::Song`。
-    /// * `page` - 结果的页码（从1开始）。
-    /// * `page_size` - 每页显示的结果数量。
-    ///
-    /// # 返回
-    ///
-    /// `Result<Vec<models::TypedSearchResult>>` - 成功时返回一个包含
-    /// `models::TypedSearchResult` 枚举向量的 `Ok` 变体，表示不同类型的搜索结果。
-    /// 如果发生错误，则返回 `Err` 变体。
-    #[instrument(skip(self), fields(keyword = %keyword, ?search_type, page, page_size))]
-    pub async fn search_by_type(
-        &self,
-        keyword: &str,
-        search_type: models::SearchType,
-        page: u32,
-        page_size: u32,
-    ) -> Result<Vec<models::TypedSearchResult>> {
-        let param = json!({
-            "query": keyword,
-            "search_type": search_type.as_u32(),
-            "page_num": page,
-            "num_per_page": page_size,
-            "grp": 1,
-            "highlight": 1,
-        });
-
-        let response_val = self
-            .execute_api_request(SEARCH_MODULE, SEARCH_METHOD, param, &[0])
-            .await?;
-
-        let search_response: models::Req1 = serde_json::from_value(response_val)?;
-
-        let mut results = Vec::new();
-        if let Some(data) = search_response.data
-            && let Some(body) = data.body
-        {
-            match search_type {
-                models::SearchType::Song => {
-                    for song in body.item_song {
-                        results.push(models::TypedSearchResult::Song(song));
-                    }
-                }
-                models::SearchType::Album => {
-                    for album in body.item_album {
-                        results.push(models::TypedSearchResult::Album(album));
-                    }
-                }
-                models::SearchType::Singer => {
-                    for singer in body.singer {
-                        results.push(models::TypedSearchResult::Singer(singer));
-                    }
-                }
-                // TODO: 添加更多分支
-                _ => {
-                    // 暂时忽略
-                }
-            }
-        }
-
-        Ok(results)
     }
 
     /// 从解密后的 QRC 歌词文本中提取核心的 `LyricContent` 内容。
@@ -1007,66 +663,6 @@ impl QQMusic {
             &roma_lyrics_decrypted,
             self.name(),
         )
-    }
-
-    #[instrument(skip(self, song_mids), fields(mids_count = song_mids.len(), ?file_type))]
-    async fn get_song_urls_internal(
-        &self,
-        song_mids: &[&str],
-        file_type: models::SongFileType,
-    ) -> Result<(HashMap<String, String>, HashMap<String, String>)> {
-        if song_mids.len() > 100 {
-            return Err(LyricsHelperError::ApiError(
-                "单次请求的歌曲数量不能超过100".to_string(),
-            ));
-        }
-
-        let (type_code, extension) = file_type.get_parts();
-
-        let filenames: Vec<String> = song_mids
-            .iter()
-            .map(|mid| format!("{type_code}{mid}{mid}{extension}"))
-            .collect();
-
-        let uuid = Self::generate_guid();
-
-        let param = json!({
-            "filename": filenames,
-            "guid": uuid,
-            "songmid": song_mids,
-            "songtype": vec![0; song_mids.len()],
-        });
-
-        let response_val = self
-            .execute_api_request(GET_SONG_URL_MODULE, GET_SONG_URL_METHOD, param, &[0])
-            .await?;
-
-        let result_container: models::SongUrlApiResult = serde_json::from_value(response_val)?;
-
-        let result_data = result_container.data;
-
-        let mut success_map = std::collections::HashMap::new();
-        let mut failure_map = std::collections::HashMap::new();
-
-        for info in result_data.midurlinfo {
-            if info.purl.is_empty() {
-                let reason = format!(
-                    "无法获取 songmid '{}' 的链接 (purl 为空)，可能是 VIP 歌曲。",
-                    info.songmid
-                );
-                failure_map.insert(info.songmid, reason);
-            } else {
-                success_map.insert(info.songmid, format!("{}{}", SONG_URL_DOMAIN, info.purl));
-            }
-        }
-
-        Ok((success_map, failure_map))
-    }
-
-    /// 生成一个随机的 UUID。
-    fn generate_guid() -> String {
-        let random_uuid = Uuid::new_v4();
-        random_uuid.simple().to_string()
     }
 
     /// 使用备用方案解密歌词数据。
@@ -1417,499 +1013,6 @@ impl QQMusic {
             self.name(),
         )
     }
-
-    fn parse_cookies(cookies: &str) -> HashMap<String, String> {
-        cookies
-            .split(';')
-            .filter_map(|s| {
-                let mut parts = s.trim().splitn(2, '=');
-                match (parts.next(), parts.next()) {
-                    (Some(key), Some(value)) if !key.is_empty() => {
-                        Some((key.to_string(), value.to_string()))
-                    }
-                    _ => None,
-                }
-            })
-            .collect()
-    }
-
-    fn hash33(s: &str) -> i64 {
-        let mut hash: i64 = 0;
-        for char_code in s.chars().map(|c| c as i64) {
-            hash = hash
-                .wrapping_shl(5)
-                .wrapping_add(hash)
-                .wrapping_add(char_code);
-        }
-        hash & 0x7FFF_FFFF
-    }
-
-    pub async fn get_qrcode(&self) -> Result<QRCodeInfo> {
-        const QRCODE_URL: &str = "https://ssl.ptlogin2.qq.com/ptqrshow";
-
-        let headers = [("Referer", "https://xui.ptlogin2.qq.com/")];
-        let params = [
-            ("appid", "716027609"),
-            ("e", "2"),
-            ("l", "M"),
-            ("s", "3"),
-            ("d", "72"),
-            ("v", "4"),
-            ("daid", "383"),
-            ("pt_3rd_aid", "100497308"),
-        ];
-
-        let t_param = random::<f64>().to_string();
-
-        let mut final_params = params.to_vec();
-        final_params.push(("t", &t_param));
-
-        let response = self
-            .http_client
-            .get_with_params_and_headers(QRCODE_URL, &final_params, &headers)
-            .await?;
-
-        let qrsig = response
-            .headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
-            .and_then(|(_, v)| {
-                v.split(';')
-                    .find(|s| s.trim().starts_with("qrsig="))
-                    .map(|s| s.trim().trim_start_matches("qrsig=").to_string())
-            })
-            .ok_or_else(|| {
-                LyricsHelperError::LoginFailed(LoginError::Network(
-                    "未能从响应中获取qrsig".to_string(),
-                ))
-            })?;
-
-        if qrsig.is_empty() {
-            return Err(LyricsHelperError::LoginFailed(LoginError::Network(
-                "获取到的qrsig为空".to_string(),
-            )));
-        }
-
-        Ok(QRCodeInfo {
-            image_data: response.body,
-            qrsig,
-        })
-    }
-
-    pub async fn check_qrcode_status(&self, qrsig: &str) -> Result<QRCodeStatus> {
-        const POLL_URL: &str = "https://ssl.ptlogin2.qq.com/ptqrlogin";
-
-        let headers = [(
-            "Referer".to_string(),
-            "https://xui.ptlogin2.qq.com/".to_string(),
-        )];
-
-        let headers_slice: Vec<(&str, &str)> = headers
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        let current_ts = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis();
-
-        let ptqrtoken = Self::hash33(qrsig).to_string();
-        let action = format!("0-0-{current_ts}");
-
-        let params = [
-            ("u1", "https://graph.qq.com/oauth2.0/login_jump"),
-            ("ptqrtoken", &ptqrtoken),
-            ("ptredirect", "0"),
-            ("h", "1"),
-            ("t", "1"),
-            ("g", "1"),
-            ("from_ui", "1"),
-            ("ptlang", "2052"),
-            ("action", &action),
-            ("js_ver", "20102616"),
-            ("js_type", "1"),
-            ("pt_uistyle", "40"),
-            ("aid", "716027609"),
-            ("daid", "383"),
-            ("pt_3rd_aid", "100497308"),
-            ("has_onekey", "1"),
-        ];
-
-        let response = self
-            .http_client
-            .get_with_params_and_headers(POLL_URL, &params, &headers_slice)
-            .await?;
-
-        let text = response.text()?;
-        let captures = PTUICB_REGEX
-            .captures(&text)
-            .and_then(|caps| caps.get(1))
-            .ok_or_else(|| {
-                LyricsHelperError::LoginFailed(LoginError::Network(
-                    "无法解析ptuiCB响应".to_string(),
-                ))
-            })?;
-
-        let args: Vec<&str> = captures
-            .as_str()
-            .split(',')
-            .map(|s| s.trim_matches('\''))
-            .collect();
-        let status_code = args.first().ok_or_else(|| {
-            LyricsHelperError::LoginFailed(LoginError::Network(
-                "ptuiCB响应中缺少状态码".to_string(),
-            ))
-        })?;
-
-        let status = match *status_code {
-            "0" => {
-                let url = args.get(2).ok_or_else(|| {
-                    LyricsHelperError::LoginFailed(LoginError::Network(
-                        "ptuiCB响应中缺少重定向URL".to_string(),
-                    ))
-                })?;
-                QRCodeStatus::Confirmed {
-                    url: (*url).to_string(),
-                }
-            }
-            "65" => QRCodeStatus::TimedOut,
-            "66" => QRCodeStatus::WaitingForScan,
-            "67" => QRCodeStatus::Scanned,
-            "68" => QRCodeStatus::Refused,
-            code => QRCodeStatus::Error(format!("未知的状态码: {code}")),
-        };
-
-        Ok(status)
-    }
-
-    fn g_tk_hash(s: &str) -> i64 {
-        let mut hash: i64 = 5381;
-        for char_code in s.chars().map(|c| c as i64) {
-            hash = hash
-                .wrapping_shl(5)
-                .wrapping_add(hash)
-                .wrapping_add(char_code);
-        }
-        hash & 0x7FFF_FFFF
-    }
-
-    #[instrument(skip(self, redirect_url), fields(provider = "qq"))]
-    async fn fetch_p_skey_from_redirect(&self, redirect_url: &str) -> Result<String> {
-        debug!(url = %redirect_url, "正在向 check_sig URL 发起GET请求以获取 p_skey...");
-
-        let headers = [(
-            "Referer".to_string(),
-            "https://xui.ptlogin2.qq.com/".to_string(),
-        )];
-
-        let headers_slice: Vec<(&str, &str)> = headers
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
-
-        let check_sig_response = self
-            .http_client
-            .request_with_headers(HttpMethod::Get, redirect_url, &headers_slice, None)
-            .await
-            .map_err(|e| {
-                error!("GET重定向URL时出错: {:?}", e);
-                e
-            })?;
-
-        check_sig_response
-            .headers
-            .iter()
-            .filter(|(k, _)| k.eq_ignore_ascii_case("set-cookie"))
-            .find_map(|(_, v)| {
-                v.split(';')
-                    .find(|s| s.trim().starts_with("p_skey="))
-                    .map(|s| s.trim().trim_start_matches("p_skey=").to_string())
-            })
-            .ok_or_else(|| {
-                error!("未能从响应头中找到 p_skey cookie");
-                LyricsHelperError::LoginFailed(LoginError::Network(
-                    "未能从响应头中找到p_skey".to_string(),
-                ))
-            })
-    }
-
-    #[instrument(skip(self, p_skey), fields(provider = "qq"))]
-    async fn get_authorization_code(&self, p_skey: &str) -> Result<String> {
-        let g_tk = Self::g_tk_hash(p_skey).to_string();
-        let auth_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-            .to_string();
-        let ui = Uuid::new_v4().to_string();
-
-        const AUTHORIZE_URL: &str = "https://graph.qq.com/oauth2.0/authorize";
-        let form_data = [
-            ("response_type", "code"),
-            ("client_id", "100497308"),
-            (
-                "redirect_uri",
-                "https://y.qq.com/portal/wx_redirect.html?login_type=1&surl=https://y.qq.com/",
-            ),
-            ("scope", "get_user_info,get_app_friends"),
-            ("state", "state"),
-            ("switch", ""),
-            ("from_ptlogin", "1"),
-            ("src", "1"),
-            ("update_auth", "1"),
-            ("openapi", "1010_1030"),
-            ("g_tk", &g_tk),
-            ("auth_time", &auth_time),
-            ("ui", &ui),
-        ];
-
-        let final_redirect_url = self
-            .http_client
-            .post_form_for_redirect(AUTHORIZE_URL, &form_data)
-            .await?;
-
-        let parsed_url = Url::parse(&final_redirect_url).map_err(|_| {
-            LyricsHelperError::LoginFailed(LoginError::Network(
-                "无法解析最终的重定向URL".to_string(),
-            ))
-        })?;
-
-        parsed_url
-            .query_pairs()
-            .find_map(|(key, value)| {
-                if key == "code" {
-                    Some(value.into_owned())
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                LyricsHelperError::LoginFailed(LoginError::Network(
-                    "最终URL中缺少'code'参数".to_string(),
-                ))
-            })
-    }
-
-    #[instrument(skip(self, code), fields(provider = "qq"))]
-    async fn exchange_code_for_auth_state(&self, code: &str) -> Result<ProviderAuthState> {
-        let login_data = self
-            .execute_api_request(
-                "QQConnectLogin.LoginServer",
-                "QQLogin",
-                json!({ "code": code }),
-                &[0],
-            )
-            .await?;
-
-        #[derive(Deserialize)]
-        struct LoginData {
-            musicid: u64,
-            musickey: String,
-            #[serde(rename = "encryptUin")]
-            encrypt_uin: Option<String>,
-            refresh_key: Option<String>,
-        }
-
-        #[derive(Deserialize)]
-        struct LoginResponse {
-            data: LoginData,
-        }
-
-        let response: LoginResponse = serde_json::from_value(login_data)?;
-        let credentials = response.data;
-
-        Ok(ProviderAuthState::QQMusic {
-            musicid: credentials.musicid,
-            musickey: credentials.musickey,
-            refresh_key: credentials.refresh_key,
-            encrypt_uin: credentials.encrypt_uin,
-        })
-    }
-
-    #[instrument(skip(self, redirect_url), fields(provider = "qq"))]
-    async fn finalize_login_with_url(&self, redirect_url: &str) -> Result<ProviderAuthState> {
-        let p_skey = self.fetch_p_skey_from_redirect(redirect_url).await?;
-        let code = self.get_authorization_code(&p_skey).await?;
-        self.exchange_code_for_auth_state(&code).await
-    }
-
-    async fn login_with_cookie(&self, cookies: &str) -> Result<LoginResult> {
-        let cookie_map = Self::parse_cookies(cookies);
-        let musicid_str = cookie_map
-            .get("uin")
-            .or_else(|| cookie_map.get("musicid"))
-            .ok_or_else(|| {
-                LoginError::InvalidCredentials("Cookie中缺少 'uin' 或 'musicid'".into())
-            })?;
-        let musickey = cookie_map
-            .get("qqmusic_key")
-            .or_else(|| cookie_map.get("musickey"))
-            .ok_or_else(|| {
-                LoginError::InvalidCredentials("Cookie中缺少 'qqmusic_key' 或 'musickey'".into())
-            })?;
-
-        let musicid = musicid_str
-            .trim_start_matches('o')
-            .parse::<u64>()
-            .map_err(|_| LoginError::InvalidCredentials("无法将 'uin' 解析为数字".into()))?;
-
-        let auth_state = ProviderAuthState::QQMusic {
-            musicid,
-            musickey: musickey.clone(),
-            refresh_key: cookie_map.get("refresh_key").cloned(),
-            encrypt_uin: cookie_map.get("encrypt_uin").cloned(),
-        };
-
-        self.login_with_auth_state(&auth_state).await
-    }
-
-    async fn login_with_auth_state(&self, auth_state: &ProviderAuthState) -> Result<LoginResult> {
-        self.set_auth_state(auth_state)?;
-
-        #[derive(Deserialize)]
-        struct UserInfoResponse {
-            #[serde(rename = "uin")]
-            user_id: i64,
-            nick: String,
-            headurl: String,
-        }
-
-        let user_info_data = self
-            .execute_api_request(
-                "music.UserInfo.userInfoServer",
-                "GetLoginUserInfo",
-                json!({}),
-                &[0],
-            )
-            .await?;
-
-        let user_info: UserInfoResponse = serde_json::from_value(user_info_data)
-            .map_err(|e| LoginError::ProviderError(format!("解析用户信息失败: {e}")))?;
-
-        let profile = UserProfile {
-            user_id: user_info.user_id,
-            nickname: user_info.nick,
-            avatar_url: user_info.headurl,
-        };
-
-        Ok(LoginResult {
-            profile,
-            auth_state: auth_state.clone(),
-        })
-    }
-
-    async fn handle_cookie_login(&self, events_tx: mpsc::Sender<LoginEvent>, cookies: String) {
-        let _ = events_tx.send(LoginEvent::Initiating).await;
-        match self.login_with_cookie(&cookies).await {
-            Ok(result) => {
-                let _ = events_tx.send(LoginEvent::Success(result)).await;
-            }
-            Err(e) => {
-                let login_error = match e {
-                    LyricsHelperError::LoginFailed(login_err) => login_err,
-                    other_err => LoginError::ProviderError(other_err.to_string()),
-                };
-                let _ = events_tx.send(LoginEvent::Failure(login_error)).await;
-            }
-        }
-    }
-
-    async fn handle_qr_code_login(&self, events_tx: mpsc::Sender<LoginEvent>) {
-        if events_tx.send(LoginEvent::Initiating).await.is_err() {
-            return;
-        }
-
-        let qr_info = match self.get_qrcode().await {
-            Ok(info) => info,
-            Err(e) => {
-                let _ = events_tx
-                    .send(LoginEvent::Failure(LoginError::ProviderError(
-                        e.to_string(),
-                    )))
-                    .await;
-                return;
-            }
-        };
-
-        if events_tx
-            .send(LoginEvent::QRCodeReady {
-                image_data: qr_info.image_data,
-            })
-            .await
-            .is_err()
-        {
-            return;
-        }
-
-        loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-
-            if events_tx.is_closed() {
-                return;
-            }
-
-            match self.check_qrcode_status(&qr_info.qrsig).await {
-                Ok(status) => match status {
-                    QRCodeStatus::Confirmed { url } => {
-                        let final_event = match self.finalize_login_with_url(&url).await {
-                            Ok(auth_state) => match self.login_with_auth_state(&auth_state).await {
-                                Ok(result) => LoginEvent::Success(result),
-                                Err(e) => {
-                                    let login_error = match e {
-                                        LyricsHelperError::LoginFailed(le) => le,
-                                        _ => LoginError::ProviderError(e.to_string()),
-                                    };
-                                    LoginEvent::Failure(login_error)
-                                }
-                            },
-                            Err(e) => LoginEvent::Failure(LoginError::ProviderError(e.to_string())),
-                        };
-                        let _ = events_tx.send(final_event).await;
-                        return;
-                    }
-                    QRCodeStatus::TimedOut => {
-                        let _ = events_tx
-                            .send(LoginEvent::Failure(LoginError::TimedOut))
-                            .await;
-                        return;
-                    }
-                    QRCodeStatus::Refused => {
-                        let _ = events_tx
-                            .send(LoginEvent::Failure(LoginError::UserCancelled))
-                            .await;
-                        return;
-                    }
-                    QRCodeStatus::Error(msg) => {
-                        let _ = events_tx
-                            .send(LoginEvent::Failure(LoginError::ProviderError(msg)))
-                            .await;
-                        return;
-                    }
-                    QRCodeStatus::WaitingForScan => {
-                        if events_tx.send(LoginEvent::WaitingForScan).await.is_err() {
-                            return;
-                        }
-                    }
-                    QRCodeStatus::Scanned => {
-                        if events_tx
-                            .send(LoginEvent::ScannedWaitingForConfirmation)
-                            .await
-                            .is_err()
-                        {
-                            return;
-                        }
-                    }
-                },
-                Err(e) => {
-                    let _ = events_tx
-                        .send(LoginEvent::Failure(LoginError::Network(e.to_string())))
-                        .await;
-                    return;
-                }
-            }
-        }
-    }
 }
 
 /// 根据 QQ 音乐专辑的 MID 构造指定尺寸的封面图片 URL。
@@ -2059,7 +1162,6 @@ mod tests {
     const TEST_ALBUM_MID: &str = "003dmKuv4689PG";
     const TEST_SINGER_MID: &str = "000iW1zw4fSVdV";
     const TEST_PLAYLIST_ID: &str = "7256912512"; // QQ音乐官方歌单: 欧美| 流行节奏控
-    const TEST_TOPLIST_ID: u32 = 26; // QQ音乐热歌榜
     const INSTRUMENTAL_SONG_ID: &str = "201877085"; // 城南花已开
     const TEST_SONG_NUMERICAL_ID: u64 = 7_137_425;
 
@@ -2214,20 +1316,6 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_get_toplist() {
-        init_tracing();
-        let provider = QQMusic::new().await.unwrap();
-        let (info, songs) = provider
-            .get_toplist(TEST_TOPLIST_ID, 1, 5, None)
-            .await
-            .unwrap();
-        assert_eq!(info.top_id, TEST_TOPLIST_ID);
-        assert!(!songs.is_empty());
-        info!("✅ 排行榜 '{}' 包含歌曲", info.title);
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_get_song_info() {
         init_tracing();
         let provider = QQMusic::new().await.unwrap();
@@ -2236,31 +1324,6 @@ mod tests {
         assert_eq!(song.name, TEST_SONG_NAME);
         assert_eq!(song.artists[0].name, TEST_SINGER_NAME);
         info!("✅ 成功获取歌曲 '{}'", song.name);
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_get_song_link() {
-        init_tracing();
-        let provider = QQMusic::new().await.unwrap();
-
-        // 如果想测试 VIP 歌曲：
-        // let link_result = provider.get_song_link(TEST_SONG_MID).await;
-
-        let link_result = provider.get_song_link("001xeS8622ntLO").await;
-
-        match link_result {
-            Ok(link) => {
-                assert!(link.starts_with("http"), "链接应以 http 开头");
-                info!("✅ 成功获取链接: {}", link);
-            }
-            Err(e) => {
-                // 如果是 VIP 歌曲，API 会返回空 purl，捕捉这个错误也算测试通过
-                let msg = e.to_string();
-                assert!(msg.contains("purl 为空"), "错误信息应提示 purl 为空");
-                info!("✅ 因 VIP 歌曲而失败，信息: {}", msg);
-            }
-        }
     }
 
     #[tokio::test]
@@ -2294,48 +1357,6 @@ mod tests {
         if let Err(e) = invalid_id_result {
             info!("✅ 成功捕获到错误: {}", e);
         }
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_search_by_type() {
-        init_tracing();
-        let provider = QQMusic::new().await.unwrap();
-        let keyword = "小蓝背心";
-
-        let song_results = provider
-            .search_by_type(keyword, models::SearchType::Song, 1, 5)
-            .await
-            .unwrap();
-
-        assert!(!song_results.is_empty(), "按歌曲类型搜索时，结果不应为空");
-        assert!(
-            matches!(song_results[0], models::TypedSearchResult::Song(_)),
-            "搜索歌曲时应返回 Song 类型的结果"
-        );
-        info!("✅ 按歌曲类型搜索成功！");
-
-        let album_results = provider
-            .search_by_type(keyword, models::SearchType::Album, 1, 5)
-            .await
-            .unwrap();
-        assert!(!album_results.is_empty(), "按专辑类型搜索时，结果不应为空");
-        assert!(
-            matches!(album_results[0], models::TypedSearchResult::Album(_)),
-            "搜索专辑时应返回 Album 类型的结果"
-        );
-        info!("✅ 按专辑类型搜索成功！");
-
-        let singer_results = provider
-            .search_by_type(keyword, models::SearchType::Singer, 1, 5)
-            .await
-            .unwrap();
-        assert!(!singer_results.is_empty(), "按歌手类型搜索时，结果不应为空");
-        assert!(
-            matches!(singer_results[0], models::TypedSearchResult::Singer(_)),
-            "搜索歌手时应返回 Singer 类型的结果"
-        );
-        info!("✅ 按歌手类型搜索成功！");
     }
 
     #[tokio::test]

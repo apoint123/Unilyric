@@ -1,9 +1,7 @@
 //! 此模块定义了所有用于反序列化网易云音乐 API 响应的 `struct` 数据结构。
 //! API 来源于 <https://github.com/NeteaseCloudMusicApiReborn/api>
 
-#![allow(dead_code)] // 保留以备未来使用
-
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 // =================================================================
 // 搜索接口 (`/eapi/cloudsearch/pc`) 的模型
@@ -12,8 +10,6 @@ use serde::{Deserialize, Serialize};
 /// 搜索 API 的顶层响应结构。
 #[derive(Debug, Deserialize)]
 pub struct SearchResult {
-    /// API 返回码，通常 `200` 表示成功。
-    pub code: i32,
     /// 包含搜索结果的容器。
     pub result: SearchResultData,
 }
@@ -24,8 +20,6 @@ pub struct SearchResult {
 pub struct SearchResultData {
     /// 匹配到的歌曲对象列表。
     pub songs: Vec<Song>,
-    /// 匹配到的歌曲总数。
-    pub song_count: u32,
 }
 
 // =================================================================
@@ -93,8 +87,6 @@ pub struct NeteaseAlbum {
 /// 歌单详情 API 的顶层响应。
 #[derive(Debug, Deserialize)]
 pub struct PlaylistResult {
-    /// API 返回码，`200` 表示成功。
-    pub code: i32,
     /// 歌单的详细信息。
     pub playlist: Playlist,
 }
@@ -131,34 +123,8 @@ pub struct Creator {
 /// 歌曲详情 API 的顶层响应。
 #[derive(Debug, Deserialize)]
 pub struct DetailResult {
-    /// API 返回码，`200` 表示成功。
-    pub code: i32,
     /// 歌曲对象列表。
     pub songs: Vec<Song>,
-}
-
-// =================================================================
-// 歌曲播放链接接口 (`/weapi/song/enhance/player/url`) 的模型
-// =================================================================
-
-/// 获取歌曲播放链接 API 的顶层响应。
-#[derive(Debug, Deserialize)]
-pub struct SongUrlResult {
-    /// API 返回码，`200` 表示成功。
-    pub code: i32,
-    /// 包含播放链接信息的数据列表。
-    pub data: Vec<SongUrlData>,
-}
-
-/// 单个歌曲的播放链接信息。
-#[derive(Debug, Deserialize)]
-pub struct SongUrlData {
-    /// 歌曲的数字 ID。
-    pub id: u64,
-    /// 歌曲的播放 URL。对于无版权或 VIP 歌曲，此字段可能为 `null`。
-    pub url: Option<String>,
-    /// 该条目自身的返回码，`200` 表示成功获取链接。
-    pub code: i32,
 }
 
 // =================================================================
@@ -213,10 +179,6 @@ pub struct Album {
 pub struct ArtistSongsResult {
     /// API 返回码，`200` 表示成功。
     pub code: i32,
-    /// 是否还有更多歌曲。
-    pub more: bool,
-    /// 歌曲总数。
-    pub total: u32,
     /// 本次请求返回的歌曲列表。
     pub songs: Vec<Song>,
 }
@@ -230,67 +192,6 @@ pub struct ArtistSongsResult {
 pub struct AlbumContentResult {
     /// API 返回码，`200` 表示成功。
     pub code: i32,
-    /// 专辑的详细信息。
-    pub album: Album,
     /// 专辑包含的歌曲列表。
     pub songs: Vec<Song>,
-}
-
-// =================================================================
-// 歌曲播放链接接口 V1 (`/eapi/song/enhance/player/url/v1`) 的模型
-// =================================================================
-
-/// 获取歌曲播放链接 API (EAPI v1) 的顶层响应。
-#[derive(Debug, Deserialize)]
-pub struct SongUrlResultV1 {
-    /// 包含播放链接信息的数据列表。
-    pub data: Vec<SongUrlDataV1>,
-    /// API 返回码，`200` 表示成功。
-    pub code: i32,
-}
-
-/// 单个歌曲的播放链接信息 (EAPI v1)。
-#[derive(Debug, Deserialize)]
-pub struct SongUrlDataV1 {
-    /// 歌曲的数字 ID。
-    pub id: u64,
-    /// 歌曲的播放 URL。对于无版权或 VIP 歌曲，此字段可能为 `null`。
-    pub url: Option<String>,
-    /// 该条目自身的返回码，`200` 表示成功获取链接。
-    pub code: i32,
-    /// 音质等级
-    pub level: Option<String>,
-    /// 文件大小
-    pub size: u64,
-}
-
-// =================================================================
-// 用户信息接口 (`/api/nuser/account/get`) 的模型
-// =================================================================
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Account {
-    pub id: i64,
-    pub user_name: String,
-    pub vip_type: i32,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct Profile {
-    pub user_id: i64,
-    pub nickname: String,
-    pub avatar_url: String,
-    pub background_url: String,
-    pub signature: Option<String>,
-    pub followed: bool,
-    pub vip_type: i32,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AccountProfileResult {
-    pub code: i32,
-    pub account: Option<Account>,
-    pub profile: Option<Profile>,
 }

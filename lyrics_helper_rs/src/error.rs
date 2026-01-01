@@ -4,8 +4,6 @@ use lyrics_helper_core::ConvertError;
 use std::{io, string::FromUtf8Error};
 use thiserror::Error;
 
-use crate::LoginError;
-
 /// `lyrics-helper` 库的通用错误枚举。
 #[derive(Error, Debug)]
 pub enum LyricsHelperError {
@@ -84,17 +82,8 @@ pub enum LyricsHelperError {
     /// 未初始化提供商功能
     #[error("提供商尚未初始化。请先调用 `load_providers()` 方法。")]
     ProvidersNotInitialized,
-
-    /// 登录失败
-    #[error("登录失败: {0}")]
-    LoginFailed(#[from] LoginError),
-
-    /// 不支持的登录方法
-    #[error("{0} 提供商不支持登录")]
-    LoginNotSupported(String),
 }
 
-/// `LyricsHelperError` 的 `Result` 类型别名，方便在函数签名中使用。
 pub type Result<T> = std::result::Result<T, LyricsHelperError>;
 
 impl From<ConvertError> for LyricsHelperError {

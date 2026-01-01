@@ -51,22 +51,13 @@ pub fn decrypt_qrc_local(encrypted_bytes: &[u8]) -> Result<String> {
     qrc_logic::decrypt_lyrics_from_bytes(des_data)
 }
 
-/// 对明文歌词执行加密操作。
-pub fn encrypt_qrc(plaintext: &str) -> Result<String> {
-    let encrypted_hex_string = qrc_logic::encrypt_lyrics(plaintext)?;
-    Ok(encrypted_hex_string)
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 mod qrc_logic {
     use super::Result;
     use crate::error::LyricsHelperError;
-    use flate2::Compression;
     use flate2::read::ZlibDecoder;
-    use flate2::write::ZlibEncoder;
-    use hex::encode;
-    use std::io::{Read, Write};
+    use std::io::Read;
 
     const ROUNDS: usize = 16;
     const SUB_KEY_SIZE: usize = 6;
@@ -76,15 +67,9 @@ mod qrc_logic {
 
     /// 非标准 3DES 编解码器
     struct QqMusicCodec {
-        encrypt_schedule: &'static TripleDesKeySchedules,
         decrypt_schedule: &'static TripleDesKeySchedules,
     }
 
-    const ENCRYPT_SCHEDULES: TripleDesKeySchedules = [
-        custom_des::key_schedule(custom_des::KEY_1, custom_des::Mode::Encrypt),
-        custom_des::key_schedule(custom_des::KEY_2, custom_des::Mode::Decrypt),
-        custom_des::key_schedule(custom_des::KEY_3, custom_des::Mode::Encrypt),
-    ];
     const DECRYPT_SCHEDULES: TripleDesKeySchedules = [
         custom_des::key_schedule(custom_des::KEY_3, custom_des::Mode::Decrypt),
         custom_des::key_schedule(custom_des::KEY_2, custom_des::Mode::Encrypt),
@@ -92,20 +77,10 @@ mod qrc_logic {
     ];
 
     const CODEC: QqMusicCodec = QqMusicCodec {
-        encrypt_schedule: &ENCRYPT_SCHEDULES,
         decrypt_schedule: &DECRYPT_SCHEDULES,
     };
 
     impl QqMusicCodec {
-        /// 加密一个8字节的数据块。
-        fn encrypt_block(&self, input: &[u8], output: &mut [u8]) {
-            let mut temp1 = [0u8; 8];
-            let mut temp2 = [0u8; 8];
-            custom_des::des_crypt(input, &mut temp1, &self.encrypt_schedule[0]);
-            custom_des::des_crypt(&temp1, &mut temp2, &self.encrypt_schedule[1]);
-            custom_des::des_crypt(&temp2, output, &self.encrypt_schedule[2]);
-        }
-
         /// 解密一个8字节的数据块。
         fn decrypt_block(&self, input: &[u8], output: &mut [u8]) {
             let mut temp1 = [0u8; 8];
@@ -142,33 +117,6 @@ mod qrc_logic {
             .map_err(|e| LyricsHelperError::Decryption(format!("UTF-8编码转换失败: {e}")))
     }
 
-    /// 加密 QQ 音乐歌词的主函数
-    pub(super) fn encrypt_lyrics(plaintext: &str) -> Result<String> {
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(plaintext.as_bytes())
-            .map_err(|e| LyricsHelperError::Encryption(format!("Zlib压缩写入失败: {e}")))?;
-        let compressed_data = encoder
-            .finish()
-            .map_err(|e| LyricsHelperError::Encryption(format!("Zlib压缩完成失败: {e}")))?;
-
-        let padded_data = zero_pad(&compressed_data, DES_BLOCK_SIZE);
-
-        let mut encrypted_data = vec![0; padded_data.len()];
-
-        {
-            use rayon::prelude::*;
-            encrypted_data
-                .par_chunks_mut(DES_BLOCK_SIZE)
-                .zip(padded_data.par_chunks(DES_BLOCK_SIZE))
-                .for_each(|(out_slice, chunk)| {
-                    CODEC.encrypt_block(chunk, out_slice);
-                });
-        }
-
-        Ok(encode(encrypted_data))
-    }
-
     /// 使用 Zlib 解压缩字节数据。
     /// 同时会尝试移除头部的 UTF-8 BOM (0xEF 0xBB 0xBF)。
     ///
@@ -188,26 +136,6 @@ mod qrc_logic {
             decompressed.drain(..3);
         }
         Ok(decompressed)
-    }
-
-    /// 使用零字节对数据进行填充。
-    ///
-    /// QQ音乐使用的填充方案是零填充。
-    ///
-    /// # 参数
-    /// * `data` - 需要填充的字节数据
-    /// * `block_size` - 块大小，对于DES来说是8
-    fn zero_pad(data: &[u8], block_size: usize) -> Vec<u8> {
-        let padding_len = (block_size - (data.len() % block_size)) % block_size;
-        if padding_len == 0 {
-            return data.to_vec();
-        }
-
-        let mut padded_data = Vec::with_capacity(data.len() + padding_len);
-        padded_data.extend_from_slice(data);
-        padded_data.resize(data.len() + padding_len, 0);
-
-        padded_data
     }
 
     /// 将所有非标准的DES实现细节移动到一个子模块中，以作清晰隔离。
@@ -869,22 +797,5 @@ mod tests {
 
         println!("\n✅ 从二进制 QRC 文件解密成功:");
         println!("{decrypted_content}");
-    }
-
-    #[test]
-    fn test_round_trip() {
-        let initial_plaintext = decrypt_qrc(ENCRYPTED_HEX_STRING).expect("初始加密失败");
-
-        assert!(!initial_plaintext.is_empty(), "初始解密产生了空字符串");
-
-        let re_encrypted_hex = encrypt_qrc(&initial_plaintext).expect("再次加密失败");
-
-        assert!(!re_encrypted_hex.is_empty(), "再次加密产生了空字符串");
-
-        let final_plaintext = decrypt_qrc(&re_encrypted_hex).expect("最终解密失败");
-
-        assert_eq!(initial_plaintext, final_plaintext, "初始文本不等于最终文本");
-
-        println!("\n✅ 测试成功！初始明文与最终明文完全一致。");
     }
 }

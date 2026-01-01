@@ -89,11 +89,6 @@ fst = "0.4"
 rand = "0.9"
 
 [[bench]]
-name = "decryption_benchmark"
-harness = false
-required-features = []
-
-[[bench]]
 name = "ttml_parser_benchmark"
 harness = false
 required-features = []

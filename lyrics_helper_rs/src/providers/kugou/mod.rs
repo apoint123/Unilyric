@@ -46,13 +46,10 @@ const KG_TID: &str = "255";
 
 const KUGOU_API_GATEWAY: &str = "https://gateway.kugou.com";
 const USER_SERVICE_URL: &str = "https://userservice.kugou.com";
-const EXPENDABLE_KMR_URL: &str = "https://expendablekmr.kugou.com";
 const LYRICS_API_URL: &str = "https://lyrics.kugou.com";
 const OPENAPI_URL: &str = "https://openapi.kugou.com";
-const TRACKER_URL: &str = "http://tracker.kugou.com";
 
 const REGISTER_DEV_METHOD: &str = "/risk/v1/r_register_dev";
-const IMAGE_BATCH_METHOD: &str = "/container/v2/image";
 const SEARCH_SONG_METHOD: &str = "/v3/search/song";
 const ALBUM_DETAIL_METHOD: &str = "/kmr/v2/albums";
 const ALBUM_SONGS_METHOD: &str = "/v1/album_audio/lite";
@@ -60,10 +57,8 @@ const SINGER_SONGS_METHOD: &str = "/kmr/v1/audio_group/author";
 const PLAYLIST_INFO_METHOD: &str = "/v3/get_list_info";
 const PLAYLIST_SONGS_METHOD: &str = "/pubsongs/v2/get_other_list_file_nofilt";
 const SONG_DETAIL_METHOD: &str = "/v2/get_res_privilege/lite";
-const SONG_LINK_METHOD: &str = "/v6/priv_url";
 
 const API_URL_REGISTER_DEV: &str = formatcp!("{USER_SERVICE_URL}{REGISTER_DEV_METHOD}");
-const API_URL_IMAGE_BATCH: &str = formatcp!("{EXPENDABLE_KMR_URL}{IMAGE_BATCH_METHOD}");
 const API_URL_SEARCH_SONG: &str = formatcp!("{KUGOU_API_GATEWAY}{SEARCH_SONG_METHOD}");
 const API_URL_ALBUM_DETAIL: &str = formatcp!("{KUGOU_API_GATEWAY}{ALBUM_DETAIL_METHOD}");
 const API_URL_ALBUM_SONGS: &str = formatcp!("{KUGOU_API_GATEWAY}{ALBUM_SONGS_METHOD}");
@@ -71,13 +66,11 @@ const API_URL_SINGER_SONGS: &str = formatcp!("{OPENAPI_URL}{SINGER_SONGS_METHOD}
 const API_URL_PLAYLIST_INFO: &str = formatcp!("{KUGOU_API_GATEWAY}{PLAYLIST_INFO_METHOD}");
 const API_URL_PLAYLIST_SONGS: &str = formatcp!("{KUGOU_API_GATEWAY}{PLAYLIST_SONGS_METHOD}");
 const API_URL_SONG_DETAIL: &str = formatcp!("{KUGOU_API_GATEWAY}{SONG_DETAIL_METHOD}");
-const API_URL_SONG_LINK: &str = formatcp!("{TRACKER_URL}{SONG_LINK_METHOD}");
 
 const X_ROUTER_OPENAPI: &str = "openapi.kugou.com";
 const X_ROUTER_COMPLEX_SEARCH: &str = "complexsearch.kugou.com";
 const X_ROUTER_PUB_SONGS: &str = "pubsongs.kugou.com";
 const X_ROUTER_MEDIA_STORE: &str = "media.store.kugou.com";
-const X_ROUTER_TRACKER: &str = "tracker.kugou.com";
 
 /// 酷狗音乐的配置项。
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -317,74 +310,6 @@ impl KugouMusic {
         );
 
         serde_json::from_str(&response_text).map_err(Into::into)
-    }
-
-    /// 为 expendablekmr.kugou.com 域名下的 GET 请求执行签名和发送。
-    /// 这个请求的签名和 Header 都很特殊，因此需要独立实现。
-    async fn execute_expendable_kmr_get<R>(
-        &self,
-        mut business_params: BTreeMap<String, String>,
-    ) -> Result<R>
-    where
-        R: DeserializeOwned,
-    {
-        // 构建用于签名的参数（不包含dfid, mid等）
-        let mut params_for_sig = business_params.clone();
-        params_for_sig.insert("appid".to_string(), APP_ID.to_string());
-        params_for_sig.insert("clientver".to_string(), CLIENT_VER.to_string());
-
-        let signature = signature::signature_android_params(&params_for_sig, "", false);
-
-        // 构建最终请求参数（包含签名，但不包含身份信息）
-        business_params.insert("appid".to_string(), APP_ID.to_string());
-        business_params.insert("clientver".to_string(), CLIENT_VER.to_string());
-        business_params.insert("signature".to_string(), signature);
-
-        let query_string = serde_urlencoded::to_string(&business_params)
-            .map_err(|e| LyricsHelperError::Internal(e.to_string()))?;
-        let full_url = format!("{API_URL_IMAGE_BATCH}?{query_string}");
-
-        let mid = hex::encode(Md5::digest(b"-"));
-        let headers = [
-            ("User-Agent", KUGOU_ANDROID_USER_AGENT),
-            ("kg-tid", KG_TID),
-            ("dfid", "-"),
-            ("mid", &mid),
-        ];
-
-        let response = self
-            .http_client
-            .request_with_headers(crate::http::HttpMethod::Get, &full_url, &headers, None)
-            .await?;
-
-        let response_text = response.text()?;
-
-        tracing::trace!(
-            url = API_URL_IMAGE_BATCH,
-            response.body = %response_text,
-            "原始 JSON 响应"
-        );
-
-        serde_json::from_str(&response_text).map_err(Into::into)
-    }
-
-    /// 批量获取封面等图片信息。
-    /// API: /container/v2/image
-    #[instrument(skip(self, items))]
-    pub async fn get_images_batch<'a>(
-        &self,
-        items: &'a [models::BatchImageDataItem<'a>],
-    ) -> Result<models::BatchImageResponse> {
-        let data_str = serde_json::to_string(items)?;
-        let mut params = BTreeMap::new();
-        params.insert("album_image_type".to_string(), "-3".to_string());
-        params.insert("author_image_type".to_string(), "3,4,5".to_string());
-        params.insert("count".to_string(), items.len().to_string());
-        params.insert("data".to_string(), data_str);
-        params.insert("isCdn".to_string(), "1".to_string());
-        params.insert("publish_time".to_string(), "1".to_string());
-
-        self.execute_expendable_kmr_get(params).await
     }
 }
 
@@ -940,81 +865,6 @@ impl Provider for KugouMusic {
         })
     }
 
-    async fn get_song_link(&self, song_hash: &str) -> Result<String> {
-        let clienttime_ms = Utc::now().timestamp_millis();
-
-        let userid = 0;
-
-        let inner_key = signature::sign_key(song_hash, &self.mid, userid, APP_ID, true);
-
-        let payload = models::SongUrlNewRequestPayload {
-            area_code: "1",
-            behavior: "play",
-            qualities: [
-                "128",
-                "320",
-                "flac",
-                "high",
-                "multitrack",
-                "viper_atmos",
-                "viper_tape",
-                "viper_clear",
-            ],
-            resource: models::Resource {
-                album_audio_id: None,
-                collect_list_id: "3",
-                collect_time: clienttime_ms
-                    .try_into()
-                    .map_err(|e| LyricsHelperError::Internal(format!("时间错误: {e}")))?,
-                hash: song_hash,
-                id: 0,
-                page_id: 1,
-                resource_type: "audio",
-            },
-            token: "",
-            tracker_param: models::TrackerParam {
-                all_m: 1,
-                auth: "",
-                is_free_part: 0,
-                key: inner_key,
-                module_id: 0,
-                need_climax: 1,
-                need_xcdn: 1,
-                open_time: "",
-                pid: "411",
-                pidversion: "3001",
-                priv_vip_type: "6",
-                viptoken: "",
-            },
-            userid: userid.to_string(),
-            vip_type: 0,
-        };
-
-        let resp: models::SongUrlNewResponse = self
-            .execute_signed_post(API_URL_SONG_LINK, &payload, Some(X_ROUTER_TRACKER))
-            .await?;
-
-        for data_item in &resp.data {
-            if let Some(goods) = data_item.relate_goods.first()
-                && let Some(url) = goods.info.climax_info.url.first()
-                && !url.is_empty()
-            {
-                return Ok(url.clone());
-            }
-        }
-
-        for data_item in &resp.data {
-            if let Some(url) = data_item.info.encrypted_urls.first()
-                && !url.is_empty()
-            {
-                warn!("只找到了加密的 mgg 格式链接，返回此链接。");
-                return Ok(url.clone());
-            }
-        }
-
-        Err(LyricsHelperError::LyricNotFound)
-    }
-
     #[allow(clippy::literal_string_with_formatting_args)]
     async fn get_album_cover_url(&self, album_id: &str, size: CoverSize) -> Result<String> {
         let album_info = self.get_album_info(album_id).await?;
@@ -1238,37 +1088,6 @@ mod tests {
 
     #[tokio::test]
     #[ignore]
-    async fn test_integration_get_song_link() {
-        init_tracing();
-        let provider = get_test_provider().await;
-
-        let song_hash = "69D45D31ADB5B9D58A70E4B7F9A4AA0B";
-
-        info!("[INFO] 正在请求 HASH: {} 的播放链接...", song_hash);
-        let song_link_result = provider.get_song_link(song_hash).await;
-
-        assert!(
-            song_link_result.is_ok(),
-            "获取播放链接应该成功，返回的却是错误: {:?}",
-            song_link_result.err()
-        );
-
-        let song_link = song_link_result.unwrap();
-        info!("✅ 成功获取到播放链接: {}", &song_link);
-
-        assert!(!song_link.is_empty(), "播放链接不应为空字符串");
-        assert!(
-            song_link.starts_with("http://") || song_link.starts_with("https://"),
-            "链接应以 http:// 或 https:// 开头"
-        );
-        assert!(
-            song_link.contains(".mp3") || song_link.contains('?'),
-            "链接格式缺少 .mp3 或查询参数"
-        );
-    }
-
-    #[tokio::test]
-    #[ignore]
     async fn test_integration_get_singer_songs() {
         init_tracing();
         let provider = get_test_provider().await;
@@ -1361,43 +1180,5 @@ mod tests {
         );
 
         info!("✅ 成功获取封面: {}", large_cover_url);
-    }
-
-    #[tokio::test]
-    #[ignore]
-    async fn test_integration_get_images_batch() {
-        init_tracing();
-        let provider = get_test_provider().await;
-        let items_to_fetch = [
-            models::BatchImageDataItem {
-                hash: "DBE68B72F69025954B1E2EC0D06D7C9E",
-                album_id: 0,
-                album_audio_id: 0,
-            },
-            models::BatchImageDataItem {
-                hash: "69D45D31ADB5B9D58A70E4B7F9A4AA0B",
-                album_id: 146_986_426,
-                album_audio_id: 0,
-            },
-        ];
-
-        let response = provider
-            .get_images_batch(&items_to_fetch)
-            .await
-            .expect("批量获取图片失败");
-
-        assert_eq!(response.status, 1, "API 状态码不为 1");
-        assert_eq!(
-            response.data.len(),
-            items_to_fetch.len(),
-            "返回的数据项数量与请求不匹配"
-        );
-
-        let first_item = response.data.first().unwrap();
-        let first_album_info = first_item.album.first().unwrap();
-        assert_eq!(first_album_info.album_name, "人鱼");
-        assert!(first_album_info.sizable_cover.contains("{size}"));
-
-        info!("✅ 批量获取图片成功");
     }
 }

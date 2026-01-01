@@ -45,39 +45,6 @@ impl IndexEntry {
     }
 }
 
-/// 定义 `amll-ttml-database` 支持的搜索字段。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SearchField {
-    MusicName,
-    Artists,
-    Album,
-    NcmMusicId,
-    QqMusicId,
-    SpotifyId,
-    AppleMusicId,
-    Isrc,
-    TtmlAuthorGithub,
-    TtmlAuthorGithubLogin,
-}
-
-impl SearchField {
-    /// 将枚举成员转换为在索引元数据中对应的 key 字符串。
-    pub const fn to_metadata_key(&self) -> &'static str {
-        match self {
-            Self::MusicName => "musicName",
-            Self::Artists => "artists",
-            Self::Album => "album",
-            Self::NcmMusicId => "ncmMusicId",
-            Self::QqMusicId => "qqMusicId",
-            Self::SpotifyId => "spotifyId",
-            Self::AppleMusicId => "appleMusicId",
-            Self::Isrc => "isrc",
-            Self::TtmlAuthorGithub => "ttmlAuthorGithub",
-            Self::TtmlAuthorGithubLogin => "ttmlAuthorGithubLogin",
-        }
-    }
-}
-
 /// 用于解析来自 GitHub API 的错误响应。
 ///
 /// 主要用于识别和处理 API 速率限制的错误信息。
