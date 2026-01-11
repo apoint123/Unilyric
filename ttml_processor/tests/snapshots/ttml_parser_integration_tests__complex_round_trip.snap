@@ -79,8 +79,8 @@ expression: generated_ttml_output
         <span ttm:role="x-bg" begin="22.500" end="23.800">
           <span begin="22.500" end="23.800">(背景)</span>
           <span ttm:role="x-translation" xml:lang="en">Background</span>
-          <span ttm:role="x-translation" xml:lang="en-US">(With background)</span>
-          <span ttm:role="x-translation" xml:lang="zh-Hans-CN">(带背景音)</span>
+          <span ttm:role="x-translation" xml:lang="en-US">With background</span>
+          <span ttm:role="x-translation" xml:lang="zh-Hans-CN">带背景音</span>
           <span ttm:role="x-roman" xml:lang="ja-Latn">haikei</span>
           <span ttm:role="x-roman" xml:lang="ja-Latn">haikei</span>
         </span>
