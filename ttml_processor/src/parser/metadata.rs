@@ -4,11 +4,12 @@
 
 use std::collections::HashMap;
 
-use crate::parser::state::PendingItem;
-
 use super::{
-    state::{AuxTrackType, MetadataContext, SpanContext, SpanRole, TtmlParserState},
-    utils::{get_attribute_with_aliases, get_string_attribute, get_time_attribute},
+    state::{AuxTrackType, MetadataContext, PendingItem, SpanContext, SpanRole, TtmlParserState},
+    utils::{
+        clean_parentheses_from_bg_text_into, get_attribute_with_aliases, get_string_attribute,
+        get_time_attribute,
+    },
 };
 use lyrics_helper_core::{
     Agent, AgentType, ContentType, ConvertError, LyricSyllable, LyricTrack, TrackMetadataKey, Word,
@@ -393,7 +394,14 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                 background: if bg_plain_text.is_empty() {
                     None
                 } else {
-                    Some(bg_plain_text.to_string())
+                    let mut cleaned_bg = String::with_capacity(bg_plain_text.len());
+                    clean_parentheses_from_bg_text_into(bg_plain_text, &mut cleaned_bg);
+
+                    if cleaned_bg.is_empty() {
+                        None
+                    } else {
+                        Some(cleaned_bg)
+                    }
                 },
             };
 
