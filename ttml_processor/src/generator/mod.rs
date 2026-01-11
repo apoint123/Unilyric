@@ -5,7 +5,6 @@
 
 mod body;
 mod head;
-mod splitting;
 mod track;
 mod utils;
 

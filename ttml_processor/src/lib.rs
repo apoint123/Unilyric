@@ -53,7 +53,7 @@
 //!
 //!     let main_track = first_line.tracks.iter().find(|t| t.content_type == ContentType::Main).unwrap();
 //!     let syllables = &main_track.content.words[0].syllables;
-//!     
+//!
 //!     assert_eq!(syllables[0].text, "Hello");
 //!     // The space before "world" is captured as a flag on the preceding syllable.
 //!     assert_eq!(syllables[0].ends_with_space, true);
@@ -78,8 +78,8 @@
 //! }
 //! ```
 
-pub mod generator;
-pub mod parser;
+mod generator;
+mod parser;
 mod utils;
 
 pub use generator::generate_ttml;

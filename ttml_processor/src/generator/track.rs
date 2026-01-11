@@ -1,8 +1,3 @@
-//! # TTML 生成器 - 轨道渲染模块
-//!
-//! 该模块负责将 `LyricTrack` 数据结构渲染为具体的 `<span>` XML 元素，
-//! 包括主歌词、背景人声、翻译和罗马音等。
-
 use crate::{generator::utils::apply_parentheses_to_bg_text, utils::normalize_text_whitespace};
 use lyrics_helper_core::{
     AnnotatedTrack, ConvertError, LyricSyllable, LyricTrack, TrackMetadataKey,
@@ -13,7 +8,7 @@ use quick_xml::{
     events::{BytesText, Event},
 };
 
-use super::{splitting::write_syllable_with_optional_splitting, utils::format_ttml_time};
+use super::utils::format_ttml_time;
 
 pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
     writer: &mut Writer<W>,
@@ -38,7 +33,6 @@ pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
     Ok(())
 }
 
-/// 写入单个音节span
 pub(super) fn write_single_syllable_span<W: std::io::Write>(
     writer: &mut Writer<W>,
     syl: &LyricSyllable,
@@ -61,7 +55,6 @@ pub(super) fn write_single_syllable_span<W: std::io::Write>(
     Ok(())
 }
 
-/// 将一个完整的轨道渲染为一系列的 `<span>` 标签。
 pub(super) fn write_track_as_spans<W: std::io::Write>(
     writer: &mut Writer<W>,
     track: &LyricTrack,
@@ -70,7 +63,7 @@ pub(super) fn write_track_as_spans<W: std::io::Write>(
     let mut syllables_iter = track.syllables().peekable();
 
     while let Some(syl) = syllables_iter.next() {
-        write_syllable_with_optional_splitting(writer, syl, options)?;
+        write_single_syllable_span(writer, syl, options)?;
 
         if syl.ends_with_space && syllables_iter.peek().is_some() && !options.format {
             writer.write_event(Event::Text(BytesText::new(" ")))?;
@@ -79,7 +72,6 @@ pub(super) fn write_track_as_spans<W: std::io::Write>(
     Ok(())
 }
 
-/// 将辅助轨道（如翻译、罗马音）作为内联的 `<span>` 写入。
 pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
     writer: &mut Writer<W>,
     track: &LyricTrack,
@@ -126,7 +118,6 @@ pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
     Ok(())
 }
 
-/// 将所有背景人声轨道写入一个大的 `x-bg` 角色 `<span>` 容器中。
 pub(super) fn write_background_tracks<W: std::io::Write>(
     writer: &mut Writer<W>,
     bg_annotated_tracks: &[&AnnotatedTrack],
@@ -177,7 +168,7 @@ pub(super) fn write_background_tracks<W: std::io::Write>(
                 ends_with_space: syl_bg.ends_with_space,
             };
 
-            write_syllable_with_optional_splitting(writer, &temp_syl, options)?;
+            write_single_syllable_span(writer, &temp_syl, options)?;
 
             if syl_bg.ends_with_space && iter.peek().is_some() && !options.format {
                 writer.write_event(Event::Text(BytesText::new(" ")))?;

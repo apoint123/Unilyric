@@ -171,49 +171,6 @@ fn test_generate_word_timed_with_agents_snapshot() {
 }
 
 #[test]
-fn test_auto_word_splitting_snapshot() {
-    let lines = vec![
-        LyricLineBuilder::default()
-            .start_ms(1000)
-            .end_ms(5000)
-            .track(AnnotatedTrack {
-                content_type: ContentType::Main,
-                content: LyricTrack {
-                    words: vec![Word {
-                        syllables: vec![
-                            LyricSyllableBuilder::default()
-                                .text("Split this,你好世界")
-                                .start_ms(1000)
-                                .end_ms(5000)
-                                .build()
-                                .unwrap(),
-                        ],
-                        ..Default::default()
-                    }],
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .build()
-            .unwrap(),
-    ];
-
-    let options = TtmlGenerationOptionsBuilder::default()
-        .timing_mode(TtmlTimingMode::Word)
-        .auto_word_splitting(true)
-        .format(true)
-        .punctuation_weight(0.1)
-        .build()
-        .unwrap();
-
-    let metadata = MetadataStore::default();
-    let agent_store = AgentStore::new();
-    let ttml_output = generate_ttml(&lines, &metadata, &agent_store, &options).unwrap();
-
-    insta::assert_snapshot!(ttml_output);
-}
-
-#[test]
 fn test_generate_timed_romanization_snapshot() {
     let mut romanization_track_metadata = HashMap::new();
     romanization_track_metadata.insert(TrackMetadataKey::Language, "ja-Latn".to_string());

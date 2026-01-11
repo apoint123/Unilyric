@@ -1,6 +1,6 @@
 [package]
 name = "ttml_processor"
-version = "0.1.8"
+version = "0.2.0"
 edition = "2024"
 authors = ["apoint123 <vpnzaph@outlook.com>"]
 description = "A Rust library for parsing and generating TTML lyrics files, specifically designed for Apple Music and AMLL formats."
@@ -13,8 +13,6 @@ categories = ["multimedia::audio", "parsing", "text-processing"]
 
 [dependencies]
 quick-xml = { version = "0.38", features = ["serialize"] }
-hyphenation = { version = "0.8", features = ["embed_en-us"] }
-unicode-segmentation = "1.12"
 tracing = "0.1"
 lyrics_helper_core = "0.2"
 

@@ -42,10 +42,6 @@ pub struct TtmlGenerationOptions {
     pub use_apple_format_rules: bool,
     /// 是否输出格式化的 TTML 文件。
     pub format: bool,
-    /// 是否启用自动分词功能。
-    pub auto_word_splitting: bool,
-    /// 自动分词时，一个标点符号所占的权重（一个字符的权重为1.0）。
-    pub punctuation_weight: f64,
 }
 
 impl Default for TtmlGenerationOptions {
@@ -57,8 +53,6 @@ impl Default for TtmlGenerationOptions {
             romanization_language: None,
             use_apple_format_rules: false,
             format: false,
-            auto_word_splitting: false,
-            punctuation_weight: 0.3,
         }
     }
 }

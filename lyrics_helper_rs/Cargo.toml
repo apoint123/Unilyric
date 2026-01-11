@@ -61,7 +61,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 fst = "0.4"
 lyrics_helper_core = "0.2.0"
-ttml_processor = "0.1.0"
+ttml_processor = "0.2"
 getrandom = { version = "0.3", features = [] }
 serde_urlencoded = "0.7.1"
 cookie_store = { version = "0.22", features = ["preserve_order"] }
