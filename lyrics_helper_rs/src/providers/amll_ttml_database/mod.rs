@@ -1,6 +1,6 @@
 //! 此模块实现了与 AMLL TTML Database 进行交互的 `Provider`。
 
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -11,7 +11,7 @@ use crate::{
     error::{LyricsHelperError, Result},
     http::HttpClient,
     model::match_type::MatchScorable,
-    providers::Provider,
+    providers::{Provider, amll_ttml_database::types::DedupKey},
     search::matcher::compare_track,
 };
 
@@ -133,85 +133,33 @@ impl Provider for AmllTtmlDatabase {
         })
     }
 
-    /// 在索引中搜索歌曲。
     async fn search_songs(&self, track: &Track<'_>) -> Result<Vec<SearchResult>> {
-        let title_to_search = track.title.unwrap_or_default();
-        if title_to_search.trim().is_empty() {
+        let Some(title_to_search) = track.title else {
             return Ok(vec![]);
-        }
-        let lower_title_to_search = title_to_search.to_lowercase();
+        };
 
-        // 快速从索引中找出所有标题可能相关的条目
-        let candidates: Vec<IndexEntry> = self
-            .index
-            .iter()
-            .rev() // 越下面的越新
-            .filter(|entry| {
-                entry.get_meta_vec("musicName").is_some_and(|titles| {
-                    titles
-                        .iter()
-                        .any(|v| v.to_lowercase().contains(&lower_title_to_search))
-                })
-            })
-            .cloned()
-            .collect();
+        let candidates = find_candidates(&self.index, title_to_search);
 
         if candidates.is_empty() {
             return Ok(vec![]);
         }
 
-        let mut scored_results: Vec<(IndexEntry, MatchType)> = candidates
+        let scored_results: Vec<_> = candidates
             .into_iter()
             .map(|entry| {
-                // 临时转换为 SearchResult 以便评分
-                let temp_search_result = SearchResult {
-                    title: entry
-                        .get_meta_str("musicName")
-                        .unwrap_or_default()
-                        .to_string(),
-                    artists: entry
-                        .get_meta_vec("artists")
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|name| generic::Artist {
-                            id: String::new(),
-                            name,
-                        })
-                        .collect(),
-                    album: entry.get_meta_str("album").map(String::from),
-                    ..Default::default()
-                };
-                let match_type = compare_track(track, &temp_search_result);
-                (entry, match_type)
+                let (match_type, best_title, best_album) = calculate_best_match(&entry, track);
+                (entry, match_type, best_title, best_album)
             })
-            .filter(|(_, match_type)| *match_type >= MatchType::VeryLow)
+            .filter(|(_, match_type, _, _)| *match_type >= MatchType::VeryLow)
             .collect();
 
-        scored_results.sort_by(|a, b| b.1.get_score().cmp(&a.1.get_score()));
-
-        let final_results = scored_results
+        let unique_results = deduplicate_and_sort(scored_results);
+        let provider_name = self.name();
+        let final_results: Vec<SearchResult> = unique_results
             .into_iter()
             .take(20)
-            .map(|(entry, _)| SearchResult {
-                provider_id: entry.raw_lyric_file.clone(),
-                title: entry
-                    .get_meta_str("musicName")
-                    .unwrap_or_default()
-                    .to_string(),
-                artists: entry
-                    .get_meta_vec("artists")
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|name| generic::Artist {
-                        id: String::new(),
-                        name,
-                    })
-                    .collect(),
-                album: entry.get_meta_str("album").map(String::from),
-                provider_name: self.name().to_string(),
-                ..Default::default()
+            .map(|(entry, _, best_title, best_album)| {
+                into_search_result(&entry, best_title, best_album, provider_name)
             })
             .collect();
 
@@ -431,6 +379,131 @@ fn save_index_to_cache(content: &str, head_sha: &str) -> Result<()> {
     Ok(())
 }
 
+fn find_candidates(index: &[IndexEntry], keyword: &str) -> Vec<IndexEntry> {
+    let lower_keyword = keyword.to_lowercase();
+    index
+        .iter()
+        .rev()
+        .filter(|entry| {
+            entry
+                .metadata
+                .titles
+                .iter()
+                .any(|v| v.to_lowercase().contains(&lower_keyword))
+        })
+        .cloned()
+        .collect()
+}
+
+fn calculate_best_match(
+    entry: &IndexEntry,
+    track: &Track<'_>,
+) -> (MatchType, String, Option<String>) {
+    let default_title = entry.metadata.titles.first().cloned().unwrap_or_default();
+
+    if entry.metadata.titles.is_empty() {
+        return (MatchType::None, default_title, None);
+    }
+
+    let artists_for_scoring: Vec<generic::Artist> = entry
+        .metadata
+        .artists
+        .iter()
+        .map(|name| generic::Artist {
+            id: String::new(),
+            name: name.clone(),
+        })
+        .collect();
+
+    let mut album_candidates: Vec<Option<String>> = entry
+        .metadata
+        .albums
+        .iter()
+        .map(|s| Some(s.clone()))
+        .collect();
+
+    if album_candidates.is_empty() {
+        album_candidates.push(None);
+    }
+
+    let (best_match, best_title_ref, best_album_val) = entry
+        .metadata
+        .titles
+        .iter()
+        .flat_map(|title_candidate| {
+            let artists_ref = &artists_for_scoring;
+            album_candidates.iter().map(move |album_candidate| {
+                let temp_search_result = SearchResult {
+                    title: title_candidate.clone(),
+                    album: album_candidate.clone(),
+                    artists: artists_ref.clone(),
+                    ..Default::default()
+                };
+
+                let match_type = compare_track(track, &temp_search_result);
+                (match_type, title_candidate, album_candidate.clone())
+            })
+        })
+        .max_by_key(|(mt, _, _)| mt.get_score())
+        .unwrap_or((MatchType::None, &default_title, None));
+
+    (best_match, best_title_ref.clone(), best_album_val)
+}
+
+fn deduplicate_and_sort(
+    results: Vec<(IndexEntry, MatchType, String, Option<String>)>,
+) -> Vec<(IndexEntry, MatchType, String, Option<String>)> {
+    let mut best_results_map: HashMap<DedupKey, (IndexEntry, MatchType, String, Option<String>)> =
+        HashMap::new();
+
+    for item in results {
+        let (entry, match_type, _, _) = &item;
+        let dedup_key = entry.get_dedup_key();
+        let timestamp = entry.raw_lyric_file.timestamp;
+        let score = match_type.get_score();
+
+        best_results_map
+            .entry(dedup_key)
+            .and_modify(|existing| {
+                let (exist_entry, exist_match_type, _, _) = existing;
+                let exist_score = exist_match_type.get_score();
+                let exist_timestamp = exist_entry.raw_lyric_file.timestamp;
+                if score > exist_score || (score == exist_score && timestamp > exist_timestamp) {
+                    *existing = item.clone();
+                }
+            })
+            .or_insert(item);
+    }
+
+    let mut unique_results: Vec<_> = best_results_map.into_values().collect();
+    unique_results.sort_by(|a, b| b.1.get_score().cmp(&a.1.get_score()));
+    unique_results
+}
+
+fn into_search_result(
+    entry: &IndexEntry,
+    best_title: String,
+    best_album: Option<String>,
+    provider_name: &str,
+) -> SearchResult {
+    SearchResult {
+        provider_id: entry.raw_lyric_file.filename.clone(),
+        title: best_title,
+        artists: entry
+            .metadata
+            .artists
+            .iter()
+            .map(|name| generic::Artist {
+                id: String::new(),
+                name: name.clone(),
+            })
+            .collect(),
+        album: best_album,
+        provider_name: provider_name.to_string(),
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -464,7 +537,10 @@ mod tests {
         };
         let results1 = provider.search_songs(&search_query1).await.unwrap();
         assert_eq!(results1.len(), 1, "应该找到一个结果");
-        assert_eq!(results1[0].provider_id, expected_entry.raw_lyric_file);
+        assert_eq!(
+            results1[0].provider_id,
+            expected_entry.raw_lyric_file.filename
+        );
         assert_eq!(results1[0].title, "明明 (深爱着你) (Live)");
 
         // --- 案例 2: 标题和部分艺术家匹配 ---
@@ -523,7 +599,7 @@ mod tests {
     #[ignore]
     async fn test_amll_fetch_lyrics() {
         let (provider, entry) = create_test_provider();
-        let song_id = &entry.raw_lyric_file;
+        let song_id = &entry.raw_lyric_file.filename;
 
         println!("正在获取 id 为 {song_id} 的歌词");
 

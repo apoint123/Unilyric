@@ -1,53 +1,112 @@
-//! 此模块定义了与 AMLL TTML Database 提供商相关的所有数据结构和类型。
+use serde::{Deserialize, Deserializer};
 
-use serde::Deserialize;
-use std::collections::HashMap;
+#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+pub enum DedupKey {
+    Ncm(String),
+    Qq(String),
+    Apple(String),
+    Spotify(String),
+    RawFile(String),
+}
 
-/// 自定义反序列化模块，用于将 JSON 中的 `Vec<(String, Vec<String>)>` 高效地转换为 `HashMap`。
-mod de_vec_to_map {
-    use serde::{Deserializer, de};
-    use std::collections::HashMap;
+#[derive(Debug, Clone, Default)]
+pub struct Metadata {
+    pub titles: Vec<String>,
+    pub artists: Vec<String>,
+    pub albums: Vec<String>,
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<HashMap<String, Vec<String>>, D::Error>
+    pub ncm_music_ids: Vec<String>,
+    pub qq_music_ids: Vec<String>,
+    pub apple_music_ids: Vec<String>,
+    pub spotify_music_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RawLyricFileInfo {
+    pub filename: String,
+    pub timestamp: u64,
+}
+
+impl<'de> Deserialize<'de> for RawLyricFileInfo {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
-        let vec_of_tuples: Vec<(String, Vec<String>)> = de::Deserialize::deserialize(deserializer)?;
-        Ok(vec_of_tuples.into_iter().collect())
+        let filename = String::deserialize(deserializer)?;
+        let timestamp = filename
+            .split('-')
+            .next()
+            .unwrap_or("0")
+            .parse::<u64>()
+            .unwrap_or(0);
+
+        Ok(Self {
+            filename,
+            timestamp,
+        })
     }
 }
 
-/// 代表从 `index.jsonl` 文件中解析出的单个索引条目。
+fn deserialize_metadata<'de, D>(deserializer: D) -> Result<Metadata, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw: Vec<(String, Vec<String>)> = Deserialize::deserialize(deserializer)?;
+    let mut meta = Metadata::default();
+
+    for (key, mut val) in raw {
+        match key.as_str() {
+            "musicName" => meta.titles = val,
+            "artists" => meta.artists = val,
+            "album" => meta.albums = val,
+            "ncmMusicId" => {
+                val.sort();
+                meta.ncm_music_ids = val;
+            }
+            "qqMusicId" => {
+                val.sort();
+                meta.qq_music_ids = val;
+            }
+            "appleMusicId" => {
+                val.sort();
+                meta.apple_music_ids = val;
+            }
+            "spotifyId" => {
+                val.sort();
+                meta.spotify_music_ids = val;
+            }
+            _ => {}
+        }
+    }
+    Ok(meta)
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IndexEntry {
-    /// 歌词元数据，如歌曲名、艺术家、各种平台 ID 等。
-    #[serde(with = "de_vec_to_map")]
-    pub metadata: HashMap<String, Vec<String>>,
-    /// 歌词文件在仓库中的文件名（例如 "12345.ttml"）。
-    /// 这将作为此 provider 的唯一 `song_id`。
-    pub raw_lyric_file: String,
+    #[serde(deserialize_with = "deserialize_metadata")]
+    pub metadata: Metadata,
+    pub raw_lyric_file: RawLyricFileInfo,
 }
 
 impl IndexEntry {
-    /// 辅助函数，方便地获取单个字符串类型的元数据值（如歌曲名）。
-    /// 因为元数据的值部分总是一个 `Vec<String>`，此函数简化了取第一个元素的操作。
-    pub fn get_meta_str(&self, key: &str) -> Option<&str> {
-        self.metadata
-            .get(key)
-            .and_then(|v| v.first())
-            .map(String::as_str)
-    }
-
-    /// 辅助函数，方便地获取字符串向量类型的元数据值（如艺术家列表）。
-    pub fn get_meta_vec(&self, key: &str) -> Option<&Vec<String>> {
-        self.metadata.get(key)
+    pub fn get_dedup_key(&self) -> DedupKey {
+        if let Some(id) = self.metadata.ncm_music_ids.first() {
+            return DedupKey::Ncm(id.clone());
+        }
+        if let Some(id) = self.metadata.qq_music_ids.first() {
+            return DedupKey::Qq(id.clone());
+        }
+        if let Some(id) = self.metadata.apple_music_ids.first() {
+            return DedupKey::Apple(id.clone());
+        }
+        if let Some(id) = self.metadata.spotify_music_ids.first() {
+            return DedupKey::Spotify(id.clone());
+        }
+        DedupKey::RawFile(self.raw_lyric_file.filename.clone())
     }
 }
 
-/// 用于解析来自 GitHub API 的错误响应。
-///
-/// 主要用于识别和处理 API 速率限制的错误信息。
 #[derive(Debug, Deserialize)]
 pub struct GitHubErrorResponse {
     pub message: String,
