@@ -26,7 +26,7 @@ use types::IndexEntry;
 const GITHUB_API_BASE_URL: &str = "https://api.github.com";
 const RAW_CONTENT_BASE_URL: &str = "https://raw.githubusercontent.com";
 const INDEX_FILE_PATH_IN_REPO: &str = "metadata/raw-lyrics-index.jsonl";
-const REPO_OWNER: &str = "Steve-xmh";
+const REPO_OWNER: &str = "amll-dev";
 const REPO_NAME: &str = "amll-ttml-db";
 const REPO_BRANCH: &str = "main";
 const USER_AGENT: &str = "lyrics-helper-rs/0.1.0";
