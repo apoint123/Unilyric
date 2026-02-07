@@ -1,6 +1,6 @@
 # TTML Processor
 
-A high-performance Rust library for parsing and generating TTML files, specifically tailored for the Apple Music and [AMLL](<https://github.com/Steve-xmh/applemusic-like-lyrics>) formats.
+A high-performance Rust library for parsing and generating TTML files, specifically tailored for the Apple Music and [AMLL](<https://github.com/amll-dev/applemusic-like-lyrics>) formats.
 
 > [CAUTION]
 > This project is under heavy development and is not yet stable. Expect breaking changes. **Not ready for production use.**
