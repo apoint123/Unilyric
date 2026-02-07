@@ -214,7 +214,7 @@ pub fn draw_downloader_view(app: &mut UniLyricApp, ctx: &egui::Context) {
                                         }
                                         Some(url)
                                     },
-                                    "amll-ttml-database" => Some(format!("https://github.com/Steve-xmh/amll-ttml-db/blob/main/raw-lyrics/{}", result.provider_id)),
+                                    "amll-ttml-database" => Some(format!("https://github.com/amll-dev/amll-ttml-db/blob/main/raw-lyrics/{}", result.provider_id)),
                                     _ => None,
                                 };
 
