@@ -21,9 +21,9 @@
     * [QQ 音乐](https://y.qq.com/)
     * [酷狗音乐](https://www.kugou.com/)
     * [网易云音乐](https://music.163.com/)
-    * [AMLL-TTML-DB](https://github.com/Steve-xmh/amll-ttml-db)
+    * [AMLL-TTML-DB](https://github.com/amll-dev/amll-ttml-db)
 
-* 支持与 [AMLL Player](https://github.com/Steve-xmh/applemusic-like-lyrics/blob/full-refractor/packages/player/README.md) 的 WS 功能联动
+* 支持与 [AMLL Player](https://github.com/amll-dev/applemusic-like-lyrics/blob/full-refractor/packages/player/README.md) 的 WS 功能联动
 
 ## 许可
 
