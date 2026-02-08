@@ -106,7 +106,7 @@ impl Default for AppSettings {
 impl AppSettings {
     pub fn config_dir() -> Option<PathBuf> {
         if let Some(proj_dirs) = ProjectDirs::from("com", "Unilyric", "Unilyric") {
-            let config_dir = proj_dirs.data_dir();
+            let config_dir = proj_dirs.config_dir();
             if !config_dir.exists()
                 && let Err(e) = fs::create_dir_all(config_dir)
             {
