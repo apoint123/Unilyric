@@ -1022,29 +1022,27 @@ impl UniLyricApp {
                     {
                         let old_settings = self.app_settings.lock().unwrap();
                         let new_mirror = &settings.amll_mirror;
-                        if &old_settings.amll_mirror != new_mirror {
-                            let core_config = CoreAmllConfig {
-                                mirror: new_mirror.clone().into(),
-                            };
-                            match serde_json::to_string_pretty(&core_config) {
-                                Ok(json_string) => {
-                                    if let Ok(config_path) =
-                                        lyrics_helper_rs::config::get_config_file_path(
-                                            "amll_config.json",
-                                        )
-                                    {
-                                        if let Err(e) = std::fs::write(&config_path, json_string) {
-                                            error!("[Settings] 写入 amll_config.json 失败: {}", e);
-                                        } else {
-                                            mirror_changed = true;
-                                        }
-                                    } else {
-                                        error!("[Settings] 无法获取 amll_config.json 的路径");
+                        mirror_changed = &old_settings.amll_mirror != new_mirror;
+
+                        let core_config = CoreAmllConfig {
+                            mirror: new_mirror.clone().into(),
+                        };
+                        match serde_json::to_string_pretty(&core_config) {
+                            Ok(json_string) => {
+                                if let Ok(config_path) =
+                                    lyrics_helper_rs::config::get_config_file_path(
+                                        "amll_config.json",
+                                    )
+                                {
+                                    if let Err(e) = std::fs::write(&config_path, json_string) {
+                                        error!("[Settings] 写入 amll_config.json 失败: {}", e);
                                     }
+                                } else {
+                                    error!("[Settings] 无法获取 amll_config.json 的路径");
                                 }
-                                Err(e) => {
-                                    error!("[Settings] 序列化核心库 AMLL 配置失败: {}", e);
-                                }
+                            }
+                            Err(e) => {
+                                error!("[Settings] 序列化核心库 AMLL 配置失败: {}", e);
                             }
                         }
                     }
