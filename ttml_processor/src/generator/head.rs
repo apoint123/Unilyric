@@ -131,6 +131,10 @@ fn write_itunes_metadata<W: std::io::Write>(
         .map(|vec| vec.iter().filter(|s| !s.trim().is_empty()).collect())
         .unwrap_or_default();
 
+    let lyric_offset = metadata_store
+        .get_multiple_values_by_key("lyricOffset")
+        .and_then(|values| values.first());
+
     let has_any_translations = lines
         .iter()
         .any(|l| l.tracks.iter().any(|at| !at.translations.is_empty()));
@@ -140,6 +144,7 @@ fn write_itunes_metadata<W: std::io::Write>(
     let has_any_aux_tracks = has_any_translations || has_any_romanizations;
 
     let should_write_metadata = !valid_songwriters.is_empty()
+        || lyric_offset.is_some()
         || (has_any_aux_tracks
             && (options.use_apple_format_rules || {
                 lines.iter().any(|l| {
@@ -156,6 +161,14 @@ fn write_itunes_metadata<W: std::io::Write>(
             .with_attribute(("xmlns", "http://music.apple.com/lyric-ttml-internal"))
             .write_inner_content(|writer| {
                 write_songwriters(writer, &valid_songwriters)?;
+
+                if let Some(offset) = lyric_offset {
+                    writer
+                        .create_element("audio")
+                        .with_attribute(("lyricOffset", offset.as_str()))
+                        .with_attribute(("role", "spatial"))
+                        .write_empty()?;
+                }
 
                 if options.use_apple_format_rules {
                     if has_any_translations {

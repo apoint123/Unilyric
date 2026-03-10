@@ -23,6 +23,7 @@ pub(super) const TAG_TRANSLITERATIONS: &[u8] = b"transliterations";
 pub(super) const TAG_TRANSLATION: &[u8] = b"translation";
 pub(super) const TAG_TRANSLITERATION: &[u8] = b"transliteration";
 pub(super) const TAG_TEXT: &[u8] = b"text";
+pub const TAG_AUDIO: &[u8] = b"audio";
 
 pub(super) const ATTR_ITUNES_TIMING: &[u8] = b"itunes:timing";
 pub(super) const ATTR_XML_LANG: &[u8] = b"xml:lang";
@@ -40,6 +41,7 @@ pub(super) const ATTR_XML_ID: &[u8] = b"xml:id";
 pub(super) const ATTR_KEY: &[u8] = b"key";
 pub(super) const ATTR_VALUE: &[u8] = b"value";
 pub(super) const ATTR_FOR: &[u8] = b"for";
+pub const ATTR_LYRIC_OFFSET: &[u8] = b"lyricOffset";
 
 pub(super) const ROLE_TRANSLATION: &[u8] = b"x-translation";
 pub(super) const ROLE_ROMANIZATION: &[u8] = b"x-roman";

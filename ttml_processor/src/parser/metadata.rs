@@ -20,10 +20,11 @@ use quick_xml::{
 };
 
 use super::constants::{
-    ATTR_BEGIN, ATTR_END, ATTR_FOR, ATTR_KEY, ATTR_ROLE, ATTR_ROLE_ALIAS, ATTR_VALUE, ATTR_XML_ID,
-    ATTR_XML_LANG, ROLE_BACKGROUND, TAG_AGENT, TAG_AGENT_TTM, TAG_ITUNES_METADATA, TAG_META,
-    TAG_META_AMLL, TAG_METADATA, TAG_NAME, TAG_NAME_TTM, TAG_SONGWRITER, TAG_SPAN, TAG_TEXT,
-    TAG_TRANSLATION, TAG_TRANSLATIONS, TAG_TRANSLITERATION, TAG_TRANSLITERATIONS,
+    ATTR_BEGIN, ATTR_END, ATTR_FOR, ATTR_KEY, ATTR_LYRIC_OFFSET, ATTR_ROLE, ATTR_ROLE_ALIAS,
+    ATTR_VALUE, ATTR_XML_ID, ATTR_XML_LANG, ROLE_BACKGROUND, TAG_AGENT, TAG_AGENT_TTM, TAG_AUDIO,
+    TAG_ITUNES_METADATA, TAG_META, TAG_META_AMLL, TAG_METADATA, TAG_NAME, TAG_NAME_TTM,
+    TAG_SONGWRITER, TAG_SPAN, TAG_TEXT, TAG_TRANSLATION, TAG_TRANSLATIONS, TAG_TRANSLITERATION,
+    TAG_TRANSLITERATIONS,
 };
 
 /// 处理 `<metadata>` 块内部的事件。
@@ -117,6 +118,16 @@ fn handle_metadata_start_tag(
         TAG_SONGWRITER => {
             if matches!(meta_state.context, MetadataContext::InITunesMetadata) {
                 meta_state.context = MetadataContext::InSongwriter;
+            }
+        }
+        TAG_AUDIO => {
+            if matches!(meta_state.context, MetadataContext::InITunesMetadata)
+                && let Some(offset_str) = get_string_attribute(e, reader, &[ATTR_LYRIC_OFFSET])?
+            {
+                raw_metadata
+                    .entry("lyricOffset".to_string())
+                    .or_default()
+                    .push(offset_str);
             }
         }
         TAG_TRANSLATIONS => {
