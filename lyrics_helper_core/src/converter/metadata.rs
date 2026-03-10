@@ -138,7 +138,7 @@ impl MetadataStore {
     /// 包括：
     /// 1. 移除每个值首尾的空白字符。
     /// 2. 移除完全为空的元数据条目。
-    /// 3. 对每个键的值列表进行排序和去重。
+    /// 3. 对每个键的值列表进行去重。
     pub fn deduplicate_values(&mut self) {
         let mut keys_to_remove: Vec<CanonicalMetadataKey> = Vec::new();
         for (key, values) in &mut self.data {
@@ -152,8 +152,8 @@ impl MetadataStore {
                 continue;
             }
 
-            values.sort_unstable();
-            values.dedup();
+            let mut seen = std::collections::HashSet::new();
+            values.retain(|v| seen.insert(v.clone()));
         }
 
         // 移除所有值都为空的键
