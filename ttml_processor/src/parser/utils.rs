@@ -7,7 +7,7 @@ use lyrics_helper_core::ConvertError;
 use quick_xml::{Reader, events::BytesStart};
 
 /// 解析 TTML 时间字符串到毫秒。
-pub(super) fn parse_ttml_time_to_ms(time_str: &str) -> Result<u64, ConvertError> {
+pub fn parse_ttml_time_to_ms(time_str: &str) -> Result<u64, ConvertError> {
     // 解析毫秒部分（.1, .12, .123）
     fn parse_decimal_ms_part(ms_str: &str, original_time_str: &str) -> Result<u64, ConvertError> {
         if ms_str.is_empty() || ms_str.len() > 3 || ms_str.chars().any(|c| !c.is_ascii_digit()) {
@@ -137,7 +137,7 @@ pub(super) fn parse_ttml_time_to_ms(time_str: &str) -> Result<u64, ConvertError>
 }
 
 /// 清理文本两端的括号（单个或成对）
-pub(super) fn clean_parentheses_from_bg_text_into(text: &str, output: &mut String) {
+pub fn clean_parentheses_from_bg_text_into(text: &str, output: &mut String) {
     output.clear();
     let trimmed = text
         .trim()
@@ -148,7 +148,7 @@ pub(super) fn clean_parentheses_from_bg_text_into(text: &str, output: &mut Strin
 }
 
 /// 规范化文本中的空白字符
-pub(super) fn normalize_text_whitespace_into(input: &str, output: &mut String) {
+pub fn normalize_text_whitespace_into(input: &str, output: &mut String) {
     output.clear();
     let mut first = true;
     for word in input.split_whitespace() {
@@ -170,7 +170,7 @@ pub(super) fn normalize_text_whitespace_into(input: &str, output: &mut String) {
 ///
 /// # 返回
 /// * `Result<Option<T>, ConvertError>` - 成功时返回一个包含转换后值的 Option，如果找不到任何属性则返回 `None`。
-pub(super) fn get_attribute_with_aliases<T, F>(
+pub fn get_attribute_with_aliases<T, F>(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
     attr_names: &[&[u8]],
@@ -198,7 +198,7 @@ where
 }
 
 /// 获取字符串类型的属性值。
-pub(super) fn get_string_attribute(
+pub fn get_string_attribute(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
     attr_names: &[&[u8]],
@@ -207,7 +207,7 @@ pub(super) fn get_string_attribute(
 }
 
 /// 获取并解析为毫秒的时间戳属性值。
-pub(super) fn get_time_attribute(
+pub fn get_time_attribute(
     e: &BytesStart,
     reader: &Reader<&[u8]>,
     attr_names: &[&[u8]],

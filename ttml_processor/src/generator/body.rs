@@ -16,7 +16,7 @@ use super::{
 };
 
 /// 写入 TTML 的 <body> 部分，包含所有歌词行。
-pub(super) fn write_ttml_body<W: std::io::Write>(
+pub fn write_ttml_body<W: std::io::Write>(
     writer: &mut Writer<W>,
     lines: &[LyricLine],
     options: &TtmlGenerationOptions,

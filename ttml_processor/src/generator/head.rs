@@ -47,7 +47,7 @@ impl TimedTrackKind {
     }
 }
 
-pub(super) fn write_ttml_head<W: std::io::Write>(
+pub fn write_ttml_head<W: std::io::Write>(
     writer: &mut Writer<W>,
     metadata_store: &MetadataStore,
     lines: &[LyricLine],

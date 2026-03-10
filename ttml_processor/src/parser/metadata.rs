@@ -28,7 +28,7 @@ use super::constants::{
 };
 
 /// 处理 `<metadata>` 块内部的事件。
-pub(super) fn handle_metadata_event(
+pub fn handle_metadata_event(
     event: &Event,
     reader: &mut Reader<&[u8]>,
     state: &mut TtmlParserState,

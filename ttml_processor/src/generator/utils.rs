@@ -4,7 +4,7 @@
 
 /// 将毫秒时间戳格式化为 TTML 标准的时间字符串。
 /// 例如：123456ms -> "2:03.456"
-pub(super) fn format_ttml_time(ms: u64) -> String {
+pub fn format_ttml_time(ms: u64) -> String {
     let hours = ms / 3_600_000;
     let minutes = (ms % 3_600_000) / 60_000;
     let seconds = (ms % 60_000) / 1000;
@@ -19,7 +19,7 @@ pub(super) fn format_ttml_time(ms: u64) -> String {
     }
 }
 
-pub(super) fn apply_parentheses_to_bg_text(text: &str, is_first: bool, is_last: bool) -> String {
+pub fn apply_parentheses_to_bg_text(text: &str, is_first: bool, is_last: bool) -> String {
     if text.trim().is_empty() {
         return text.to_string();
     }

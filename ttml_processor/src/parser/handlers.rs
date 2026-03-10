@@ -22,7 +22,7 @@ use quick_xml::{
 
 /// 处理全局事件（在 `<p>` 或 `<metadata>` 之外的事件）。
 /// 主要负责识别文档的根元素、body、div 和 p 的开始，并相应地更新状态。
-pub(super) fn handle_global_event(
+pub fn handle_global_event(
     event: &Event<'_>,
     state: &mut TtmlParserState,
     reader: &Reader<&[u8]>,
@@ -152,7 +152,7 @@ fn process_tt_start(
 }
 
 /// 尝试从一个XML格式错误中恢复。
-pub(super) fn attempt_recovery_from_error(
+pub fn attempt_recovery_from_error(
     state: &mut TtmlParserState,
     reader: &Reader<&[u8]>,
     lines: &mut Vec<LyricLine>,

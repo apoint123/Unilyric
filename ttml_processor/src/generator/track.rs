@@ -10,7 +10,7 @@ use quick_xml::{
 
 use super::utils::format_ttml_time;
 
-pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
+pub fn write_auxiliary_tracks<W: std::io::Write>(
     writer: &mut Writer<W>,
     annotated_tracks: &[&AnnotatedTrack],
     options: &TtmlGenerationOptions,
@@ -33,7 +33,7 @@ pub(super) fn write_auxiliary_tracks<W: std::io::Write>(
     Ok(())
 }
 
-pub(super) fn write_single_syllable_span<W: std::io::Write>(
+pub fn write_single_syllable_span<W: std::io::Write>(
     writer: &mut Writer<W>,
     syl: &LyricSyllable,
     options: &TtmlGenerationOptions,
@@ -55,7 +55,7 @@ pub(super) fn write_single_syllable_span<W: std::io::Write>(
     Ok(())
 }
 
-pub(super) fn write_track_as_spans<W: std::io::Write>(
+pub fn write_track_as_spans<W: std::io::Write>(
     writer: &mut Writer<W>,
     track: &LyricTrack,
     options: &TtmlGenerationOptions,
@@ -72,7 +72,7 @@ pub(super) fn write_track_as_spans<W: std::io::Write>(
     Ok(())
 }
 
-pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
+fn write_inline_auxiliary_track<W: std::io::Write>(
     writer: &mut Writer<W>,
     track: &LyricTrack,
     role: &str,
@@ -118,7 +118,7 @@ pub(super) fn write_inline_auxiliary_track<W: std::io::Write>(
     Ok(())
 }
 
-pub(super) fn write_background_tracks<W: std::io::Write>(
+pub fn write_background_tracks<W: std::io::Write>(
     writer: &mut Writer<W>,
     bg_annotated_tracks: &[&AnnotatedTrack],
     options: &TtmlGenerationOptions,

@@ -30,7 +30,7 @@ use super::constants::{
 };
 
 /// 处理在 `<p>` 标签内部的事件。
-pub(super) fn handle_p_event(
+pub fn handle_p_event(
     event: &Event<'_>,
     state: &mut TtmlParserState,
     reader: &Reader<&[u8]>,
@@ -110,7 +110,7 @@ pub(super) fn handle_p_event(
 
 /// 处理 `</p>` 结束事件。
 /// 在此事件中，会回填来自 <iTunesMetadata> 的逐行翻译
-pub(super) fn handle_p_end(state: &mut TtmlParserState, lines: &mut Vec<LyricLine>) {
+pub fn handle_p_end(state: &mut TtmlParserState, lines: &mut Vec<LyricLine>) {
     if let Some(p_data) = state.body_state.current_p_element_data.take() {
         let start_ms = p_data.start_ms;
         let end_ms = p_data.end_ms;
@@ -362,7 +362,7 @@ fn handle_generic_span_end(
     Ok(())
 }
 
-pub(super) fn process_syllable(
+pub fn process_syllable(
     start_ms: u64,
     end_ms: u64,
     raw_text: &str,
@@ -663,7 +663,7 @@ fn recalculate_line_end_ms(line: &LyricLine) -> u64 {
         .unwrap_or(0)
 }
 
-pub(super) fn get_or_create_track_in_vec(
+fn get_or_create_track_in_vec(
     tracks: &mut Vec<AnnotatedTrack>,
     content_type: ContentType,
 ) -> &mut AnnotatedTrack {
@@ -678,7 +678,7 @@ pub(super) fn get_or_create_track_in_vec(
     }
 }
 
-pub(super) fn create_simple_translation_track(text: &str, lang: Option<&String>) -> LyricTrack {
+fn create_simple_translation_track(text: &str, lang: Option<&String>) -> LyricTrack {
     let syllable = LyricSyllable {
         text: text.to_string(),
         ..Default::default()
