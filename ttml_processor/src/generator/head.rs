@@ -471,6 +471,7 @@ fn write_amll_metadata<W: std::io::Write>(
     for (key, values) in metadata_store.get_all_data() {
         if !written_keys.contains(key)
             && let CanonicalMetadataKey::Custom(s) = key
+            && s != "lyricOffset"
         {
             custom_metadata.push((s.as_str(), values));
         }
