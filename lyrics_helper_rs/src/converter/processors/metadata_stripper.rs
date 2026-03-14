@@ -135,6 +135,29 @@ fn clean_text_for_check(line_to_check: &str) -> &str {
     text
 }
 
+fn line_contains_copyright_terms(line: &str) -> bool {
+    // Some lyrics sources include legal disclaimers in parentheses, e.g.:
+    // “（版权所有。未经著作人许可，不得使用。）”
+    // Treat such lines as metadata.
+    let lower = line.to_lowercase();
+    let keywords = ["版权所有", "许可", "权利", "必究"];
+
+    let brackets = [('(', ')'), ('（', '）'), ('【', '】')];
+
+    for (open, close) in brackets {
+        if let Some(start) = lower.find(open) {
+            if let Some(end) = lower[start + open.len_utf8()..].find(close) {
+                let inner = &lower[start + open.len_utf8()..start + open.len_utf8() + end];
+                if keywords.iter().any(|kw| inner.contains(kw)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
     if !rules.prepared_keywords.is_empty() {
         let text_cleaned = clean_text_for_check(line_to_check);
@@ -148,6 +171,10 @@ fn line_matches_rules(line_to_check: &str, rules: &StrippingRules) -> bool {
                 }
             }
         }
+    }
+
+    if line_contains_copyright_terms(line_to_check) {
+        return true;
     }
 
     if !rules.compiled_regexes.is_empty()
@@ -479,6 +506,24 @@ mod tests {
 
         assert_eq!(lines_to_texts(&lines), vec!["123", "Artist: B"]);
     }
+
+    #[test]
+    fn test_strip_parenthesized_legal_notice() {
+        let texts = vec![
+            "（版权所有。未经著作人许可，不得制作。）",
+            "真正的歌词行",
+        ];
+        let mut lines = create_test_lines(&texts);
+
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["真正的歌词行"]);
+    }
+
     #[test]
     fn test_default_config_parsing() {
         let keywords = default_rules::keywords();
