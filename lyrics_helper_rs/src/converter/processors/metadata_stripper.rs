@@ -137,12 +137,12 @@ fn clean_text_for_check(line_to_check: &str) -> &str {
 
 fn line_contains_copyright_terms(line: &str) -> bool {
     // Some lyrics sources include legal disclaimers in parentheses, e.g.:
-    // “（版权所有。未经著作人许可，不得使用。）”
+    // “（未经著作权方同意不得以任何方式使用）”
     // Treat such lines as metadata.
     let lower = line.to_lowercase();
-    let keywords = ["版权所有", "许可", "权利", "必究"];
+    let keywords = ["版权所有", "许可", "权利", "必究", "使用", "未经", "同意", "禁止", "复制", "传播"];
 
-    let brackets = [('(', ')'), ('（', '）'), ('【', '】')];
+    let brackets = [('(', ')'), ('（', '）'), ('【', '】'), ('「', '」')];
 
     for (open, close) in brackets {
         if let Some(start) = lower.find(open) {
@@ -153,6 +153,12 @@ fn line_contains_copyright_terms(line: &str) -> bool {
                 }
             }
         }
+    }
+
+    // If there are at least 3 of the keywords present even without parentheses,
+    // treat the line as a metadata/legal notice.
+    if keywords.iter().filter(|kw| lower.contains(kw)).count() >= 3 {
+        return true;
     }
 
     false
@@ -511,6 +517,23 @@ mod tests {
     fn test_strip_parenthesized_legal_notice() {
         let texts = vec![
             "（版权所有。未经著作人许可，不得制作。）",
+            "真正的歌词行",
+        ];
+        let mut lines = create_test_lines(&texts);
+
+        let options = MetadataStripperOptions {
+            flags: MetadataStripperFlags::ENABLED,
+            ..Default::default()
+        };
+
+        strip_descriptive_metadata_lines(&mut lines, &options);
+        assert_eq!(lines_to_texts(&lines), vec!["真正的歌词行"]);
+    }
+
+    #[test]
+    fn test_strip_plain_text_legal_notice() {
+        let texts = vec![
+            "版权所有 未经许可 权利必究",
             "真正的歌词行",
         ];
         let mut lines = create_test_lines(&texts);
