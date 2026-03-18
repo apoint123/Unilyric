@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use super::{
     state::{AuxTrackType, MetadataContext, PendingItem, SpanContext, SpanRole, TtmlParserState},
     utils::{
-        clean_parentheses_from_bg_text_into, get_attribute_with_aliases, get_string_attribute,
-        get_time_attribute,
+        get_attribute_with_aliases, get_string_attribute, get_time_attribute,
+        normalize_text_whitespace_into,
     },
 };
 use lyrics_helper_core::{
@@ -240,10 +240,34 @@ fn process_span_start_in_metadata(
     let meta_state = &mut state.metadata_state;
     if matches!(meta_state.context, MetadataContext::InAuxiliaryText { .. }) {
         if !meta_state.span_stack.is_empty() && !meta_state.text_buffer.is_empty() {
-            let existing_text = std::mem::take(&mut meta_state.text_buffer);
-            meta_state
-                .pending_items
-                .push(PendingItem::FreeText(existing_text));
+            let text = std::mem::take(&mut meta_state.text_buffer);
+
+            if let Some(parent_span) = meta_state.span_stack.last() {
+                let trimmed = text.trim();
+                if !trimmed.is_empty()
+                    && let (Some(start_ms), Some(end_ms)) =
+                        (parent_span.start_ms, parent_span.end_ms)
+                {
+                    let is_bg = meta_state
+                        .span_stack
+                        .iter()
+                        .any(|s| s.role == SpanRole::Background);
+                    meta_state.pending_items.push(PendingItem::Syllable {
+                        text,
+                        start_ms,
+                        end_ms: end_ms.max(start_ms),
+                        content_type: if is_bg {
+                            ContentType::Background
+                        } else {
+                            ContentType::Main
+                        },
+                    });
+                } else {
+                    meta_state.pending_items.push(PendingItem::FreeText(text));
+                }
+            } else {
+                meta_state.pending_items.push(PendingItem::FreeText(text));
+            }
         }
         meta_state.text_buffer.clear();
 
@@ -396,24 +420,40 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
             .any(|item| matches!(item, PendingItem::Syllable { .. }));
 
         if !has_syllables && has_plain_text && matches!(aux_type, AuxTrackType::Translation) {
-            let line_translation = super::state::LineTranslation {
-                main: if main_plain_text.is_empty() {
+            let main_translation = if main_plain_text.is_empty() {
+                None
+            } else {
+                let mut normalized = String::with_capacity(main_plain_text.len());
+                normalize_text_whitespace_into(main_plain_text, &mut normalized);
+                if normalized.is_empty() {
                     None
                 } else {
-                    Some(main_plain_text.to_string())
-                },
-                background: if bg_plain_text.is_empty() {
-                    None
-                } else {
-                    let mut cleaned_bg = String::with_capacity(bg_plain_text.len());
-                    clean_parentheses_from_bg_text_into(bg_plain_text, &mut cleaned_bg);
+                    Some(normalized)
+                }
+            };
 
-                    if cleaned_bg.is_empty() {
-                        None
-                    } else {
-                        Some(cleaned_bg)
-                    }
-                },
+            let bg_translation = if bg_plain_text.is_empty() {
+                None
+            } else {
+                let stripped_bg = bg_plain_text
+                    .trim()
+                    .trim_start_matches(['(', '（'])
+                    .trim_end_matches([')', '）'])
+                    .trim();
+
+                let mut normalized = String::with_capacity(stripped_bg.len());
+                normalize_text_whitespace_into(stripped_bg, &mut normalized);
+
+                if normalized.is_empty() {
+                    None
+                } else {
+                    Some(normalized)
+                }
+            };
+
+            let line_translation = super::state::LineTranslation {
+                main: main_translation,
+                background: bg_translation,
             };
 
             meta_state
@@ -459,7 +499,6 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                         *start_ms,
                         *end_ms,
                         text,
-                        *content_type == ContentType::Background,
                         &mut state.text_processing_buffer,
                         target_syllables,
                     );
@@ -494,6 +533,22 @@ fn process_text_end_in_metadata(state: &mut TtmlParserState) {
                 }
             }
             if !bg_syllables.is_empty() {
+                if let Some(first_syl) = bg_syllables.first_mut() {
+                    first_syl.text = first_syl
+                        .text
+                        .trim_start_matches(['(', '（'])
+                        .trim_start()
+                        .to_string();
+                }
+
+                if let Some(last_syl) = bg_syllables.last_mut() {
+                    last_syl.text = last_syl
+                        .text
+                        .trim_end_matches([')', '）'])
+                        .trim_end()
+                        .to_string();
+                }
+
                 let track = LyricTrack {
                     words: vec![Word {
                         syllables: bg_syllables,

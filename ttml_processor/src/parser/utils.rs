@@ -136,18 +136,6 @@ pub fn parse_ttml_time_to_ms(time_str: &str) -> Result<u64, ConvertError> {
     }
 }
 
-/// 清理文本两端的括号（单个或成对）
-pub fn clean_parentheses_from_bg_text_into(text: &str, output: &mut String) {
-    output.clear();
-    let trimmed = text
-        .trim()
-        .trim_start_matches(['(', '（'])
-        .trim_end_matches([')', '）'])
-        .trim();
-    output.push_str(trimmed);
-}
-
-/// 规范化文本中的空白字符
 pub fn normalize_text_whitespace_into(input: &str, output: &mut String) {
     output.clear();
     let mut first = true;
@@ -328,39 +316,5 @@ mod tests {
 
         normalize_text_whitespace_into("", &mut buffer);
         assert_eq!(buffer, "");
-    }
-
-    #[test]
-    fn test_clean_parentheses_from_bg_text() {
-        fn clean_parentheses_from_bg_text_into_owned(text: &str) -> String {
-            let mut buf = String::new();
-            clean_parentheses_from_bg_text_into(text, &mut buf);
-            buf
-        }
-
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned("(hello)"),
-            "hello"
-        );
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned("（hello）"),
-            "hello"
-        );
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned(" ( hello world ) "),
-            "hello world"
-        );
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned("(unmatched"),
-            "unmatched"
-        );
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned("unmatched)"),
-            "unmatched"
-        );
-        assert_eq!(
-            clean_parentheses_from_bg_text_into_owned("no parentheses"),
-            "no parentheses"
-        );
     }
 }

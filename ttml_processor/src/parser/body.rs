@@ -11,8 +11,8 @@ use super::{
         TtmlParserState,
     },
     utils::{
-        clean_parentheses_from_bg_text_into, get_attribute_with_aliases, get_string_attribute,
-        get_time_attribute, normalize_text_whitespace_into,
+        get_attribute_with_aliases, get_string_attribute, get_time_attribute,
+        normalize_text_whitespace_into,
     },
 };
 use lyrics_helper_core::{
@@ -178,7 +178,16 @@ pub fn handle_p_end(state: &mut TtmlParserState, lines: &mut Vec<LyricLine>) {
             itunes_key,
         };
 
-        let max_track_end_ms = recalculate_line_end_ms(&new_line);
+        let (min_track_start_ms, max_track_end_ms) = recalculate_line_time_bounds(&new_line);
+
+        if let Some(min_start) = min_track_start_ms {
+            if new_line.start_ms == 0 {
+                new_line.start_ms = min_start;
+            } else {
+                new_line.start_ms = new_line.start_ms.min(min_start);
+            }
+        }
+
         new_line.end_ms = new_line.end_ms.max(max_track_end_ms);
 
         let is_empty = new_line.tracks.iter().all(|at| {
@@ -205,7 +214,35 @@ fn process_span_start(
     if !state.body_state.span_stack.is_empty() && !state.text_buffer.is_empty() {
         let text = std::mem::take(&mut state.text_buffer);
         if let Some(p_data) = state.body_state.current_p_element_data.as_mut() {
-            p_data.pending_items.push(PendingItem::FreeText(text));
+            if let Some(parent_span) = state.body_state.span_stack.last() {
+                let trimmed = text.trim();
+
+                if !trimmed.is_empty()
+                    && let (Some(start_ms), Some(end_ms)) =
+                        (parent_span.start_ms, parent_span.end_ms)
+                {
+                    let is_bg = state
+                        .body_state
+                        .span_stack
+                        .iter()
+                        .any(|s| s.role == SpanRole::Background);
+
+                    p_data.pending_items.push(PendingItem::Syllable {
+                        text,
+                        start_ms,
+                        end_ms: end_ms.max(start_ms),
+                        content_type: if is_bg {
+                            ContentType::Background
+                        } else {
+                            ContentType::Main
+                        },
+                    });
+                } else {
+                    p_data.pending_items.push(PendingItem::FreeText(text));
+                }
+            } else {
+                p_data.pending_items.push(PendingItem::FreeText(text));
+            }
         }
     }
 
@@ -366,7 +403,6 @@ pub fn process_syllable(
     start_ms: u64,
     end_ms: u64,
     raw_text: &str,
-    is_background: bool,
     text_processing_buffer: &mut String,
     syllable_accumulator: &mut Vec<LyricSyllable>,
 ) {
@@ -383,13 +419,7 @@ pub fn process_syllable(
         return;
     }
 
-    // 根据是否为背景人声，对文本进行清理
-    text_processing_buffer.clear();
-    if is_background {
-        clean_parentheses_from_bg_text_into(trimmed_text, text_processing_buffer);
-    } else {
-        normalize_text_whitespace_into(trimmed_text, text_processing_buffer);
-    }
+    normalize_text_whitespace_into(trimmed_text, text_processing_buffer);
 
     if text_processing_buffer.is_empty() {
         return;
@@ -595,7 +625,6 @@ fn finalize_p_element(
                     *start_ms,
                     *end_ms,
                     text,
-                    *content_type == ContentType::Background,
                     &mut state.text_processing_buffer,
                     &mut target_word.syllables,
                 );
@@ -605,6 +634,37 @@ fn finalize_p_element(
                 }
             }
             PendingItem::FreeText(_) => {}
+        }
+    }
+
+    if let Some(bg_track) = p_data
+        .tracks_accumulator
+        .iter_mut()
+        .find(|t| t.content_type == ContentType::Background)
+    {
+        let mut all_syllables: Vec<&mut LyricSyllable> = bg_track
+            .content
+            .words
+            .iter_mut()
+            .flat_map(|w| w.syllables.iter_mut())
+            .collect();
+
+        if !all_syllables.is_empty() {
+            if let Some(first_syl) = all_syllables.first_mut() {
+                first_syl.text = first_syl
+                    .text
+                    .trim_start_matches(['(', '（'])
+                    .trim_start()
+                    .to_string();
+            }
+
+            if let Some(last_syl) = all_syllables.last_mut() {
+                last_syl.text = last_syl
+                    .text
+                    .trim_end_matches([')', '）'])
+                    .trim_end()
+                    .to_string();
+            }
         }
     }
 
@@ -644,23 +704,26 @@ fn merge_metadata_tracks_into_tracks(
     }
 }
 
-/// 遍历一行中的所有轨道和音节，计算最晚的结束时间戳。
-fn recalculate_line_end_ms(line: &LyricLine) -> u64 {
-    line.tracks
-        .iter()
-        .flat_map(|at| {
-            let content_words = at.content.words.iter();
-            let translation_words = at.translations.iter().flat_map(|t| t.words.iter());
-            let romanization_words = at.romanizations.iter().flat_map(|r| r.words.iter());
+fn recalculate_line_time_bounds(line: &LyricLine) -> (Option<u64>, u64) {
+    let mut min_start: Option<u64> = None;
+    let mut max_end = 0;
 
-            content_words
-                .chain(translation_words)
-                .chain(romanization_words)
-        })
-        .flat_map(|word| &word.syllables)
-        .map(|syllable| syllable.end_ms)
-        .max()
-        .unwrap_or(0)
+    let syllables = line
+        .tracks
+        .iter()
+        .flat_map(|at| at.content.words.iter())
+        .flat_map(|word| &word.syllables);
+
+    for syllable in syllables {
+        if syllable.start_ms == 0 && syllable.end_ms == 0 {
+            continue;
+        }
+
+        min_start = Some(min_start.map_or(syllable.start_ms, |m| m.min(syllable.start_ms)));
+        max_end = max_end.max(syllable.end_ms);
+    }
+
+    (min_start, max_end)
 }
 
 fn get_or_create_track_in_vec(
